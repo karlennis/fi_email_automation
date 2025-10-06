@@ -75,3 +75,4 @@ build/Release
 .eslintcache
 .yarn-integrity
 .yarn-error.log
+temp/

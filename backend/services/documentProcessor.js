@@ -169,6 +169,49 @@ class DocumentProcessor {
   }
 
   /**
+   * Process document from buffer (streaming approach - no disk write for original)
+   */
+  async processDocumentFromBuffer(buffer, fileName) {
+    try {
+      logger.info(`📄 Processing document from buffer: ${fileName}`);
+
+      // Create temporary file for processing (still needed for OCR)
+      const tempPath = path.join(this.ocrDir, `temp_${Date.now()}_${fileName}`);
+      await fs.writeFile(tempPath, buffer);
+
+      try {
+        // Step 1: OCR if needed
+        const ocrPath = await this.ocrIfNeeded(tempPath);
+
+        // Step 2: Extract text
+        const text = await this.extractTextFromPDF(ocrPath);
+
+        return {
+          fileName: fileName,
+          originalPath: null, // No original path since we used buffer
+          ocrPath: ocrPath,
+          text: text,
+          textLength: text.length,
+          processedAt: new Date().toISOString(),
+          processedFromBuffer: true
+        };
+
+      } finally {
+        // Clean up temporary file
+        try {
+          await fs.unlink(tempPath);
+        } catch (cleanupError) {
+          logger.warn(`Error cleaning up temp file ${tempPath}:`, cleanupError);
+        }
+      }
+
+    } catch (error) {
+      logger.error(`Error processing document buffer ${fileName}:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Process multiple documents
    */
   async processDocuments(filePaths) {

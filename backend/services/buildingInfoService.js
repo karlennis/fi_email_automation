@@ -70,7 +70,7 @@ class BuildingInfoService {
       const fallbackData = {
         planning_title: 'Title unavailable',
         planning_id: planningId,
-        bii_url: `https://app.buildinginfo.com/project/${planningId}`,
+        bii_url: null, // No valid URL available
         planning_updated: 'N/A',
         planning_stage: 'N/A',
         planning_sector: 'N/A',
@@ -79,13 +79,13 @@ class BuildingInfoService {
       };
 
       if (!data || typeof data !== 'object') {
-        logger.warn(`Invalid response from Building Info API for ${planningId}`);
+        logger.warn(`Invalid response from Building Info API for ${planningId}:`, data);
         this.cache.set(cacheKey, { data: fallbackData, timestamp: Date.now() });
         return fallbackData;
       }
 
-      if (data.success === false) {
-        logger.warn(`Building Info API returned success=false for ${planningId}`);
+      if (data.success === false || data.status !== 'OK') {
+        logger.warn(`Building Info API returned error for ${planningId}:`, { success: data.success, status: data.status, message: data.message });
         this.cache.set(cacheKey, { data: fallbackData, timestamp: Date.now() });
         return fallbackData;
       }
@@ -98,10 +98,21 @@ class BuildingInfoService {
       }
 
       const row = rows[0];
+
+      // Log the actual row data to debug field names
+      logger.info(`Raw API row data for ${planningId}:`, {
+        planning_stage: row.planning_stage,
+        planning_category: row.planning_category,
+        planning_authority: row.planning_authority,
+        planning_path_url: row.planning_path_url,
+        has_valid_path_url: !!(row.planning_path_url && row.planning_path_url.trim()),
+        available_fields: Object.keys(row).filter(key => key.includes('planning')).slice(0, 10)
+      });
+
       const result = {
         planning_title: row.planning_title || 'Untitled project',
         planning_id: planningId,
-        bii_url: `https://app.buildinginfo.com/${row.planning_path_url || ''}`,
+        bii_url: (row.planning_path_url && row.planning_path_url.trim()) ? `https://app.buildinginfo.com/${row.planning_path_url}` : null,
         planning_updated: (row.planning_public_updated || row.api_date || 'N/A').slice(0, 10),
         planning_stage: row.planning_stage || 'N/A',
         planning_sector: row.planning_category || 'N/A',
@@ -112,10 +123,25 @@ class BuildingInfoService {
         planning_applicant: row.planning_applicant || 'N/A'
       };
 
+      // Enhanced debugging
+      logger.info(`✅ Metadata constructed for ${planningId}:`, {
+        planning_title: result.planning_title,
+        bii_url: result.bii_url,
+        planning_stage: result.planning_stage,
+        planning_sector: result.planning_sector,
+        rawTitle: row.planning_title,
+        rawPathUrl: row.planning_path_url,
+        hasValidUrl: !!(result.bii_url)
+      });
+
       // Cache the result
       this.cache.set(cacheKey, { data: result, timestamp: Date.now() });
 
-      logger.info(`Retrieved metadata for project ${planningId}: ${result.planning_title}`);
+      logger.info(`Retrieved metadata for project ${planningId}: ${result.planning_title}`, {
+        planning_title: result.planning_title,
+        bii_url: result.bii_url,
+        planning_stage: result.planning_stage
+      });
       return result;
 
     } catch (error) {
@@ -123,7 +149,7 @@ class BuildingInfoService {
       const fallbackData = {
         planning_title: 'Title unavailable',
         planning_id: planningId,
-        bii_url: `https://app.buildinginfo.com/project/${planningId}`,
+        bii_url: null, // No valid URL available
         planning_updated: 'N/A',
         planning_stage: 'N/A',
         planning_sector: 'N/A',
@@ -160,7 +186,7 @@ class BuildingInfoService {
           results[planningId] = {
             planning_title: 'Error loading data',
             planning_id: planningId,
-            bii_url: `https://app.buildinginfo.com/project/${planningId}`,
+            bii_url: null, // No valid URL available
             planning_updated: 'N/A',
             planning_stage: 'N/A',
             planning_sector: 'N/A',
@@ -212,7 +238,7 @@ class BuildingInfoService {
         planning_authority: row.planning_authority,
         planning_stage: row.planning_stage,
         planning_updated: (row.planning_public_updated || row.api_date || '').slice(0, 10),
-        bii_url: `https://app.buildinginfo.com/${row.planning_path_url || ''}`
+        bii_url: (row.planning_path_url && row.planning_path_url.trim()) ? `https://app.buildinginfo.com/${row.planning_path_url}` : null
       }));
 
     } catch (error) {
@@ -222,11 +248,114 @@ class BuildingInfoService {
   }
 
   /**
-   * Clear cache
+   * Build API URL to retrieve projects with filters (similar to get_one_thousand)
    */
-  clearCache() {
-    this.cache.clear();
-    logger.info('Building Info API cache cleared');
+  buildFilteredUrl(limitStart, paramsObject) {
+    let apiUrl = `${this.baseUrl}?api_key=${this.apiKey}&ukey=${this.ukey}`;
+
+    // Add filtering parameters (only if they're not null/0)
+    if (paramsObject.category && paramsObject.category !== 0) {
+      apiUrl += `&category=${paramsObject.category}`;
+    }
+    if (paramsObject.subcategory && paramsObject.subcategory !== 0) {
+      apiUrl += `&subcategory=${paramsObject.subcategory}`;
+    }
+    if (paramsObject.county && paramsObject.county !== 0) {
+      apiUrl += `&county=${paramsObject.county}`;
+    }
+    if (paramsObject.type && paramsObject.type !== 0) {
+      apiUrl += `&type=${paramsObject.type}`;
+    }
+    if (paramsObject.stage && paramsObject.stage !== 0) {
+      apiUrl += `&stage=${paramsObject.stage}`;
+    }
+    if (paramsObject.latitude && paramsObject.longitude && paramsObject.radius) {
+      apiUrl += `&nearby=${paramsObject.latitude},${paramsObject.longitude}&radius=${paramsObject.radius}`;
+    }
+
+    // Add date filtering with _apion parameter
+    if (paramsObject.apion !== undefined && paramsObject.apion !== null) {
+      apiUrl += `&_apion=${paramsObject.apion}`;
+
+      // If using date range (apion = 8), add min and max dates
+      if (paramsObject.apion === 8 || paramsObject.apion === '8') {
+        if (paramsObject.min_apion) {
+          apiUrl += `&min_apion=${paramsObject.min_apion}`;
+        }
+        if (paramsObject.max_apion) {
+          apiUrl += `&max_apion=${paramsObject.max_apion}`;
+        }
+      }
+    } else {
+      // Default to past 3 months if no date filter specified
+      apiUrl += `&_apion=1.1`;
+    }
+
+    apiUrl += `&more=limit ${limitStart},1000`;
+
+    logger.info(`📡 Building Info API URL: ${apiUrl}`);
+    return apiUrl;
+  }
+
+  /**
+   * Get projects by parameters (similar to get_projects_by_params in query_service_pipeline)
+   */
+  async getProjectsByParams(paramsObject = {}) {
+    let limitStart = 0;
+    const allProjectIds = [];
+    const allRows = [];
+
+    while (true) {
+      const apiUrl = this.buildFilteredUrl(limitStart, paramsObject);
+      logger.info(`🔄 Calling Building Info API (batch ${limitStart/1000 + 1}): ${apiUrl}`);
+
+      try {
+        const response = await axios.get(apiUrl, { timeout: 30000 });
+        const data = response.data;
+
+        if (data.status !== "OK" || !data.data) {
+          logger.warn('API response indicates no more data or error');
+          break;
+        }
+
+        const rows = data.data.rows || [];
+        if (!rows.length) {
+          logger.info('No more rows returned, pagination complete');
+          break;
+        }
+
+        const projectIds = rows
+          .map(row => row.planning_id)
+          .filter(id => id); // Filter out null/undefined IDs
+
+        logger.info(`Fetched ${projectIds.length} project IDs from this batch`);
+        allProjectIds.push(...projectIds);
+        allRows.push(...rows);
+
+        // If we got less than 1000 results, we've reached the end
+        if (rows.length < 1000) {
+          logger.info('Received less than 1000 rows, pagination complete');
+          break;
+        }
+
+        limitStart += 1000;
+
+        // Rate limiting between batches
+        await new Promise(resolve => setTimeout(resolve, 200));
+
+      } catch (error) {
+        logger.error(`API call failed for batch starting at ${limitStart}:`, error.message);
+        break;
+      }
+    }
+
+    logger.info(`Total project IDs fetched: ${allProjectIds.length}`);
+
+    return {
+      projectIds: allProjectIds,
+      projectData: allRows,
+      totalCount: allProjectIds.length
+    };
   }
 
   /**

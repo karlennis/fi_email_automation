@@ -129,6 +129,33 @@ class S3Service {
   }
 
   /**
+   * Get document buffer from S3 without saving to disk (streaming alternative)
+   */
+  async getDocumentBuffer(s3Key) {
+    try {
+      const params = {
+        Bucket: this.bucket,
+        Key: s3Key
+      };
+
+      const response = await this.s3.getObject(params).promise();
+
+      logger.info(`📄 Streamed ${s3Key} (${response.Body.length} bytes) without disk write`);
+
+      return {
+        buffer: response.Body,
+        fileName: path.basename(s3Key),
+        size: response.Body.length,
+        contentType: response.ContentType
+      };
+
+    } catch (error) {
+      logger.error(`Error streaming ${s3Key}:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Download all documents for a project
    */
   async downloadProjectDocuments(projectId) {
@@ -287,6 +314,148 @@ class S3Service {
   }
 
   /**
+   * List projects in the planning-docs folder only
+   */
+  async listPlanningDocsProjects() {
+    try {
+      const planningDocsPrefix = 'planning-docs/';
+
+      const params = {
+        Bucket: this.bucket,
+        Prefix: planningDocsPrefix,
+        Delimiter: '/',
+        MaxKeys: 1000
+      };
+
+      const response = await this.s3.listObjectsV2(params).promise();
+
+      const projects = response.CommonPrefixes
+        .map(prefix => {
+          const fullPath = prefix.Prefix;
+          const projectId = fullPath.replace(planningDocsPrefix, '').replace('/', '');
+          return {
+            projectId: projectId,
+            folderPath: fullPath,
+            parentFolder: 'planning-docs'
+          };
+        })
+        .filter(project => project.projectId);
+
+      logger.info(`Found ${projects.length} projects in planning-docs folder`);
+      return projects;
+
+    } catch (error) {
+      logger.error('Error listing projects in planning-docs folder:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * List documents for projects filtered by API results (planning-docs only)
+   */
+  async listFilteredProjectDocuments(filteredProjectIds) {
+    try {
+      const allDocuments = [];
+      const planningDocsPrefix = 'planning-docs/';
+
+      // Process projects in batches to avoid overwhelming S3
+      const batchSize = 10;
+
+      for (let i = 0; i < filteredProjectIds.length; i += batchSize) {
+        const batch = filteredProjectIds.slice(i, i + batchSize);
+
+        const batchPromises = batch.map(async (projectId) => {
+          try {
+            const projectPath = `${planningDocsPrefix}${projectId}/`;
+
+            const params = {
+              Bucket: this.bucket,
+              Prefix: projectPath,
+              MaxKeys: 1000
+            };
+
+            const response = await this.s3.listObjectsV2(params).promise();
+
+            const documents = response.Contents
+              .filter(obj => obj.Key.toLowerCase().endsWith('.pdf'))
+              .map(obj => ({
+                key: obj.Key,
+                fileName: path.basename(obj.Key),
+                size: obj.Size,
+                lastModified: obj.LastModified,
+                projectId: projectId,
+                folderPath: projectPath
+              }));
+
+            return documents;
+
+          } catch (error) {
+            logger.warn(`Error listing documents for project ${projectId}:`, error.message);
+            return [];
+          }
+        });
+
+        const batchResults = await Promise.allSettled(batchPromises);
+
+        batchResults.forEach((result, index) => {
+          if (result.status === 'fulfilled') {
+            allDocuments.push(...result.value);
+          } else {
+            logger.warn(`Failed to get documents for project ${batch[index]}:`, result.reason);
+          }
+        });
+
+        // Small delay between batches
+        if (i + batchSize < filteredProjectIds.length) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+
+      logger.info(`Found ${allDocuments.length} documents across ${filteredProjectIds.length} filtered projects`);
+      return allDocuments;
+
+    } catch (error) {
+      logger.error('Error listing filtered project documents:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get documents for a specific project in planning-docs folder
+   */
+  async getPlanningDocsProjectDocuments(projectId) {
+    try {
+      const projectPath = `planning-docs/${projectId}/`;
+
+      const params = {
+        Bucket: this.bucket,
+        Prefix: projectPath,
+        MaxKeys: 1000
+      };
+
+      const response = await this.s3.listObjectsV2(params).promise();
+
+      const documents = response.Contents
+        .filter(obj => obj.Key.toLowerCase().endsWith('.pdf'))
+        .map(obj => ({
+          key: obj.Key,
+          fileName: path.basename(obj.Key),
+          size: obj.Size,
+          lastModified: obj.LastModified,
+          projectId: projectId,
+          folderPath: projectPath
+        }));
+
+      logger.info(`Found ${documents.length} documents for project ${projectId} in planning-docs`);
+      return documents;
+
+    } catch (error) {
+      logger.error(`Error getting documents for project ${projectId} in planning-docs:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Clean up downloaded files older than specified hours
    */
   async cleanupDownloads(maxAgeHours = 24) {
@@ -314,6 +483,24 @@ class S3Service {
 
     } catch (error) {
       logger.error('Error during download cleanup:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check if an object exists in S3
+   */
+  async objectExists(key) {
+    try {
+      await this.s3.headObject({
+        Bucket: this.bucket,
+        Key: key
+      }).promise();
+      return true;
+    } catch (error) {
+      if (error.code === 'NotFound') {
+        return false;
+      }
       throw error;
     }
   }

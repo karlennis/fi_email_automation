@@ -124,16 +124,18 @@ class EmailService {
             .header { background-color: #f4f4f4; padding: 20px; text-align: center; }
             .content { padding: 20px; }
             .summary-box { background-color: #d1ecf1; border: 1px solid #bee5eb; padding: 15px; margin: 15px 0; border-radius: 5px; }
-            .project-card-compact { background-color: #f8f9fa; border-left: 4px solid #007bff; padding: 10px 15px; margin: 8px 0; border-radius: 3px; }
+            .project-card-compact { background-color: #f8f9fa; border-left: 4px solid #28a745; padding: 10px 15px; margin: 8px 0; border-radius: 3px; }
             .project-card-compact h4 { margin: 0 0 5px 0; font-size: 1.1em; color: #333; }
+            .project-card-compact h4 a { color: #333; text-decoration: none; font-weight: bold; }
+            .project-card-compact h4 a:hover { text-decoration: underline; color: #28a745; }
             .project-id { font-weight: normal; color: #666; font-size: 0.9em; }
             .project-meta-compact { font-size: 0.85em; color: #666; }
             .meta-item { display: inline; }
             .meta-separator { margin: 0 8px; color: #999; }
-            .view-link { color: #007bff; text-decoration: none; }
+            .view-link { color: #28a745; text-decoration: none; }
             .view-link:hover { text-decoration: underline; }
             .report-type-section { margin: 15px 0; }
-            .report-type-section h3 { color: #007bff; margin-bottom: 10px; font-size: 1.2em; }
+            .report-type-section h3 { color: #28a745; margin-bottom: 10px; font-size: 1.2em; }
             .footer { background-color: #f4f4f4; padding: 20px; text-align: center; font-size: 11px; color: #666; border-top: 1px solid #ddd; line-height: 1.4; }
             .footer strong { color: #333; }
             .footer a { color: #007bff; text-decoration: none; }
@@ -158,12 +160,11 @@ class EmailService {
               <h3>{{@key}} Reports ({{this.length}} project{{#if (gt this.length 1)}}s{{/if}})</h3>
               {{#each this}}
               <div class="project-card-compact">
-                <h4>{{projectTitle}} <span class="project-id">(ID: {{projectId}})</span></h4>
+                <h4>{{#if biiUrl}}<a href="{{biiUrl}}" target="_blank" class="view-link" style="text-decoration: none; color: #333;">{{projectTitle}}</a>{{else}}{{projectTitle}}{{/if}} <span class="project-id">(ID: {{projectId}})</span></h4>
                 <div class="project-meta-compact">
                   <span class="meta-item">{{planningStage}}</span>
                   <span class="meta-separator">•</span>
                   <span class="meta-item">{{planningSector}}</span>
-                  {{#if biiUrl}}<span class="meta-separator">•</span><a href="{{biiUrl}}" target="_blank" class="view-link">View Details</a>{{/if}}
                 </div>
               </div>
               {{/each}}
@@ -224,7 +225,7 @@ class EmailService {
             <div class="fi-details">
               <h3>Project Details:</h3>
               <p><strong>Project ID:</strong> {{projectId}}</p>
-              <p><strong>Project Title:</strong> {{projectTitle}}</p>
+              <p><strong>Project Title:</strong> {{#if biiUrl}}<a href="{{biiUrl}}" target="_blank" style="color: #333; text-decoration: none;">{{projectTitle}}</a>{{else}}{{projectTitle}}{{/if}}</p>
               <p><strong>Document:</strong> {{documentName}}</p>
               {{#if requestingAuthority}}<p><strong>Requesting Authority:</strong> {{requestingAuthority}}</p>{{/if}}
               {{#if deadline}}<p><strong>Deadline:</strong> {{deadline}}</p>{{/if}}
@@ -356,7 +357,35 @@ class EmailService {
 
         // Use project ID as key to prevent duplicates
         if (!matchesByType[reportType][match.projectId]) {
-          matchesByType[reportType][match.projectId] = match;
+          // Log metadata for debugging
+          logger.info(`📧 Processing email match for project ${match.projectId}:`, {
+            hasMetadata: !!match.projectMetadata,
+            planningTitle: match.projectMetadata?.planning_title,
+            biiUrl: match.projectMetadata?.bii_url,
+            planningStage: match.projectMetadata?.planning_stage,
+            planningSector: match.projectMetadata?.planning_sector,
+            reportType: match.reportType,
+            fullProjectMetadata: match.projectMetadata
+          });
+
+          // Map project metadata fields to template-expected names
+          const projectData = {
+            ...match,
+            projectTitle: match.projectMetadata?.planning_title || 'Title unavailable',
+            planningStage: match.projectMetadata?.planning_stage || 'N/A',
+            planningSector: match.projectMetadata?.planning_sector || 'N/A',
+            planningAuthority: match.projectMetadata?.planning_authority || 'N/A',
+            biiUrl: match.projectMetadata?.bii_url || null // Don't create fallback URLs
+          };
+
+          logger.info(`📧 Mapped project data for ${match.projectId}:`, {
+            projectTitle: projectData.projectTitle,
+            planningStage: projectData.planningStage,
+            planningSector: projectData.planningSector,
+            biiUrl: projectData.biiUrl
+          });
+
+          matchesByType[reportType][match.projectId] = projectData;
         }
       });
 
@@ -427,20 +456,23 @@ class EmailService {
         customerName,
         reportType: fiData.reportType,
         projectId: fiData.projectId,
-        projectTitle: fiData.projectTitle,
+        projectTitle: fiData.projectMetadata?.planning_title || fiData.projectTitle || 'Title unavailable',
         documentName: fiData.documentName,
         requestingAuthority: fiData.requestingAuthority,
         deadline: fiData.deadline,
         summary: fiData.summary,
         specificRequests: fiData.specificRequests,
+        biiUrl: fiData.projectMetadata?.bii_url || null, // Don't create fallback URLs
         dashboardUrl: `${process.env.FRONTEND_URL}/dashboard`
       });
+
+      const projectTitle = fiData.projectMetadata?.planning_title || fiData.projectTitle || 'Title unavailable';
 
       const mailOptions = {
         from: `"Building Info Team" <noreply@buildinginfo.com>`,
         replyTo: process.env.SMTP_USER,
         to: customerEmail,
-        subject: `FI Request Detected: ${fiData.reportType} - ${fiData.projectTitle}`,
+        subject: `FI Request Detected: ${fiData.reportType} - ${projectTitle}`,
         html: html
       };
 

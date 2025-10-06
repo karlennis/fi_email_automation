@@ -335,6 +335,13 @@ class FIDetectionService {
 
     // If this looks like an FI request, always allow it through
     if (fiIndicators.some(indicator => textLower.includes(indicator))) {
+      logger.info(`✅ Document passed FI indicator filter: found "${fiIndicators.find(indicator => textLower.includes(indicator))}"`);
+      return true;
+    }
+
+    // If document is too short (likely OCR failed), be more lenient
+    if (text.length < 200) {
+      logger.info(`⚠️ Document too short (${text.length} chars), allowing through for AI analysis`);
       return true;
     }
 
@@ -346,7 +353,7 @@ class FIDetectionService {
       const relatedTerms = {
         "acoustic": ["noise", "sound", "decibel", "db", "vibration", "noise assessment", "sound level"],
         "transport": ["traffic", "vehicle", "highway", "road", "parking", "transport assessment", "car park", "mobility"],
-        "ecological": ["ecology", "wildlife", "habitat", "species", "biodiversity", "environment", "ecological", "nature"],
+        "ecological": ["ecology", "wildlife", "habitat", "species", "biodiversity", "environment", "ecological", "nature", "flora", "fauna"],
         "flood": ["drainage", "water", "sewage", "storm", "rainfall", "suds", "surface water", "attenuation"],
         "heritage": ["archaeological", "historic", "conservation", "listed", "cultural", "monument", "historic", "archaeology"],
         "arboricultural": ["tree", "trees", "vegetation", "landscape", "planting", "hedge", "woodland", "green"],
@@ -355,11 +362,13 @@ class FIDetectionService {
 
       if (relatedTerms[keywordLower]) {
         if (!relatedTerms[keywordLower].some(term => textLower.includes(term))) {
+          logger.info(`❌ Quick filter rejected: no ${keywordLower} keywords found in ${text.length} char document`);
           return false;
         }
       }
     }
 
+    logger.info(`✅ Document passed keyword filter for ${keywordLower}`);
     return true;
   }
 
@@ -440,7 +449,7 @@ class FIDetectionService {
    */
   async processFIRequest(documentText, targetReportType, fileName = '') {
     try {
-      logger.info(`Processing FI request for ${targetReportType} in file: ${fileName}`);
+      logger.info(`🔍 Processing FI request for ${targetReportType} in file: ${fileName} (${documentText.length} chars)`);
 
       // CACHE CHECK: Check if we've already processed this document
       const cacheKey = this.generateCacheKey(documentText, targetReportType, fileName);
@@ -449,13 +458,25 @@ class FIDetectionService {
         return cachedResult;
       }
 
+      // Log first 200 chars of document for debugging
+      if (documentText.length < 500) {
+        logger.info(`📄 Document content sample: "${documentText.substring(0, 200)}..."`);
+      }
+
       // FAST TRACK: Check filename first - instant results for obvious cases
       const fiInFilename = this.checkFilenameForFI(fileName);
       const reportTypeInFilename = this.checkFilenameForReportType(fileName, targetReportType);
 
+      if (fiInFilename) {
+        logger.info(`🏃 Fast track: FI indicators in filename: ${fileName}`);
+      }
+      if (reportTypeInFilename) {
+        logger.info(`🎯 Fast track: Report type indicators in filename: ${fileName}`);
+      }
+
       // If filename clearly indicates FI + correct report type, fast track to extraction
       if (fiInFilename && reportTypeInFilename) {
-        logger.info(`FAST TRACK: Filename indicates FI request for ${targetReportType}: ${fileName}`);
+        logger.info(`⚡ FAST TRACK: Filename indicates FI request for ${targetReportType}: ${fileName}`);
 
         // Still do basic validation but skip expensive AI calls
         if (this.quickKeywordFilter(documentText, targetReportType)) {
@@ -475,7 +496,7 @@ class FIDetectionService {
 
       // QUICK PRE-FILTER: Avoid expensive AI calls for obvious mismatches
       if (!this.quickKeywordFilter(documentText, targetReportType)) {
-        logger.info(`Quick filter rejected document for ${targetReportType}: ${fileName}`);
+        logger.info(`❌ Quick filter rejected document for ${targetReportType}: ${fileName}`);
         const result = {
           isFIRequest: false,
           matchesTargetType: false,
@@ -486,10 +507,13 @@ class FIDetectionService {
         return result;
       }
 
+      logger.info(`✅ Document passed pre-filters, proceeding to AI analysis for ${targetReportType}: ${fileName}`);
+
       // STANDARD FLOW: Step 1 - Check if this is an FI request
       const isFIRequest = await this.detectFIRequest(documentText);
 
       if (!isFIRequest) {
+        logger.info(`❌ AI determined not an FI request: ${fileName}`);
         const result = {
           isFIRequest: false,
           matchesTargetType: false,
@@ -500,10 +524,13 @@ class FIDetectionService {
         return result;
       }
 
+      logger.info(`✅ AI confirmed FI request, checking report type match for ${targetReportType}: ${fileName}`);
+
       // STANDARD FLOW: Step 2 - Check if it matches the target report type
       const matchesTargetType = await this.matchFIRequestType(documentText, targetReportType);
 
       if (!matchesTargetType) {
+        logger.info(`❌ AI determined wrong report type for ${targetReportType}: ${fileName}`);
         const result = {
           isFIRequest: true,
           matchesTargetType: false,
@@ -513,6 +540,8 @@ class FIDetectionService {
         this.setCachedResult(cacheKey, result);
         return result;
       }
+
+      logger.info(`🎉 MATCH FOUND! FI request for ${targetReportType} in ${fileName}`);
 
       // STANDARD FLOW: Step 3 - Extract detailed information
       const extractedInfo = await this.extractFIRequestInfo(documentText, fileName);
@@ -619,6 +648,322 @@ class FIDetectionService {
   }
 
   /**
+   * Process FI requests with API-based project filtering - ENHANCED WITH DOCFILES.TXT
+   */
+  async processFIRequestWithFiltering(reportTypes, apiParams = {}, customerData = []) {
+    try {
+      logger.info('🚀 Starting FI detection with API filtering + docfiles.txt optimization');
+
+      // Import services
+      const buildingInfoService = require('./buildingInfoService');
+      const s3Service = require('./s3Service');
+      const docfilesService = require('./docfilesService');
+
+      let filteredProjectIds = [];
+      let projectData = [];
+
+      // Step 1: Get filtered project IDs from API if filters are applied
+      if (Object.keys(apiParams).length > 0) {
+        logger.info('🔍 Fetching projects from Building Info API with filters:', apiParams);
+        const apiResult = await buildingInfoService.getProjectsByParams(apiParams);
+        filteredProjectIds = apiResult.projectIds;
+        projectData = apiResult.projectData;
+
+        logger.info(`✅ API returned ${filteredProjectIds.length} filtered project IDs`);
+        if (filteredProjectIds.length > 0) {
+          logger.info(`📋 First 10 project IDs: ${filteredProjectIds.slice(0, 10).join(', ')}${filteredProjectIds.length > 10 ? '...' : ''}`);
+        }
+      } else {
+        // If no API filters, get all projects from planning-docs folder
+        logger.info('ℹ️ No API filters applied, getting all projects from planning-docs');
+        const planningDocsProjects = await s3Service.listPlanningDocsProjects();
+        filteredProjectIds = planningDocsProjects.map(p => p.projectId);
+
+        logger.info(`📂 Found ${filteredProjectIds.length} projects in planning-docs folder`);
+      }
+
+      if (filteredProjectIds.length === 0) {
+        logger.warn('No projects found with applied filters');
+        return {
+          success: false,
+          message: 'No projects found with the applied filters',
+          results: []
+        };
+      }
+
+      // Step 2: DOCFILES.TXT FIRST-PASS FILTER
+      logger.info('� Starting docfiles.txt analysis for rapid FI detection...');
+      const docfilesMatches = [];
+      const projectsWithoutDocfiles = [];
+      const processingStats = {
+        totalProjects: filteredProjectIds.length,
+        projectsWithDocfiles: 0,
+        projectsWithoutDocfiles: 0,
+        docfilesMatches: 0,
+        individualDocProcessed: 0,
+        fiRequestsFound: 0,
+        matchesByReportType: {},
+        projectsWithMatches: new Set(),
+        earlyTerminations: 0
+      };
+
+      // Initialize report type counters
+      reportTypes.forEach(type => {
+        processingStats.matchesByReportType[type] = 0;
+      });
+
+      // Check each project for docfiles.txt
+      for (const projectId of filteredProjectIds) {
+        try {
+          const hasDocfiles = await docfilesService.checkDocfilesExists(projectId);
+
+          if (hasDocfiles) {
+            processingStats.projectsWithDocfiles++;
+            logger.info(`� Found docfiles.txt for project ${projectId}`);
+
+            // Get and analyze docfiles.txt
+            const docfilesContent = await docfilesService.getDocfilesContent(projectId);
+            const docfilesAnalysis = await docfilesService.analyzeDocfilesForFI(
+              docfilesContent,
+              projectId,
+              reportTypes
+            );
+
+            if (docfilesAnalysis.hasFIRequests) {
+              processingStats.docfilesMatches++;
+
+              // Check which report types match
+              for (const reportType of reportTypes) {
+                if (docfilesAnalysis.reportTypeMatches[reportType]) {
+                  processingStats.matchesByReportType[reportType]++;
+                  processingStats.fiRequestsFound++;
+                  processingStats.projectsWithMatches.add(projectId);
+
+                  // Get project metadata
+                  let projectMetadata = null;
+                  if (projectData.length > 0) {
+                    projectMetadata = projectData.find(p => p.planning_id === projectId);
+                  }
+                  if (!projectMetadata) {
+                    projectMetadata = await buildingInfoService.getProjectMetadata(projectId);
+                  }
+
+                  // Log metadata for debugging
+                  logger.info(`📊 Attaching metadata to match for ${projectId}:`, {
+                    hasMetadata: !!projectMetadata,
+                    planningTitle: projectMetadata?.planning_title,
+                    biiUrl: projectMetadata?.bii_url,
+                    planningStage: projectMetadata?.planning_stage,
+                    planningSector: projectMetadata?.planning_sector,
+                    fullMetadata: projectMetadata
+                  });
+
+                  // Create match record
+                  docfilesMatches.push({
+                    projectId: projectId,
+                    documentName: 'docfiles.txt',
+                    documentPath: `planning-docs/${projectId}/docfiles.txt`,
+                    reportType: reportType,
+                    confidence: 0.95, // High confidence from consolidated analysis
+                    matchedText: docfilesAnalysis.summary,
+                    fiDetails: {
+                      Summary: docfilesAnalysis.summary,
+                      SpecificRequests: docfilesAnalysis.fiDetails
+                        .filter(d => d.reportType === reportType)
+                        .map(d => d.quote)
+                        .join('; ')
+                    },
+                    projectMetadata: projectMetadata,
+                    detectionMethod: docfilesAnalysis.detectionMethod
+                  });
+
+                  logger.info(`🎉 DOCFILES MATCH: ${reportType} found in project ${projectId} via docfiles.txt`);
+                }
+              }
+            }
+          } else {
+            processingStats.projectsWithoutDocfiles++;
+            projectsWithoutDocfiles.push(projectId);
+            logger.info(`❌ No docfiles.txt found for project ${projectId}, will use individual document analysis`);
+          }
+        } catch (error) {
+          logger.warn(`Error processing docfiles for project ${projectId}:`, error);
+          projectsWithoutDocfiles.push(projectId);
+          processingStats.projectsWithoutDocfiles++;
+        }
+      }
+
+      logger.info(`📊 DOCFILES ANALYSIS COMPLETE:`);
+      logger.info(`   - Projects with docfiles.txt: ${processingStats.projectsWithDocfiles}`);
+      logger.info(`   - Projects without docfiles.txt: ${processingStats.projectsWithoutDocfiles}`);
+      logger.info(`   - FI matches found via docfiles: ${processingStats.docfilesMatches}`);
+      logger.info(`   - Projects needing individual doc analysis: ${projectsWithoutDocfiles.length}`);
+
+      // Step 3: FALLBACK TO INDIVIDUAL DOCUMENT ANALYSIS (only for projects without docfiles.txt)
+      if (projectsWithoutDocfiles.length > 0) {
+        logger.info(`🔍 Processing ${projectsWithoutDocfiles.length} projects with individual document analysis...`);
+
+        // Get documents for projects without docfiles
+        const documents = await s3Service.listFilteredProjectDocuments(projectsWithoutDocfiles);
+        logger.info(`📄 Found ${documents.length} individual documents to process`);
+
+        // Group documents by project for early termination
+        const documentsByProject = {};
+        documents.forEach(doc => {
+          if (!documentsByProject[doc.projectId]) {
+            documentsByProject[doc.projectId] = [];
+          }
+          documentsByProject[doc.projectId].push(doc);
+        });
+
+        // Process each report type
+        for (const reportType of reportTypes) {
+          logger.info(`🔍 Processing ${reportType} across projects without docfiles.txt`);
+
+          let processedCount = 0;
+          const projectsFoundForThisType = new Set();
+
+          // Process by project for early termination
+          for (const projectId of projectsWithoutDocfiles) {
+            const projectDocs = documentsByProject[projectId] || [];
+            if (projectDocs.length === 0) continue;
+
+            let foundFIForProject = false;
+
+            for (const doc of projectDocs) {
+              try {
+                processedCount++;
+                processingStats.individualDocProcessed++;
+
+                // Log progress every 10 documents
+                if (processedCount % 10 === 0) {
+                  logger.info(`📈 Progress: ${processedCount}/${documents.length} individual docs processed for ${reportType} (${Math.round((processedCount/documents.length)*100)}%) - Found FI in ${projectsFoundForThisType.size} projects`);
+                }
+
+                // Stream document for processing
+                const streamResult = await s3Service.getDocumentBuffer(doc.key);
+                const documentProcessor = require('./documentProcessor');
+                const processedDoc = await documentProcessor.processDocumentFromBuffer(
+                  streamResult.buffer,
+                  streamResult.fileName
+                );
+
+                // Process FI request detection
+                const fiResult = await this.processFIRequest(
+                  processedDoc.text,
+                  reportType,
+                  doc.fileName
+                );
+
+                if (fiResult.isFIRequest && fiResult.matchesTargetType) {
+                  processingStats.fiRequestsFound++;
+                  processingStats.matchesByReportType[reportType]++;
+                  foundFIForProject = true;
+                  projectsFoundForThisType.add(projectId);
+                  processingStats.projectsWithMatches.add(projectId);
+
+                  // Get project metadata
+                  let projectMetadata = null;
+                  if (projectData.length > 0) {
+                    projectMetadata = projectData.find(p => p.planning_id === doc.projectId);
+                  }
+                  if (!projectMetadata) {
+                    projectMetadata = await buildingInfoService.getProjectMetadata(doc.projectId);
+                  }
+
+                  // Log metadata for debugging
+                  logger.info(`📊 Attaching metadata to individual doc match for ${doc.projectId}:`, {
+                    hasMetadata: !!projectMetadata,
+                    planningTitle: projectMetadata?.planning_title,
+                    biiUrl: projectMetadata?.bii_url,
+                    planningStage: projectMetadata?.planning_stage,
+                    planningSector: projectMetadata?.planning_sector,
+                    fullMetadata: projectMetadata
+                  });
+
+                  docfilesMatches.push({
+                    projectId: doc.projectId,
+                    documentName: doc.fileName,
+                    documentPath: doc.key,
+                    reportType: reportType,
+                    confidence: 0.9,
+                    matchedText: fiResult.extractedInfo?.Summary || 'FI request detected',
+                    fiDetails: fiResult.extractedInfo,
+                    projectMetadata: projectMetadata,
+                    detectionMethod: fiResult.detectionMethod
+                  });
+
+                  logger.info(`✅ INDIVIDUAL DOC MATCH: ${reportType} in project ${doc.projectId}, document ${doc.fileName} - STOPPING project processing`);
+
+                  // Early termination: stop processing this project for this report type
+                  break;
+                }
+
+              } catch (docError) {
+                logger.error(`Error processing individual document ${doc.fileName}:`, docError);
+              }
+            }
+
+            // Log early termination for this project
+            if (foundFIForProject) {
+              processingStats.earlyTerminations++;
+              const remainingDocs = projectDocs.length - projectDocs.findIndex(d => d === projectDocs.find(pd => docfilesMatches.some(m => m.documentName === pd.fileName && m.projectId === projectId)));
+              if (remainingDocs > 1) {
+                logger.info(`⚡ Early termination: Skipped ${remainingDocs - 1} remaining documents in project ${projectId} for ${reportType}`);
+              }
+            }
+          }
+        }
+      }
+
+      // Log final optimization impact
+      const totalEstimatedDocs = filteredProjectIds.length * 50; // Assume avg 50 docs per project
+      const actualProcessed = processingStats.individualDocProcessed;
+      const savedProcessing = totalEstimatedDocs - actualProcessed;
+
+      logger.info(`🚀 FINAL OPTIMIZATION SUMMARY:`);
+      logger.info(`📊 Total projects: ${processingStats.totalProjects}`);
+      logger.info(`📄 Projects with docfiles.txt: ${processingStats.projectsWithDocfiles} (${Math.round(processingStats.projectsWithDocfiles/processingStats.totalProjects*100)}%)`);
+      logger.info(`🎯 FI matches via docfiles: ${processingStats.docfilesMatches}`);
+      logger.info(`� Individual documents processed: ${processingStats.individualDocProcessed}`);
+      logger.info(`💾 Estimated documents saved: ${savedProcessing} (${Math.round(savedProcessing/totalEstimatedDocs*100)}% reduction)`);
+      logger.info(`⚡ Early terminations: ${processingStats.earlyTerminations}`);
+      logger.info(`⏱️ Estimated time saved: ~${Math.round(savedProcessing * 15 / 60)} minutes`);
+
+      // Step 4: Group results by customer if customer data provided
+      const customerMatches = {};
+      if (customerData && customerData.length > 0) {
+        for (const customer of customerData) {
+          customerMatches[customer.email] = {
+            email: customer.email,
+            name: customer.name || customer.email.split('@')[0],
+            matches: []
+          };
+        }
+
+        // Distribute matches across customers (simple round-robin for now)
+        const customerEmails = Object.keys(customerMatches);
+        docfilesMatches.forEach((match, index) => {
+          const assignedEmail = customerEmails[index % customerEmails.length];
+          customerMatches[assignedEmail].matches.push(match);
+        });
+      }
+
+      return {
+        success: true,
+        results: docfilesMatches,
+        customerMatches: Object.values(customerMatches),
+        processingStats,
+        apiFilter: apiParams,
+        cacheStats: this.getCacheStats(),
+        docfilesCacheStats: docfilesService.getCacheStats()
+      };
+
+    } catch (error) {
+      logger.error('Error in processFIRequestWithFiltering:', error);
+      throw error;
+    }
+  }  /**
    * Get cache statistics
    */
   getCacheStats() {

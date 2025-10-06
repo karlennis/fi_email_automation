@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { ToastrService } from 'ngx-toastr';
 import { CustomerService } from '../../services/customer.service';
+import { ApiFilteringService, FilteringParams, DropdownData, ProjectPreview } from '../../services/api-filtering.service';
 
 interface Drive {
   name: string;
@@ -97,6 +98,222 @@ interface AWSProject {
             <button class="back-btn" *ngIf="!showingFolders" (click)="backToFolders()">
               <i class="icon-back"></i> Back to Folders
             </button>
+            <button class="filter-btn" (click)="toggleApiFiltering()" [class.active]="showApiFiltering">
+              <i class="icon-filter"></i> API Filtering
+            </button>
+          </div>
+
+          <!-- API Filtering Controls -->
+          <div class="api-filtering-section" *ngIf="showApiFiltering">
+            <div class="filtering-header">
+              <h3>Filter Projects via Building Info API</h3>
+              <p>Filter projects by category, county, stage, and type before processing planning-docs only</p>
+            </div>
+
+            <div class="filtering-controls" *ngIf="dropdownData">
+              <div class="filter-row">
+                <div class="filter-group">
+                  <label>Category:</label>
+                  <select [(ngModel)]="selectedFilters.category" (change)="onCategoryChange()">
+                    <option value="">All Categories</option>
+                    <option *ngFor="let cat of dropdownData.categories" [value]="cat.id">{{cat.name}}</option>
+                  </select>
+                </div>
+
+                <div class="filter-group">
+                  <label>Subcategory:</label>
+                  <select [(ngModel)]="selectedFilters.subcategory" [disabled]="!selectedFilters.category">
+                    <option value="">All Subcategories</option>
+                    <option
+                      *ngFor="let subcat of getSubcategoriesForCategory(selectedFilters.category)"
+                      [value]="subcat.id"
+                    >{{subcat.name}}</option>
+                  </select>
+                </div>
+
+                <div class="filter-group">
+                  <label>County:</label>
+                  <select [(ngModel)]="selectedFilters.county">
+                    <option value="">All Counties</option>
+                    <option *ngFor="let county of dropdownData.counties" [value]="county.id">{{county.name}}</option>
+                  </select>
+                </div>
+
+                <div class="filter-group">
+                  <label>Date Filter:</label>
+                  <select [(ngModel)]="selectedFilters.apion" (change)="onDateFilterChange()">
+                    <option value="">All Time</option>
+                    <option value="3">Today</option>
+                    <option value="-1.1">Yesterday</option>
+                    <option value="0.7">Past 7 Days</option>
+                    <option value="1">Past 30 Days</option>
+                    <option value="1.1">Past 3 Months</option>
+                    <option value="2">Past 12 Months</option>
+                    <option value="3.1">Current Year</option>
+                    <option value="8">Custom Date Range</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Custom Date Range Row (only shown when Custom Date Range is selected) -->
+              <div class="filter-row" *ngIf="selectedFilters.apion === '8'">
+                <div class="filter-group">
+                  <label>From Date:</label>
+                  <input type="date" [(ngModel)]="selectedFilters.min_apion" placeholder="Start Date (YYYY-MM-DD)">
+                </div>
+
+                <div class="filter-group">
+                  <label>To Date:</label>
+                  <input type="date" [(ngModel)]="selectedFilters.max_apion" placeholder="End Date (YYYY-MM-DD)">
+                </div>
+              </div>
+
+              <div class="filter-row">
+                <div class="filter-group">
+                  <label>Stage:</label>
+                  <select [(ngModel)]="selectedFilters.stage">
+                    <option value="">All Stages</option>
+                    <option *ngFor="let stage of dropdownData.stages" [value]="stage.id">{{stage.name}}</option>
+                  </select>
+                </div>
+
+                <div class="filter-group">
+                  <label>Type:</label>
+                  <select [(ngModel)]="selectedFilters.type">
+                    <option value="">All Types</option>
+                    <option *ngFor="let type of dropdownData.types" [value]="type.id">{{type.name}}</option>
+                  </select>
+                </div>
+
+                <div class="filter-actions">
+                  <button class="preview-btn" (click)="previewFilteredProjects()" [disabled]="loadingPreview">
+                    <span *ngIf="!loadingPreview">Preview Projects</span>
+                    <span *ngIf="loadingPreview">Loading...</span>
+                  </button>
+                  <button class="clear-btn" (click)="clearFilters()">Clear Filters</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Filter Validation -->
+            <div class="filter-validation" *ngIf="filterValidation">
+              <div class="validation-errors" *ngIf="filterValidation.errors?.length > 0">
+                <h4>Validation Errors:</h4>
+                <ul>
+                  <li *ngFor="let error of filterValidation.errors">{{error}}</li>
+                </ul>
+              </div>
+              <div class="validation-warnings" *ngIf="filterValidation.warnings?.length > 0">
+                <h4>Warnings:</h4>
+                <ul>
+                  <li *ngFor="let warning of filterValidation.warnings">{{warning}}</li>
+                </ul>
+              </div>
+            </div>
+
+            <!-- Project Preview -->
+            <div class="project-preview" *ngIf="previewedProjects && previewedProjects.length > 0">
+              <h4>Preview Results ({{previewedProjects.length}} projects)</h4>
+              <div class="preview-grid">
+                <div class="preview-item" *ngFor="let project of previewedProjects.slice(0, 10)">
+                  <div class="preview-id">{{project.projectId}}</div>
+                  <div class="preview-title">{{project.title}}</div>
+                  <div class="preview-details">
+                    <span>{{project.category}}</span> •
+                    <span>{{project.county}}</span> •
+                    <span>{{project.stage}}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Customer Selection for Filtered Projects -->
+              <div class="filtered-customer-selection" *ngIf="previewedProjects.length > 0">
+
+                <!-- Report Type Selection -->
+                <div class="report-type-selection">
+                  <h4>Select Report Types</h4>
+                  <div class="checkbox-group">
+                    <label class="checkbox-label" *ngFor="let type of reportTypes">
+                      <input
+                        type="checkbox"
+                        [(ngModel)]="type.selected"
+                      > {{type.name}}
+                    </label>
+                  </div>
+                  <p class="report-requirement" *ngIf="!hasSelectedReportTypes()">
+                    Please select at least one report type
+                  </p>
+                </div>
+
+                <!-- Customer Selection -->
+                <div class="customer-selection-section">
+                  <h4>Select Customers for Processing</h4>
+
+                  <!-- Selected Customers Display -->
+                  <div class="selected-customers" *ngIf="selectedCustomers.length > 0">
+                    <h5>Selected Customers ({{ selectedCustomers.length }})</h5>
+                    <div class="customer-list">
+                      <div class="customer-item" *ngFor="let customer of selectedCustomers; let i = index">
+                        <div class="customer-info">
+                          <span class="customer-name">{{ customer.name }}</span>
+                          <span class="customer-email">{{ customer.email }}</span>
+                        </div>
+                        <button class="remove-btn" (click)="removeSelectedCustomer(i)">✕</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Customer Action Buttons -->
+                  <div class="customer-actions">
+                    <button class="btn btn-primary" (click)="openAddCustomerModal()">
+                      ➕ Add New Customer
+                    </button>
+                    <button class="btn btn-secondary" *ngIf="selectedCustomers.length > 0" (click)="clearAllCustomers()">
+                      🗑️ Clear All
+                    </button>
+                  </div>
+
+                  <!-- Quick Select Existing Customers -->
+                  <div class="existing-customers" *ngIf="existingCustomers.length > 0">
+                    <h5>Quick Select from Existing:</h5>
+                    <div class="existing-customer-list">
+                      <button
+                        class="existing-customer-btn"
+                        *ngFor="let customer of existingCustomers.slice(0, 5)"
+                        (click)="selectExistingCustomer(customer)"
+                      >
+                        {{ customer.name }} ({{ customer.email }})
+                      </button>
+                    </div>
+                  </div>
+
+                  <p class="customer-requirement" *ngIf="selectedCustomers.length === 0">
+                    Please select at least one customer to proceed
+                  </p>
+                </div>
+              </div>
+
+              <div class="preview-actions" *ngIf="previewedProjects.length > 0">
+                <button class="process-filtered-btn" (click)="processFIWithApiFilters()" [disabled]="processingWithFilters || selectedCustomers.length === 0 || !hasSelectedReportTypes()">
+                  <span *ngIf="!processingWithFilters">Process FI Detection ({{ selectedCustomers.length }} customer{{ selectedCustomers.length !== 1 ? 's' : '' }}, {{ getSelectedReportTypesCount() }} report type{{ getSelectedReportTypesCount() !== 1 ? 's' : '' }})</span>
+                  <span *ngIf="processingWithFilters">Processing...</span>
+                </button>
+                <div class="requirements" *ngIf="selectedCustomers.length === 0 || !hasSelectedReportTypes()">
+                  <p class="customer-requirement" *ngIf="selectedCustomers.length === 0">
+                    Please select at least one customer
+                  </p>
+                  <p class="report-requirement" *ngIf="!hasSelectedReportTypes()">
+                    Please select at least one report type
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Loading States -->
+            <div class="loading-state" *ngIf="loadingFilters">
+              <div class="spinner"></div>
+              <p>Loading filter options...</p>
+            </div>
           </div>
 
           <div class="breadcrumb" *ngIf="!showingFolders">
@@ -689,7 +906,7 @@ interface AWSProject {
       text-transform: uppercase;
     }
 
-    .refresh-btn, .scan-btn, .folder-btn, .back-btn {
+    .refresh-btn, .scan-btn, .folder-btn, .back-btn, .filter-btn {
       padding: 8px 16px;
       background: #3498db;
       color: white;
@@ -700,8 +917,16 @@ interface AWSProject {
       margin-right: 10px;
     }
 
-    .refresh-btn:hover, .scan-btn:hover, .folder-btn:hover, .back-btn:hover {
+    .refresh-btn:hover, .scan-btn:hover, .folder-btn:hover, .back-btn:hover, .filter-btn:hover {
       background: #2980b9;
+    }
+
+    .filter-btn.active {
+      background: #27ae60;
+    }
+
+    .filter-btn.active:hover {
+      background: #229954;
     }
 
     .back-btn {
@@ -1369,6 +1594,55 @@ interface AWSProject {
       border-color: #adb5bd;
     }
 
+    /* Filtered Customer Selection Styles */
+    .filtered-customer-selection {
+      margin: 20px 0;
+      padding: 15px;
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 8px;
+    }
+
+    .filtered-customer-selection h4 {
+      color: #495057;
+      margin-bottom: 15px;
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .filtered-customer-selection h5 {
+      color: #6c757d;
+      margin-bottom: 10px;
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .report-type-selection {
+      margin-bottom: 20px;
+      padding-bottom: 15px;
+      border-bottom: 1px solid #dee2e6;
+    }
+
+    .customer-selection-section {
+      margin-top: 15px;
+    }
+
+    .customer-requirement, .report-requirement {
+      color: #dc3545;
+      font-size: 12px;
+      margin-top: 8px;
+      font-style: italic;
+    }
+
+    .requirements {
+      margin-top: 10px;
+    }
+
+    .process-filtered-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
     /* Modal Styles */
     .modal {
       position: fixed;
@@ -1481,6 +1755,238 @@ interface AWSProject {
     .modal-footer .btn-secondary:hover {
       background: #e9ecef;
     }
+
+    /* API Filtering Styles */
+    .api-filtering-section {
+      background: #f0f8ff;
+      border: 2px solid #3498db;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+
+    .filtering-header {
+      margin-bottom: 20px;
+    }
+
+    .filtering-header h3 {
+      color: #2c3e50;
+      margin-bottom: 5px;
+    }
+
+    .filtering-header p {
+      color: #7f8c8d;
+      margin: 0;
+    }
+
+    .filtering-controls {
+      background: white;
+      padding: 20px;
+      border-radius: 6px;
+      border: 1px solid #ddd;
+    }
+
+    .filter-row {
+      display: flex;
+      gap: 20px;
+      align-items: end;
+      margin-bottom: 20px;
+    }
+
+    .filter-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .filter-group {
+      flex: 1;
+      min-width: 150px;
+    }
+
+    .filter-group label {
+      display: block;
+      font-weight: 500;
+      margin-bottom: 5px;
+      color: #2c3e50;
+    }
+
+    .filter-group select {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+      background: white;
+    }
+
+    .filter-group input[type="date"] {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+      background: white;
+    }
+
+    .filter-group select:disabled {
+      background: #f5f5f5;
+      color: #999;
+    }
+
+    .filter-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .preview-btn, .clear-btn, .process-filtered-btn {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .preview-btn {
+      background: #3498db;
+      color: white;
+    }
+
+    .preview-btn:hover:not(:disabled) {
+      background: #2980b9;
+    }
+
+    .preview-btn:disabled {
+      background: #bdc3c7;
+      cursor: not-allowed;
+    }
+
+    .clear-btn {
+      background: #95a5a6;
+      color: white;
+    }
+
+    .clear-btn:hover {
+      background: #7f8c8d;
+    }
+
+    .process-filtered-btn {
+      background: #27ae60;
+      color: white;
+    }
+
+    .process-filtered-btn:hover:not(:disabled) {
+      background: #229954;
+    }
+
+    .process-filtered-btn:disabled {
+      background: #bdc3c7;
+      cursor: not-allowed;
+    }
+
+    .filter-validation {
+      margin-top: 15px;
+      padding: 15px;
+      border-radius: 4px;
+    }
+
+    .validation-errors {
+      background: #fee;
+      border: 1px solid #f5c6cb;
+      border-radius: 4px;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+
+    .validation-errors h4 {
+      color: #721c24;
+      margin: 0 0 10px 0;
+      font-size: 14px;
+    }
+
+    .validation-errors ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    .validation-errors li {
+      color: #721c24;
+      font-size: 13px;
+    }
+
+    .validation-warnings {
+      background: #fff3cd;
+      border: 1px solid #ffeaa7;
+      border-radius: 4px;
+      padding: 10px;
+    }
+
+    .validation-warnings h4 {
+      color: #856404;
+      margin: 0 0 10px 0;
+      font-size: 14px;
+    }
+
+    .validation-warnings ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    .validation-warnings li {
+      color: #856404;
+      font-size: 13px;
+    }
+
+    .project-preview {
+      margin-top: 20px;
+      padding: 20px;
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+    }
+
+    .project-preview h4 {
+      color: #2c3e50;
+      margin-bottom: 15px;
+    }
+
+    .preview-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+
+    .preview-item {
+      background: #f8f9fa;
+      border: 1px solid #e9ecef;
+      border-radius: 4px;
+      padding: 15px;
+    }
+
+    .preview-id {
+      font-weight: bold;
+      color: #2c3e50;
+      margin-bottom: 5px;
+    }
+
+    .preview-title {
+      font-size: 14px;
+      color: #2c3e50;
+      margin-bottom: 8px;
+      line-height: 1.4;
+    }
+
+    .preview-details {
+      font-size: 12px;
+      color: #7f8c8d;
+    }
+
+    .preview-actions {
+      text-align: center;
+      padding-top: 15px;
+      border-top: 1px solid #eee;
+    }
   `]
 })
 export class DocumentsBrowserComponent implements OnInit {
@@ -1528,6 +2034,16 @@ export class DocumentsBrowserComponent implements OnInit {
   existingCustomers: Array<{name: string, email: string}> = [];
   customerEmails = ''; // Keep for backward compatibility during transition
 
+  // API Filtering properties
+  showApiFiltering = false;
+  dropdownData: DropdownData | null = null;
+  selectedFilters: FilteringParams = {};
+  previewedProjects: ProjectPreview[] = [];
+  filterValidation: any = null;
+  loadingFilters = false;
+  loadingPreview = false;
+  processingWithFilters = false;
+
   processingMode: 'immediate' | 'scheduled' = 'immediate';
   scheduleTime = '';
 
@@ -1536,7 +2052,8 @@ export class DocumentsBrowserComponent implements OnInit {
   constructor(
     private http: HttpClient,
     private toastr: ToastrService,
-    private customerService: CustomerService
+    private customerService: CustomerService,
+    private apiFilteringService: ApiFilteringService
   ) {}
 
   ngOnInit() {
@@ -1544,6 +2061,7 @@ export class DocumentsBrowserComponent implements OnInit {
     this.loadAWSStats();
     this.loadAWSFolders();
     this.loadExistingCustomers();
+    this.loadDropdownData();
   }
 
   setActiveTab(tab: 'aws' | 'local') {
@@ -1551,6 +2069,196 @@ export class DocumentsBrowserComponent implements OnInit {
     if (tab === 'local' && this.availableDrives.length === 0) {
       this.loadAvailableDrives();
     }
+  }
+
+  // API Filtering Methods
+  toggleApiFiltering() {
+    this.showApiFiltering = !this.showApiFiltering;
+    if (this.showApiFiltering && !this.dropdownData) {
+      this.loadDropdownData();
+    }
+  }
+
+  loadDropdownData() {
+    this.loadingFilters = true;
+    this.apiFilteringService.getDropdownData().subscribe({
+      next: (data) => {
+        this.dropdownData = data;
+        this.loadingFilters = false;
+      },
+      error: (error) => {
+        console.error('Error loading dropdown data:', error);
+        this.toastr.error('Failed to load filter options');
+        this.loadingFilters = false;
+      }
+    });
+  }
+
+  onCategoryChange() {
+    // Clear subcategory when category changes
+    this.selectedFilters.subcategory = undefined;
+  }
+
+  onDateFilterChange() {
+    // Clear custom date range when switching away from custom range
+    if (this.selectedFilters.apion !== '8') {
+      this.selectedFilters.min_apion = undefined;
+      this.selectedFilters.max_apion = undefined;
+    }
+  }
+
+  getSubcategoriesForCategory(categoryId: number | undefined): Array<{ id: number; name: string }> {
+    if (!categoryId || !this.dropdownData) return [];
+    const category = this.dropdownData.categories.find(cat => cat.id === categoryId);
+    return category ? category.subcategories : [];
+  }
+
+  previewFilteredProjects() {
+    if (!this.hasValidFilters()) {
+      this.toastr.warning('Please select at least one filter option');
+      return;
+    }
+
+    this.loadingPreview = true;
+    this.previewedProjects = [];
+
+    // Clean the filters (remove empty strings and convert to proper types)
+    const cleanedFilters = this.cleanFilterParams(this.selectedFilters);
+
+    // Debug logging
+    console.log('🔍 Raw selectedFilters:', this.selectedFilters);
+    console.log('🔍 Cleaned filters being sent:', cleanedFilters);
+
+    // First validate parameters
+    this.apiFilteringService.validateParams(cleanedFilters).subscribe({
+      next: (validation) => {
+        this.filterValidation = validation;
+        if (validation.valid) {
+          // Proceed with preview
+          this.apiFilteringService.previewProjects(cleanedFilters).subscribe({
+            next: (response) => {
+              this.previewedProjects = response.projects || [];
+              this.loadingPreview = false;
+              this.toastr.success(`Found ${this.previewedProjects.length} projects matching filters`);
+            },
+            error: (error) => {
+              console.error('Error previewing projects:', error);
+              this.toastr.error('Failed to preview projects');
+              this.loadingPreview = false;
+            }
+          });
+        } else {
+          this.loadingPreview = false;
+          this.toastr.error('Filter validation failed');
+        }
+      },
+      error: (error) => {
+        console.error('Error validating filters:', error);
+        this.toastr.error('Failed to validate filters');
+        this.loadingPreview = false;
+      }
+    });
+  }
+
+  cleanFilterParams(filters: any): FilteringParams {
+    const cleaned: FilteringParams = {};
+
+    // Only include non-empty values and convert strings to numbers for numeric fields
+    if (filters.category && filters.category !== '' && filters.category !== null) {
+      cleaned.category = typeof filters.category === 'string' ? parseInt(filters.category) : filters.category;
+    }
+    if (filters.subcategory && filters.subcategory !== '' && filters.subcategory !== null) {
+      cleaned.subcategory = typeof filters.subcategory === 'string' ? parseInt(filters.subcategory) : filters.subcategory;
+    }
+    if (filters.county && filters.county !== '' && filters.county !== null) {
+      cleaned.county = typeof filters.county === 'string' ? parseInt(filters.county) : filters.county;
+    }
+    if (filters.stage && filters.stage !== '' && filters.stage !== null) {
+      cleaned.stage = typeof filters.stage === 'string' ? parseInt(filters.stage) : filters.stage;
+    }
+    if (filters.type && filters.type !== '' && filters.type !== null) {
+      cleaned.type = typeof filters.type === 'string' ? parseInt(filters.type) : filters.type;
+    }
+    if (filters.apion && filters.apion !== '' && filters.apion !== null) {
+      cleaned.apion = filters.apion;
+    }
+    if (filters.min_apion && filters.min_apion !== '' && filters.min_apion !== null) {
+      cleaned.min_apion = filters.min_apion;
+    }
+    if (filters.max_apion && filters.max_apion !== '' && filters.max_apion !== null) {
+      cleaned.max_apion = filters.max_apion;
+    }
+
+    return cleaned;
+  }
+
+  clearFilters() {
+    this.selectedFilters = {};
+    this.previewedProjects = [];
+    this.filterValidation = null;
+  }
+
+  hasValidFilters(): boolean {
+    return !!(this.selectedFilters.category ||
+              this.selectedFilters.county ||
+              this.selectedFilters.stage ||
+              this.selectedFilters.type);
+  }
+
+  processFIWithApiFilters() {
+    if (this.selectedCustomers.length === 0) {
+      this.toastr.error('Please select at least one customer');
+      return;
+    }
+
+    if (!this.hasValidFilters()) {
+      this.toastr.error('Please configure filters and preview projects first');
+      return;
+    }
+
+    const selectedReportTypes = this.reportTypes
+      .filter(type => type.selected)
+      .map(type => type.value);
+
+    if (selectedReportTypes.length === 0) {
+      this.toastr.error('Please select at least one report type');
+      return;
+    }
+
+    this.processingWithFilters = true;
+
+    // Clean filters just like in previewFilteredProjects
+    const cleanedFilters = this.cleanFilterParams(this.selectedFilters);
+
+    console.log('🔍 Raw selectedFilters:', this.selectedFilters);
+    console.log('🔍 Cleaned filters:', cleanedFilters);
+
+    const processingParams = {
+      filters: cleanedFilters,
+      customers: this.selectedCustomers,
+      reportTypes: selectedReportTypes,
+      processingMode: this.processingMode,
+      scheduleTime: this.processingMode === 'scheduled' ? this.scheduleTime : undefined
+    };
+
+    this.apiFilteringService.processFIWithFilters(processingParams).subscribe({
+      next: (response) => {
+        this.processingWithFilters = false;
+        if (response.success) {
+          this.toastr.success(`Successfully processed ${response.processed} projects`);
+          // Reset state after successful processing
+          this.clearFilters();
+          this.showApiFiltering = false;
+        } else {
+          this.toastr.error(`Processing failed: ${response.message}`);
+        }
+      },
+      error: (error) => {
+        console.error('Error processing with filters:', error);
+        this.toastr.error('Failed to process projects with filters');
+        this.processingWithFilters = false;
+      }
+    });
   }
 
   // AWS Methods
@@ -1615,6 +2323,14 @@ export class DocumentsBrowserComponent implements OnInit {
 
   canProcessFolders(): boolean {
     return this.reportTypes.some(type => type.selected);
+  }
+
+  hasSelectedReportTypes(): boolean {
+    return this.reportTypes.some(type => type.selected);
+  }
+
+  getSelectedReportTypesCount(): number {
+    return this.reportTypes.filter(type => type.selected).length;
   }
 
   clearFolderSelections() {

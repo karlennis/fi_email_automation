@@ -1041,16 +1041,12 @@ async function processLocalBatch(projects, reportTypes, customerData) {
                 // Add match to customer's batch
                 customerMatches[customerInfo.email].matches.push({
                   projectId: project.projectId,
-                  projectTitle: metadata.planning_title || `Project ${project.projectId}`,
-                  planningStage: metadata.planning_stage,
-                  planningSector: metadata.planning_sector,
-                  planningUpdated: metadata.planning_updated,
-                  biiUrl: metadata.bii_url,
-                  reportType: match.reportType,
                   documentName: match.documentName,
+                  reportType: match.reportType,
                   confidence: Math.round(match.confidence * 100),
-                  summary: match.matchedText,
-                  requestingAuthority: metadata.planning_authority
+                  matchedText: match.matchedText,
+                  projectMetadata: metadata, // ← Fixed: Use the expected structure
+                  detectionMethod: 'local_simulation'
                 });
               }
             }
@@ -1293,16 +1289,12 @@ async function processBatch(projectIds, reportTypes, customerData) {
                 // Add match to customer's batch
                 customerMatches[customerInfo.email].matches.push({
                   projectId,
-                  projectTitle: metadata.planning_title || `Project ${projectId}`,
-                  planningStage: metadata.planning_stage,
-                  planningSector: metadata.planning_sector,
-                  planningUpdated: metadata.planning_updated,
-                  biiUrl: metadata.bii_url,
-                  reportType: match.reportType,
                   documentName: match.documentName,
+                  reportType: match.reportType,
                   confidence: Math.round(match.confidence * 100),
-                  summary: match.matchedText,
-                  requestingAuthority: metadata.planning_authority
+                  matchedText: match.matchedText,
+                  projectMetadata: metadata, // ← Fixed: Use the expected structure
+                  detectionMethod: 'api_simulation'
                 });
               }
             }
