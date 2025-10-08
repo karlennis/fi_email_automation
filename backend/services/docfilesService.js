@@ -1,6 +1,7 @@
 const { OpenAI } = require('openai');
 const winston = require('winston');
 const crypto = require('crypto');
+require('dotenv').config(); // Load environment variables
 
 const logger = winston.createLogger({
   level: 'info',

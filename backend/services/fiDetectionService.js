@@ -5,6 +5,7 @@ const { execSync } = require('child_process');
 const crypto = require('crypto');
 const pdf = require('pdf-parse');
 const winston = require('winston');
+require('dotenv').config(); // Load environment variables
 
 const logger = winston.createLogger({
   level: 'info',
@@ -16,6 +17,10 @@ const logger = winston.createLogger({
     new winston.transports.Console()
   ]
 });
+
+// Import FI Report Service for saving results
+const fiReportService = require('./fiReportService');
+const Customer = require('../models/Customer');
 
 class FIDetectionService {
   constructor() {
@@ -44,6 +49,9 @@ class FIDetectionService {
     this.TEMPERATURE = this.config.temperature;
     this.TOP_P = this.config.topP;
 
+    // BII URL prefix for constructing proper BII URLs
+    this.BII_URL_PREFIX = 'https://app.buildinginfo.com/';
+
     // Create OCR cache directory
     this.ocrCacheDir = path.join(process.cwd(), '.ocr_cache');
     this.ensureOcrCacheDir();
@@ -69,6 +77,70 @@ class FIDetectionService {
       }
     } catch (error) {
       logger.error('Error creating OCR cache directory:', error);
+    }
+  }
+
+  /**
+   * Construct proper BII URL from planning_path_url
+   * @param {Object} projectMetadata - Project metadata containing planning_path_url
+   * @returns {string|null} - Constructed BII URL or null if no planning_path_url
+   */
+  constructBiiUrl(projectMetadata) {
+    if (!projectMetadata?.planning_path_url) {
+      return null;
+    }
+
+    // Simply concatenate the base URL with the planning_path_url
+    // planning_path_url already contains "p-" prefix and "-" suffix (e.g., "p-OGY4Zg==-")
+    return `${this.BII_URL_PREFIX}${projectMetadata.planning_path_url}`;
+  }
+
+  /**
+   * Find or create customer record for email address
+   * @param {Object} customerInfo - Customer info with email, name, etc.
+   * @param {Array} reportTypes - Report types to add if creating new customer
+   * @returns {Promise<Object>} - Customer record
+   */
+  async findOrCreateCustomer(customerInfo, reportTypes = []) {
+    try {
+      let customer = await Customer.findOne({ email: customerInfo.email });
+
+      if (!customer) {
+        // Create new customer record
+        customer = new Customer({
+          name: customerInfo.name || customerInfo.email.split('@')[0],
+          email: customerInfo.email,
+          company: customerInfo.company || '',
+          phone: customerInfo.phone || '',
+          reportTypes: reportTypes.length > 0 ? reportTypes : ['acoustic'], // Default to acoustic if none specified
+          isActive: true,
+          emailPreferences: {
+            instantNotification: true,
+            dailyDigest: false,
+            weeklyDigest: false
+          }
+        });
+
+        await customer.save();
+        logger.info(`📊 Created new customer record for ${customerInfo.email}`, {
+          customerId: customer._id,
+          name: customer.name,
+          reportTypes: customer.reportTypes
+        });
+      } else {
+        // Update existing customer with new report types if needed
+        const newReportTypes = reportTypes.filter(rt => !customer.reportTypes.includes(rt));
+        if (newReportTypes.length > 0) {
+          customer.reportTypes.push(...newReportTypes);
+          await customer.save();
+          logger.info(`📈 Updated customer ${customerInfo.email} with new report types: ${newReportTypes.join(', ')}`);
+        }
+      }
+
+      return customer;
+    } catch (error) {
+      logger.error(`❌ Error finding/creating customer ${customerInfo.email}:`, error);
+      throw error;
     }
   }
 
@@ -648,9 +720,11 @@ class FIDetectionService {
   }
 
   /**
-   * Process FI requests with API-based project filtering - ENHANCED WITH DOCFILES.TXT
+   * Process FI requests with API-based project filtering - ENHANCED WITH DOCFILES.TXT AND REPORT SAVING
    */
-  async processFIRequestWithFiltering(reportTypes, apiParams = {}, customerData = []) {
+  async processFIRequestWithFiltering(reportTypes, apiParams = {}, customerData = [], saveReport = true) {
+    const startTime = Date.now();
+
     try {
       logger.info('🚀 Starting FI detection with API filtering + docfiles.txt optimization');
 
@@ -749,14 +823,26 @@ class FIDetectionService {
                   }
 
                   // Log metadata for debugging
-                  logger.info(`📊 Attaching metadata to match for ${projectId}:`, {
-                    hasMetadata: !!projectMetadata,
+                  logger.info(`� Processing email match for project ${projectId}:`, {
+                    reportType,
                     planningTitle: projectMetadata?.planning_title,
-                    biiUrl: projectMetadata?.bii_url,
                     planningStage: projectMetadata?.planning_stage,
-                    planningSector: projectMetadata?.planning_sector,
-                    fullMetadata: projectMetadata
+                    hasMetadata: !!projectMetadata,
+                    fullProjectMetadata: projectMetadata
                   });
+
+                  logger.info(`📧 Mapped project data for ${projectId}:`, {
+                    projectTitle: projectMetadata?.planning_title || 'Title unavailable',
+                    planningStage: projectMetadata?.planning_stage || 'Unknown',
+                    planningSector: this.mapPlanningSector(projectMetadata?.planning_category, projectMetadata?.planning_subcategory) || 'N/A',
+                    biiUrl: this.constructBiiUrl(projectMetadata)
+                  });
+
+                  // Enhance projectMetadata with computed fields for email templates
+                  if (projectMetadata) {
+                    projectMetadata.bii_url = this.constructBiiUrl(projectMetadata);
+                    projectMetadata.planning_sector = this.mapPlanningSector(projectMetadata.planning_category, projectMetadata.planning_subcategory);
+                  }
 
                   // Create match record
                   docfilesMatches.push({
@@ -773,7 +859,20 @@ class FIDetectionService {
                         .map(d => d.quote)
                         .join('; ')
                     },
+                    // Extract email-ready data from metadata
+                    planningTitle: projectMetadata?.planning_title || 'Title unavailable',
+                    planningStage: projectMetadata?.planning_stage || 'Unknown',
+                    planningValue: projectMetadata?.planning_value || 0,
+                    planningCounty: projectMetadata?.planning_county || 'Unknown',
+                    planningRegion: projectMetadata?.planning_region || 'Unknown',
+                    planningSector: this.mapPlanningSector(projectMetadata?.planning_category, projectMetadata?.planning_subcategory) || 'N/A',
+                    biiUrl: this.constructBiiUrl(projectMetadata) || '',
+                    fiIndicators: docfilesAnalysis.fiDetails
+                      .filter(d => d.reportType === reportType)
+                      .map(d => d.quote),
+                    matchedKeywords: [reportType],
                     projectMetadata: projectMetadata,
+                    fullMetadata: projectMetadata,
                     detectionMethod: docfilesAnalysis.detectionMethod
                   });
 
@@ -871,15 +970,26 @@ class FIDetectionService {
                     projectMetadata = await buildingInfoService.getProjectMetadata(doc.projectId);
                   }
 
-                  // Log metadata for debugging
-                  logger.info(`📊 Attaching metadata to individual doc match for ${doc.projectId}:`, {
-                    hasMetadata: !!projectMetadata,
+                  logger.info(`📧 Processing email match for project ${doc.projectId}:`, {
+                    reportType,
                     planningTitle: projectMetadata?.planning_title,
-                    biiUrl: projectMetadata?.bii_url,
                     planningStage: projectMetadata?.planning_stage,
-                    planningSector: projectMetadata?.planning_sector,
-                    fullMetadata: projectMetadata
+                    hasMetadata: !!projectMetadata,
+                    fullProjectMetadata: projectMetadata
                   });
+
+                  logger.info(`📧 Mapped project data for ${doc.projectId}:`, {
+                    projectTitle: projectMetadata?.planning_title || 'Title unavailable',
+                    planningStage: projectMetadata?.planning_stage || 'Unknown',
+                    planningSector: this.mapPlanningSector(projectMetadata?.planning_category, projectMetadata?.planning_subcategory) || 'N/A',
+                    biiUrl: this.constructBiiUrl(projectMetadata)
+                  });
+
+                  // Enhance projectMetadata with computed fields for email templates
+                  if (projectMetadata) {
+                    projectMetadata.bii_url = this.constructBiiUrl(projectMetadata);
+                    projectMetadata.planning_sector = this.mapPlanningSector(projectMetadata.planning_category, projectMetadata.planning_subcategory);
+                  }
 
                   docfilesMatches.push({
                     projectId: doc.projectId,
@@ -889,7 +999,18 @@ class FIDetectionService {
                     confidence: 0.9,
                     matchedText: fiResult.extractedInfo?.Summary || 'FI request detected',
                     fiDetails: fiResult.extractedInfo,
+                    // Extract email-ready data from metadata
+                    planningTitle: projectMetadata?.planning_title || 'Title unavailable',
+                    planningStage: projectMetadata?.planning_stage || 'Unknown',
+                    planningValue: projectMetadata?.planning_value || 0,
+                    planningCounty: projectMetadata?.planning_county || 'Unknown',
+                    planningRegion: projectMetadata?.planning_region || 'Unknown',
+                    planningSector: this.mapPlanningSector(projectMetadata?.planning_category, projectMetadata?.planning_subcategory) || 'N/A',
+                    biiUrl: this.constructBiiUrl(projectMetadata) || '',
+                    fiIndicators: fiResult.extractedInfo ? [fiResult.extractedInfo.Summary] : [],
+                    matchedKeywords: [reportType],
                     projectMetadata: projectMetadata,
+                    fullMetadata: projectMetadata,
                     detectionMethod: fiResult.detectionMethod
                   });
 
@@ -933,12 +1054,27 @@ class FIDetectionService {
       // Step 4: Group results by customer if customer data provided
       const customerMatches = {};
       if (customerData && customerData.length > 0) {
+        // Create or find customer records in database
         for (const customer of customerData) {
-          customerMatches[customer.email] = {
-            email: customer.email,
-            name: customer.name || customer.email.split('@')[0],
-            matches: []
-          };
+          try {
+            // Find or create customer record in database
+            const customerRecord = await this.findOrCreateCustomer(customer, reportTypes);
+
+            customerMatches[customer.email] = {
+              email: customer.email,
+              name: customerRecord.name,
+              matches: [],
+              customerId: customerRecord._id
+            };
+          } catch (error) {
+            logger.error(`Failed to create/find customer ${customer.email}:`, error);
+            // Fallback to in-memory customer data
+            customerMatches[customer.email] = {
+              email: customer.email,
+              name: customer.name || customer.email.split('@')[0],
+              matches: []
+            };
+          }
         }
 
         // Distribute matches across customers (simple round-robin for now)
@@ -949,10 +1085,50 @@ class FIDetectionService {
         });
       }
 
+      // Step 5: Save FI reports to database if requested
+      let savedReports = [];
+      if (saveReport && docfilesMatches.length > 0) {
+        try {
+          const searchCriteria = {
+            reportTypes,
+            apiParams,
+            dateRange: apiParams.dateRange || {},
+            projectTypes: apiParams.projectTypes || [],
+            regions: apiParams.regions || []
+          };
+
+          // Convert customerMatches object to array with customer IDs included
+          const enhancedCustomerData = Object.values(customerMatches).map(cm => ({
+            email: cm.email,
+            name: cm.name,
+            id: cm.customerId // Use the MongoDB _id from the database
+          }));
+
+          savedReports = await this.saveFIReports(
+            docfilesMatches,
+            enhancedCustomerData.length > 0 ? enhancedCustomerData : customerData,
+            searchCriteria,
+            processingStats,
+            startTime
+          );
+
+          logger.info(`💾 Saved ${savedReports.length} FI reports to database`);
+        } catch (saveError) {
+          logger.error('Error saving FI reports (continuing with results):', saveError);
+          // Don't throw error, just log and continue with results
+        }
+      }
+
       return {
         success: true,
         results: docfilesMatches,
         customerMatches: Object.values(customerMatches),
+        savedReports: savedReports.map(r => ({
+          reportId: r.reportId,
+          customerId: r.customerId,
+          status: r.status,
+          projectsFound: r.totalFIMatches
+        })),
         processingStats,
         apiFilter: apiParams,
         cacheStats: this.getCacheStats(),
@@ -961,6 +1137,94 @@ class FIDetectionService {
 
     } catch (error) {
       logger.error('Error in processFIRequestWithFiltering:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Save FI detection results as reports for multiple customers
+   * @param {Array} docfilesMatches - The FI detection results
+   * @param {Array} customerData - Customer information
+   * @param {Object} searchCriteria - The search parameters used
+   * @param {Object} processingStats - Processing statistics
+   * @param {number} startTime - Start timestamp for processing time calculation
+   * @returns {Promise<Array>} Array of saved reports
+   */
+  async saveFIReports(docfilesMatches, customerData, searchCriteria, processingStats, startTime) {
+    try {
+      const savedReports = [];
+
+      if (!customerData || customerData.length === 0) {
+        logger.warn('No customer data provided, skipping report saving');
+        return savedReports;
+      }
+
+      for (const customer of customerData) {
+        // Filter matches for this customer (or assign all if single customer)
+        const customerMatches = customerData.length === 1
+          ? docfilesMatches
+          : docfilesMatches.filter((match, index) => {
+              // Simple round-robin distribution
+              const customerIndex = customerData.findIndex(c => c.email === customer.email);
+              return index % customerData.length === customerIndex;
+            });
+
+        if (customerMatches.length === 0) {
+          logger.info(`No FI matches assigned to customer ${customer.email}`);
+          continue;
+        }
+
+        // Prepare report data
+        const reportData = {
+          customerId: customer.id || customer.email,
+          customerEmail: customer.email,
+          customerName: customer.name || customer.email.split('@')[0],
+          reportType: 'FI_DETECTION',
+          status: 'GENERATED',
+
+          searchCriteria: {
+            keywords: searchCriteria.reportTypes || [],
+            dateRange: searchCriteria.dateRange || {},
+            projectTypes: searchCriteria.projectTypes || [],
+            regions: searchCriteria.regions || [],
+            customFilters: searchCriteria.apiParams || {}
+          },
+
+          projectsFound: customerMatches.map(match => ({
+            projectId: match.projectId,
+            planningTitle: match.planningTitle || 'Title unavailable',
+            planningStage: match.planningStage || 'Unknown',
+            planningValue: match.planningValue || 0,
+            planningCounty: match.planningCounty || 'Unknown',
+            planningRegion: match.planningRegion || 'Unknown',
+            biiUrl: match.biiUrl || '',
+            fiIndicators: match.fiIndicators || [],
+            matchedKeywords: match.matchedKeywords || [],
+            confidence: match.confidence || 0.8,
+            metadata: match.fullMetadata || {}
+          })),
+
+          totalProjectsScanned: processingStats.totalProjects || 0,
+          totalFIMatches: customerMatches.length,
+
+          processingTime: Date.now() - startTime,
+          source: 'MANUAL'
+        };
+
+        // Save the report
+        const savedReport = await fiReportService.createReport(reportData);
+        savedReports.push(savedReport);
+
+        logger.info(`📊 Saved FI report ${savedReport.reportId} for customer ${customer.email}`, {
+          customerId: customer.email,
+          projectsFound: customerMatches.length,
+          processingTime: reportData.processingTime
+        });
+      }
+
+      return savedReports;
+    } catch (error) {
+      logger.error('Error saving FI reports:', error);
       throw error;
     }
   }  /**
@@ -997,6 +1261,46 @@ class FIDetectionService {
       estimatedSizeBytes: totalSize,
       estimatedSizeMB: (totalSize / 1024 / 1024).toFixed(2)
     };
+  }
+
+  /**
+   * Map planning category and subcategory to a readable sector
+   */
+  mapPlanningSector(category, subcategory) {
+    if (!category) return 'N/A';
+
+    const categoryMap = {
+      'Residential': 'Residential',
+      'Commercial': 'Commercial',
+      'Industrial': 'Industrial',
+      'Mixed Use': 'Mixed Use',
+      'Infrastructure': 'Infrastructure',
+      'Education': 'Education',
+      'Healthcare': 'Healthcare',
+      'Retail': 'Retail',
+      'Office': 'Office',
+      'Leisure': 'Leisure',
+      'Transport': 'Transport',
+      'Utilities': 'Utilities',
+      'Agricultural': 'Agricultural',
+      'Environmental': 'Environmental'
+    };
+
+    // Try exact match first
+    if (categoryMap[category]) {
+      return subcategory ? `${categoryMap[category]} - ${subcategory}` : categoryMap[category];
+    }
+
+    // Try partial matches
+    const categoryLower = category.toLowerCase();
+    for (const [key, value] of Object.entries(categoryMap)) {
+      if (categoryLower.includes(key.toLowerCase()) || key.toLowerCase().includes(categoryLower)) {
+        return subcategory ? `${value} - ${subcategory}` : value;
+      }
+    }
+
+    // Return original if no mapping found
+    return subcategory ? `${category} - ${subcategory}` : category;
   }
 }
 

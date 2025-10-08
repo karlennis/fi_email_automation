@@ -1,5 +1,6 @@
 const axios = require('axios');
 const winston = require('winston');
+require('dotenv').config(); // Load environment variables
 
 const logger = winston.createLogger({
   level: 'info',

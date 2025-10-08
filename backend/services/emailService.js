@@ -3,6 +3,7 @@ const handlebars = require('handlebars');
 const fs = require('fs').promises;
 const path = require('path');
 const winston = require('winston');
+require('dotenv').config(); // Load environment variables
 
 const logger = winston.createLogger({
   level: 'info',

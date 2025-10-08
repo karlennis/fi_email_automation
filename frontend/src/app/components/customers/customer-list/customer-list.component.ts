@@ -2,6 +2,7 @@ import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { FormsModule } from '@angular/forms';
+import { HttpClient } from '@angular/common/http';
 import { CustomerService, Customer, CustomerHistory } from '../../../services/customer.service';
 import { ToastrService } from 'ngx-toastr';
 
@@ -110,6 +111,14 @@ import { ToastrService } from 'ngx-toastr';
                 <span class="created-date">Created: {{ formatDate(customer.createdAt) }}</span>
               </div>
               <div class="card-actions">
+                <button
+                  (click)="viewCustomerReports(customer)"
+                  class="btn btn-sm btn-primary"
+                  [disabled]="isLoading"
+                  title="View customer reports"
+                >
+                  📊 View Reports
+                </button>
                 <button
                   (click)="viewCustomerHistory(customer._id)"
                   class="btn btn-sm btn-info"
@@ -248,6 +257,132 @@ import { ToastrService } from 'ngx-toastr';
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" (click)="showAddCustomer = false">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Reports Modal -->
+    <div class="modal" *ngIf="showReportsModal" (click)="closeReportsModal()">
+      <div class="modal-content modal-lg" (click)="$event.stopPropagation()">
+        <div class="modal-header">
+          <h2>📊 Customer Reports</h2>
+          <div class="modal-customer-info" *ngIf="selectedCustomerForReports">
+            <span class="customer-name">{{ selectedCustomerForReports.name }}</span>
+            <span class="customer-email">{{ selectedCustomerForReports.email }}</span>
+          </div>
+          <button class="close-btn" (click)="closeReportsModal()">×</button>
+        </div>
+        <div class="modal-body">
+          <div *ngIf="reportsLoading" class="loading-spinner">
+            <span>🔄 Loading reports...</span>
+          </div>
+
+          <div *ngIf="!reportsLoading && customerReports.length === 0" class="empty-state">
+            <span>📄 No reports found for this customer</span>
+          </div>
+
+          <div *ngIf="!reportsLoading && customerReports.length > 0" class="reports-list">
+            <div class="reports-summary">
+              <h3>Reports Overview ({{ customerReports.length }} total)</h3>
+            </div>
+
+            <div class="report-card" *ngFor="let report of customerReports">
+              <div class="report-header">
+                <div class="report-info">
+                  <h4>{{ report.reportType }} Report</h4>
+                  <span class="report-id">ID: {{ report.reportId }}</span>
+                </div>
+                <div class="report-status">
+                  <span class="status-badge" [class]="'badge-' + report.status.toLowerCase()">
+                    {{ report.status }}
+                  </span>
+                </div>
+              </div>
+
+              <div class="report-stats">
+                <div class="stat">
+                  <span class="stat-label">Projects Found:</span>
+                  <span class="stat-value">{{ report.totalFIMatches }}</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-label">Sent:</span>
+                  <span class="stat-value">{{ report.sentAt | date:'short' || 'Not sent' }}</span>
+                </div>
+                <div class="stat">
+                  <span class="stat-label">Delivery Status:</span>
+                  <span class="stat-value" [class]="'status-' + report.lastDeliveryStatus?.toLowerCase()">
+                    {{ report.lastDeliveryStatus || 'Pending' }}
+                  </span>
+                </div>
+              </div>
+
+              <div class="report-actions">
+                <button class="btn btn-sm btn-info" (click)="viewReportDetails(report)">
+                  👁️ View Details
+                </button>
+                <button class="btn btn-sm btn-warning" (click)="openResendModal(report)" *ngIf="report.canResend">
+                  🔁 Resend
+                </button>
+                <button class="btn btn-sm btn-success" (click)="openSendToOthersModal(report)">
+                  📤 Send to Others
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Resend/Send to Others Modal -->
+    <div class="modal" *ngIf="showResendModal" (click)="closeResendModal()">
+      <div class="modal-content" (click)="$event.stopPropagation()">
+        <div class="modal-header">
+          <h2>📤 Send Report</h2>
+          <button class="close-btn" (click)="closeResendModal()">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>Original Report:</label>
+            <div class="report-summary" *ngIf="selectedReport">
+              <span>{{ selectedReport.reportType }} - {{ selectedReport.reportId }}</span>
+              <span class="projects-count">{{ selectedReport.totalFIMatches }} projects found</span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Send to Email Address:</label>
+            <input
+              type="email"
+              class="form-control"
+              [(ngModel)]="resendEmail"
+              placeholder="Enter email address"
+              [disabled]="resendLoading"
+            >
+          </div>
+
+          <div class="form-group">
+            <label>Or select from existing customers:</label>
+            <select class="form-control" (change)="selectCustomerEmail($event)" [disabled]="resendLoading">
+              <option value="">Choose a customer...</option>
+              <option *ngFor="let customer of availableCustomers" [value]="customer.email">
+                {{ customer.name }} ({{ customer.email }})
+              </option>
+            </select>
+          </div>
+
+          <div class="modal-actions">
+            <button class="btn btn-secondary" (click)="closeResendModal()" [disabled]="resendLoading">
+              Cancel
+            </button>
+            <button
+              class="btn btn-primary"
+              (click)="sendReport()"
+              [disabled]="!resendEmail || resendLoading"
+            >
+              <span *ngIf="resendLoading">🔄 Sending...</span>
+              <span *ngIf="!resendLoading">📤 Send Report</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -583,6 +718,222 @@ import { ToastrService } from 'ngx-toastr';
         justify-content: center;
       }
     }
+
+    /* Reports Modal Styles */
+    .modal-lg {
+      width: 90%;
+      max-width: 900px;
+    }
+
+    .modal-customer-info {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin: 0 20px;
+    }
+
+    .customer-name {
+      font-weight: bold;
+      color: #2c3e50;
+    }
+
+    .customer-email {
+      font-size: 0.9rem;
+      color: #6c757d;
+    }
+
+    .loading-spinner {
+      text-align: center;
+      padding: 40px;
+      font-size: 1.1rem;
+      color: #6c757d;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px;
+      font-size: 1.1rem;
+      color: #6c757d;
+    }
+
+    .reports-summary {
+      margin-bottom: 20px;
+      padding-bottom: 15px;
+      border-bottom: 2px solid #e9ecef;
+    }
+
+    .reports-summary h3 {
+      margin: 0;
+      color: #2c3e50;
+    }
+
+    .report-card {
+      border: 1px solid #e9ecef;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 15px;
+      background: #f8f9fa;
+    }
+
+    .report-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+    }
+
+    .report-info h4 {
+      margin: 0 0 5px 0;
+      color: #2c3e50;
+    }
+
+    .report-id {
+      font-size: 0.8rem;
+      color: #6c757d;
+      font-family: monospace;
+    }
+
+    .status-badge {
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .badge-sent {
+      background: #d4edda;
+      color: #155724;
+    }
+
+    .badge-failed {
+      background: #f8d7da;
+      color: #721c24;
+    }
+
+    .badge-pending {
+      background: #fff3cd;
+      color: #856404;
+    }
+
+    .report-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 15px;
+      margin-bottom: 15px;
+    }
+
+    .stat {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .stat-label {
+      font-size: 0.8rem;
+      color: #6c757d;
+      font-weight: 500;
+    }
+
+    .stat-value {
+      font-weight: 600;
+      color: #2c3e50;
+    }
+
+    .status-success {
+      color: #28a745;
+    }
+
+    .status-failed {
+      color: #dc3545;
+    }
+
+    .status-pending {
+      color: #ffc107;
+    }
+
+    .report-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .report-summary {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 6px;
+      margin-bottom: 20px;
+      border-left: 4px solid #007bff;
+    }
+
+    .projects-count {
+      display: block;
+      font-size: 0.9rem;
+      color: #6c757d;
+      margin-top: 5px;
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    .form-group label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 600;
+      color: #495057;
+    }
+
+    .form-control {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #ced4da;
+      border-radius: 6px;
+      font-size: 1rem;
+      transition: border-color 0.15s ease-in-out;
+    }
+
+    .form-control:focus {
+      outline: none;
+      border-color: #007bff;
+      box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+    }
+
+    @media (max-width: 768px) {
+      .modal-lg {
+        width: 95%;
+        margin: 10px;
+      }
+
+      .modal-customer-info {
+        margin: 10px 0;
+      }
+
+      .report-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+      }
+
+      .report-stats {
+        grid-template-columns: 1fr;
+      }
+
+      .report-actions {
+        justify-content: center;
+      }
+
+      .modal-actions {
+        flex-direction: column;
+      }
+    }
   `]
 })
 export class CustomerListComponent implements OnInit {
@@ -606,10 +957,24 @@ export class CustomerListComponent implements OnInit {
   showQuickSelectModal = false;
   quickSelectedCustomer: Customer | null = null;
 
+  // Reports modal
+  showReportsModal = false;
+  selectedCustomerForReports: Customer | null = null;
+  customerReports: any[] = [];
+  reportsLoading = false;
+  showResendModal = false;
+  selectedReport: any = null;
+  resendEmail = '';
+  resendLoading = false;
+  availableCustomers: Customer[] = [];
+
   constructor(
     private customerService: CustomerService,
-    private toastr: ToastrService
+    private toastr: ToastrService,
+    private http: HttpClient
   ) {}
+
+  private baseUrl = 'http://localhost:3000/api/reports'; // Backend API URL
 
   ngOnInit() {
     this.loadCustomers();
@@ -760,5 +1125,109 @@ export class CustomerListComponent implements OnInit {
       case 'failed': return 'Failed';
       default: return status;
     }
+  }
+
+  // Reports Modal Methods
+  viewCustomerReports(customer: Customer) {
+    this.selectedCustomerForReports = customer;
+    this.showReportsModal = true;
+    this.loadCustomerReports();
+    this.loadAvailableCustomers();
+  }
+
+  closeReportsModal() {
+    this.showReportsModal = false;
+    this.selectedCustomerForReports = null;
+    this.customerReports = [];
+    this.reportsLoading = false;
+  }
+
+  loadCustomerReports() {
+    if (!this.selectedCustomerForReports) return;
+
+    this.reportsLoading = true;
+    const params = {
+      limit: '50',
+      page: '1'
+    };
+
+    this.http.get<any>(`${this.baseUrl}/customer/${this.selectedCustomerForReports._id}`, { params })
+      .subscribe({
+        next: (response) => {
+          this.customerReports = response.data.reports || [];
+          this.reportsLoading = false;
+        },
+        error: (error) => {
+          console.error('Error loading customer reports:', error);
+          this.toastr.error('Failed to load customer reports');
+          this.reportsLoading = false;
+        }
+      });
+  }
+
+  loadAvailableCustomers() {
+    // Load all active customers for the "send to others" functionality
+    this.customerService.getCustomers().subscribe({
+      next: (response: any) => {
+        const customers = response.customers || response;
+        this.availableCustomers = customers.filter((c: Customer) => c.isActive && c._id !== this.selectedCustomerForReports?._id);
+      },
+      error: (error) => {
+        console.error('Error loading available customers:', error);
+      }
+    });
+  }
+
+  viewReportDetails(report: any) {
+    // You could implement a detailed view modal here if needed
+    this.toastr.info('Report details view coming soon!');
+  }
+
+  openResendModal(report: any) {
+    this.selectedReport = report;
+    this.resendEmail = this.selectedCustomerForReports?.email || '';
+    this.showResendModal = true;
+  }
+
+  openSendToOthersModal(report: any) {
+    this.selectedReport = report;
+    this.resendEmail = '';
+    this.showResendModal = true;
+  }
+
+  closeResendModal() {
+    this.showResendModal = false;
+    this.selectedReport = null;
+    this.resendEmail = '';
+    this.resendLoading = false;
+  }
+
+  selectCustomerEmail(event: any) {
+    this.resendEmail = event.target.value;
+  }
+
+  sendReport() {
+    if (!this.selectedReport || !this.resendEmail) return;
+
+    this.resendLoading = true;
+
+    const body = {
+      newRecipientEmail: this.resendEmail,
+      customerId: this.selectedCustomerForReports?._id
+    };
+
+    this.http.post<any>(`${this.baseUrl}/${this.selectedReport.reportId}/resend`, body)
+      .subscribe({
+        next: (response) => {
+          this.toastr.success('Report sent successfully!');
+          this.closeResendModal();
+          this.loadCustomerReports(); // Refresh the reports list
+        },
+        error: (error) => {
+          console.error('Error sending report:', error);
+          this.toastr.error('Failed to send report');
+          this.resendLoading = false;
+        }
+      });
   }
 }

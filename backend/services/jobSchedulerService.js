@@ -2,6 +2,7 @@ const Queue = require('bull');
 const redis = require('redis');
 const schedule = require('node-schedule');
 const winston = require('winston');
+require('dotenv').config(); // Load environment variables
 const s3Service = require('./s3Service');
 const buildingInfoService = require('./buildingInfoService');
 const fiDetectionService = require('./fiDetectionService');
