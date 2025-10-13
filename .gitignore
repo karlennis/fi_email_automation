@@ -76,3 +76,10 @@ build/Release
 .yarn-integrity
 .yarn-error.log
 temp/
+
+# Document Register outputs (large files)
+document-register/outputs/
+backend/services/outputs/
+**/document-register.csv
+**/document-register.xlsx
+**/register-metadata.json
