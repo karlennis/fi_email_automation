@@ -358,17 +358,6 @@ class EmailService {
 
         // Use project ID as key to prevent duplicates
         if (!matchesByType[reportType][match.projectId]) {
-          // Log metadata for debugging
-          logger.info(`📧 Processing email match for project ${match.projectId}:`, {
-            hasMetadata: !!match.projectMetadata,
-            planningTitle: match.projectMetadata?.planning_title,
-            biiUrl: match.projectMetadata?.bii_url,
-            planningStage: match.projectMetadata?.planning_stage,
-            planningSector: match.projectMetadata?.planning_sector,
-            reportType: match.reportType,
-            fullProjectMetadata: match.projectMetadata
-          });
-
           // Map project metadata fields to template-expected names
           const projectData = {
             ...match,
@@ -378,13 +367,6 @@ class EmailService {
             planningAuthority: match.projectMetadata?.planning_authority || 'N/A',
             biiUrl: match.projectMetadata?.bii_url || null // Don't create fallback URLs
           };
-
-          logger.info(`📧 Mapped project data for ${match.projectId}:`, {
-            projectTitle: projectData.projectTitle,
-            planningStage: projectData.planningStage,
-            planningSector: projectData.planningSector,
-            biiUrl: projectData.biiUrl
-          });
 
           matchesByType[reportType][match.projectId] = projectData;
         }

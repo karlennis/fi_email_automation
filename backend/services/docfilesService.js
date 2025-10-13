@@ -45,38 +45,56 @@ class DocfilesService {
   get SYSTEM_DOCFILES_FI_ANALYSIS() {
     return `You are analyzing a consolidated document file (docfiles.txt) that contains OCR'd text from all documents in a planning application project. Your task is to identify if there are any Further Information (FI) requests from planning authorities.
 
-IMPORTANT: This file contains multiple documents concatenated together with no clear separators. Look for:
+CRITICAL DISTINCTION - You must differentiate between:
+1. EXISTING REPORTS: Documents that already exist in the project (e.g., "Acoustic Report submitted by XYZ Consultants")
+2. REQUESTED REPORTS: The planning authority ASKING the applicant to provide/submit reports
 
-FORMAL FI REQUEST INDICATORS:
-- "Further Information request" or "Additional Information required"
-- "The applicant is requested to submit..."
-- "The applicant is invited to provide..."
-- "Please submit the following additional information..."
-- "Clarification is required on..."
-- "The planning authority requires..."
-- Formal numbered/lettered requirements (1., 2., (a), (b), etc.)
+ONLY mark as TRUE if you find the planning authority REQUESTING a report type, NOT if the report type already exists.
 
-FORMAL LANGUAGE PATTERNS:
-- Official letterhead from planning authorities
-- Reference to planning application numbers
-- Formal request structure with specific requirements
-- Deadlines for submission
+FORMAL FI REQUEST INDICATORS (must be FROM planning authority TO applicant):
+- "The applicant is requested to submit [report type]..."
+- "The applicant is invited to provide [report type]..."
+- "Please submit the following: [report type]..."
+- "A [report type] should be provided/submitted..."
+- "The planning authority requires [report type]..."
+- "Carry out a [report type]..."
+- "Undertake a [report type]..."
+- Formal numbered/lettered requirements requesting specific report types
 
-EXCLUDE:
-- Objections or submissions FROM third parties recommending FI requests
-- Internal technical notes or guidance documents
-- Application acknowledgment letters
-- General planning policy text
+REQUIRED REQUEST VERBS (must appear with report type):
+- submit, provide, prepare, carry out, undertake, produce, include, supply
+- should be submitted, must be provided, needs to be prepared
+- is required, is requested, is necessary
 
-For each target report type, analyze if there are SPECIFIC requests for:
-- 'acoustic': noise impact assessment, acoustic survey, sound measurements, noise monitoring
-- 'transport': transport assessment, traffic impact assessment, parking survey, travel plan
-- 'ecological': ecological assessment, biodiversity survey, habitat assessment, species survey
-- 'flood': flood risk assessment, drainage strategy, SUDS scheme, hydrology report
-- 'heritage': heritage assessment, archaeological survey, historic impact assessment
-- 'lighting': lighting assessment, light pollution study, artificial lighting impact
+EXCLUDE - These are NOT FI requests:
+- Existing reports: "Acoustic Report by ABC Consultants" (already exists)
+- Third-party objections: "Objector recommends acoustic assessment" (not from planning authority)
+- Applicant's submissions: "We have prepared an acoustic report" (applicant speaking)
+- General policy text: "Planning policy requires acoustic assessments" (general statement)
+- Report titles/headers: "NOISE IMPACT ASSESSMENT" (just a title)
+- Application acknowledgment letters without requests
 
-Return detailed analysis with specific quotes and locations where FI requests are found.`;
+For each target report type, you must find:
+1. Evidence this is FROM the planning authority (letterhead, signature, formal language)
+2. A clear REQUEST verb (submit, provide, carry out, etc.)
+3. The specific report type mentioned WITH the request verb
+
+Target report types with strict keywords:
+- 'acoustic': "submit acoustic assessment", "provide noise impact assessment", "carry out acoustic survey", "noise monitoring is required"
+- 'transport': "submit transport assessment", "provide traffic impact assessment", "carry out parking survey", "travel plan is required"
+- 'ecological': "submit ecological assessment", "provide biodiversity survey", "carry out habitat assessment", "ecological survey is required"
+- 'flood': "submit flood risk assessment", "provide drainage strategy", "carry out SUDS assessment", "hydrology report is required"
+- 'heritage': "submit heritage assessment", "provide archaeological survey", "carry out historic impact assessment"
+- 'lighting': "submit lighting assessment", "provide light pollution study", "carry out lighting impact assessment"
+
+STRICT MATCHING RULES:
+- Report type keyword + request verb must appear in same sentence or adjacent sentences
+- Must be in context of planning authority making a request
+- When in doubt, mark as FALSE - better to miss than create false positive
+- Provide exact quotes showing request verb + report type together
+
+Return detailed analysis with specific quotes showing the REQUEST for each report type.`;
+
   }
 
   /**
@@ -164,19 +182,18 @@ Return detailed analysis with specific quotes and locations where FI requests ar
 
   /**
    * Analyze docfiles.txt for FI requests
+   * ACCOUNTABILITY: Logs exact phrases from fiDetails when matches found
    */
   async analyzeDocfilesForFI(docfilesContent, projectId, targetReportTypes = []) {
     try {
-      logger.info(`📋 Analyzing docfiles.txt for project ${projectId} (${docfilesContent.length} chars)`);
-
-      // Cache check
+      // CACHE CHECK
       const cacheKey = this.generateCacheKey(docfilesContent, targetReportTypes, projectId);
       const cachedResult = this.getCachedResult(cacheKey);
       if (cachedResult) {
         return cachedResult;
       }
 
-      // Quick pre-filter for FI indicators
+      // QUICK PRE-FILTER
       const fiIndicators = [
         'further information', 'additional information', 'clarification required',
         'applicant is requested', 'applicant is invited', 'please submit',
@@ -189,7 +206,6 @@ Return detailed analysis with specific quotes and locations where FI requests ar
       );
 
       if (!hasBasicIndicators) {
-        logger.info(`⚡ Quick filter: No FI indicators found in project ${projectId} docfiles`);
         const result = {
           hasFIRequests: false,
           reportTypeMatches: {},
@@ -201,9 +217,7 @@ Return detailed analysis with specific quotes and locations where FI requests ar
         return result;
       }
 
-      logger.info(`✅ FI indicators found, performing AI analysis for project ${projectId}`);
-
-      // Perform AI analysis
+      // AI ANALYSIS
       const analysisResult = await this.runChat(
         [
           { role: "system", content: this.SYSTEM_DOCFILES_FI_ANALYSIS },
@@ -222,12 +236,53 @@ Return detailed analysis with specific quotes and locations where FI requests ar
         projectId
       };
 
+      // VALIDATION: Filter out fiDetails where quote doesn't contain the report type keyword
+      if (result.hasFIRequests && result.fiDetails && result.fiDetails.length > 0) {
+        const reportTypeKeywords = {
+          'acoustic': ['acoustic', 'noise', 'sound', 'vibration', 'decibel', 'db(a)'],
+          'transport': ['transport', 'traffic', 'parking', 'travel', 'highway', 'vehicular'],
+          'ecological': ['ecological', 'ecology', 'biodiversity', 'habitat', 'species', 'wildlife'],
+          'flood': ['flood', 'drainage', 'suds', 'hydrology', 'surface water', 'foul water'],
+          'heritage': ['heritage', 'archaeological', 'historic', 'conservation', 'listed building'],
+          'lighting': ['lighting', 'light pollution', 'illumination', 'luminance']
+        };
+
+        // Validate each detail - quote must contain at least one keyword for the claimed report type
+        const validatedDetails = result.fiDetails.filter(detail => {
+          const reportType = detail.reportType;
+          const quote = (detail.quote || detail.context || '').toLowerCase();
+          const keywords = reportTypeKeywords[reportType] || [];
+
+          const hasKeyword = keywords.some(keyword => quote.includes(keyword));
+
+          if (!hasKeyword) {
+            logger.warn(`⚠️ Rejected invalid quote for ${reportType} - quote doesn't contain report type keyword: "${detail.quote?.substring(0, 100)}"`);
+          }
+
+          return hasKeyword;
+        });
+
+        result.fiDetails = validatedDetails;
+
+        // Update reportTypeMatches based on validated details
+        const validReportTypes = new Set(validatedDetails.map(d => d.reportType));
+        Object.keys(result.reportTypeMatches).forEach(type => {
+          result.reportTypeMatches[type] = validReportTypes.has(type);
+        });
+
+        // Update hasFIRequests based on whether any valid details remain
+        result.hasFIRequests = validatedDetails.length > 0;
+      }
+
       this.setCachedResult(cacheKey, result);
 
-      if (result.hasFIRequests) {
-        logger.info(`🎉 FI requests found in project ${projectId}:`, result.summary);
-      } else {
-        logger.info(`❌ No FI requests found in project ${projectId}`);
+      // ACCOUNTABILITY LOGGING: Log exact matching phrases (only validated ones)
+      if (result.hasFIRequests && result.fiDetails && result.fiDetails.length > 0) {
+        result.fiDetails.forEach(detail => {
+          const exactPhrase = detail.quote || detail.context || 'N/A';
+          const matchedType = detail.reportType || 'unknown';
+          logger.info(`🎯 MATCH | Project: ${projectId} | Source: docfiles.txt | Type: ${matchedType} | Phrase: "${exactPhrase.substring(0, 200)}"`);
+        });
       }
 
       return result;
@@ -292,7 +347,6 @@ Return detailed analysis with specific quotes and locations where FI requests ar
     if (this.docfilesCache.has(cacheKey)) {
       this.cacheStats.hits++;
       const cachedResult = this.docfilesCache.get(cacheKey);
-      logger.info(`💾 Cache HIT for docfiles analysis: ${cacheKey.substring(0, 16)}...`);
       return { ...cachedResult, detectionMethod: `${cachedResult.detectionMethod}_cached` };
     }
     this.cacheStats.misses++;
@@ -311,7 +365,6 @@ Return detailed analysis with specific quotes and locations where FI requests ar
 
     this.docfilesCache.set(cacheKey, result);
     this.cacheStats.saves++;
-    logger.info(`💾 Cache SAVE for docfiles analysis: ${cacheKey.substring(0, 16)}...`);
   }
 
   /**

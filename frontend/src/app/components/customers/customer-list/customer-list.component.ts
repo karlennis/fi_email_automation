@@ -113,26 +113,19 @@ import { ToastrService } from 'ngx-toastr';
               <div class="card-actions">
                 <button
                   (click)="viewCustomerReports(customer)"
-                  class="btn btn-sm btn-primary"
+                  class="btn btn-sm btn-info"
                   [disabled]="isLoading"
                   title="View customer reports"
                 >
                   📊 View Reports
                 </button>
                 <button
-                  (click)="viewCustomerHistory(customer._id)"
-                  class="btn btn-sm btn-info"
-                  [disabled]="isLoading"
+                  (click)="openEditModal(customer)"
+                  class="btn btn-sm btn-primary"
+                  [disabled]="isUpdating"
+                  title="Edit customer details"
                 >
-                  📋 FI History
-                </button>
-                <button
-                  (click)="quickSelectCustomer(customer)"
-                  class="btn btn-sm btn-success"
-                  [disabled]="!customer.isActive"
-                  title="Quick select for new FI report"
-                >
-                  ✉️ Quick Select
+                  ✏️ Edit
                 </button>
                 <button
                   (click)="toggleCustomerStatus(customer._id)"
@@ -141,6 +134,14 @@ import { ToastrService } from 'ngx-toastr';
                   [disabled]="isUpdating"
                 >
                   {{ customer.isActive ? 'Deactivate' : 'Activate' }}
+                </button>
+                <button
+                  (click)="openDeleteModal(customer)"
+                  class="btn btn-sm btn-danger"
+                  [disabled]="isUpdating"
+                  title="Delete customer and all records"
+                >
+                  🗑️ Delete
                 </button>
               </div>
             </div>
@@ -386,6 +387,123 @@ import { ToastrService } from 'ngx-toastr';
         </div>
       </div>
     </div>
+
+    <!-- Edit Customer Modal -->
+    <div class="modal" *ngIf="showEditModal" (click)="closeEditModal()">
+      <div class="modal-content" (click)="$event.stopPropagation()">
+        <div class="modal-header">
+          <h2>✏️ Edit Customer</h2>
+          <button class="close-btn" (click)="closeEditModal()">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="edit-name">Name *</label>
+            <input
+              id="edit-name"
+              type="text"
+              class="form-control"
+              [(ngModel)]="editingCustomer.name"
+              placeholder="Enter customer name"
+              [disabled]="isUpdating"
+            >
+          </div>
+
+          <div class="form-group">
+            <label for="edit-email">Email *</label>
+            <input
+              id="edit-email"
+              type="email"
+              class="form-control"
+              [(ngModel)]="editingCustomer.email"
+              placeholder="Enter email address"
+              [disabled]="isUpdating"
+            >
+          </div>
+
+          <div class="form-group">
+            <label for="edit-phone">Phone</label>
+            <input
+              id="edit-phone"
+              type="text"
+              class="form-control"
+              [(ngModel)]="editingCustomer.phone"
+              placeholder="Enter phone number (optional)"
+              [disabled]="isUpdating"
+            >
+          </div>
+
+          <div class="form-group">
+            <label for="edit-company">Company</label>
+            <input
+              id="edit-company"
+              type="text"
+              class="form-control"
+              [(ngModel)]="editingCustomer.company"
+              placeholder="Enter company name (optional)"
+              [disabled]="isUpdating"
+            >
+          </div>
+
+          <div class="modal-actions">
+            <button class="btn btn-secondary" (click)="closeEditModal()" [disabled]="isUpdating">
+              Cancel
+            </button>
+            <button
+              class="btn btn-primary"
+              (click)="saveCustomerEdit()"
+              [disabled]="!editingCustomer.name || !editingCustomer.email || isUpdating"
+            >
+              <span *ngIf="isUpdating">🔄 Saving...</span>
+              <span *ngIf="!isUpdating">💾 Save Changes</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div class="modal" *ngIf="showDeleteModal" (click)="closeDeleteModal()">
+      <div class="modal-content" (click)="$event.stopPropagation()">
+        <div class="modal-header modal-danger">
+          <h2>🗑️ Delete Customer</h2>
+          <button class="close-btn" (click)="closeDeleteModal()">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="warning-message">
+            <div class="warning-icon">⚠️</div>
+            <h3>Are you sure you want to delete this customer?</h3>
+            <p class="customer-details" *ngIf="customerToDelete">
+              <strong>{{ customerToDelete.name }}</strong><br>
+              {{ customerToDelete.email }}
+            </p>
+            <div class="warning-text">
+              <p>This action will permanently delete:</p>
+              <ul>
+                <li>Customer account and profile</li>
+                <li>All FI reports sent to this customer</li>
+                <li>Email notification history</li>
+                <li>All associated records</li>
+              </ul>
+              <p class="danger-note"><strong>⚠️ This action cannot be undone!</strong></p>
+            </div>
+          </div>
+
+          <div class="modal-actions">
+            <button class="btn btn-secondary" (click)="closeDeleteModal()" [disabled]="isUpdating">
+              Cancel
+            </button>
+            <button
+              class="btn btn-danger"
+              (click)="confirmDeleteCustomer()"
+              [disabled]="isUpdating"
+            >
+              <span *ngIf="isUpdating">🔄 Deleting...</span>
+              <span *ngIf="!isUpdating">🗑️ Yes, Delete Customer</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   `,
   styles: [`
     .customers-container {
@@ -443,6 +561,24 @@ import { ToastrService } from 'ngx-toastr';
     .btn-warning {
       background: #ffc107;
       color: #212529;
+    }
+
+    .btn-danger {
+      background: #dc3545;
+      color: white;
+    }
+
+    .btn-danger:hover {
+      background: #c82333;
+    }
+
+    .btn-info {
+      background: #17a2b8;
+      color: white;
+    }
+
+    .btn-info:hover {
+      background: #138496;
     }
 
     .btn-sm {
@@ -906,6 +1042,77 @@ import { ToastrService } from 'ngx-toastr';
       box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
     }
 
+    /* Edit and Delete Modal Styles */
+    .form-group {
+      margin-bottom: 1.5rem;
+    }
+
+    .form-group label {
+      display: block;
+      margin-bottom: 0.5rem;
+      font-weight: 500;
+      color: #333;
+    }
+
+    .modal-danger .modal-header {
+      background: #f8d7da;
+      border-bottom-color: #dc3545;
+    }
+
+    .warning-message {
+      text-align: center;
+      padding: 1rem;
+    }
+
+    .warning-icon {
+      font-size: 4rem;
+      margin-bottom: 1rem;
+    }
+
+    .warning-message h3 {
+      color: #dc3545;
+      margin-bottom: 1rem;
+    }
+
+    .customer-details {
+      background: #f8f9fa;
+      padding: 1rem;
+      border-radius: 4px;
+      margin: 1rem 0;
+      font-size: 1rem;
+    }
+
+    .warning-text {
+      text-align: left;
+      margin-top: 1.5rem;
+      padding: 1rem;
+      background: #fff3cd;
+      border-left: 4px solid #ffc107;
+      border-radius: 4px;
+    }
+
+    .warning-text ul {
+      margin: 1rem 0;
+      padding-left: 1.5rem;
+    }
+
+    .warning-text li {
+      margin: 0.5rem 0;
+    }
+
+    .danger-note {
+      margin-top: 1rem;
+      color: #dc3545;
+      font-size: 1.1rem;
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.5rem;
+      margin-top: 1.5rem;
+    }
+
     @media (max-width: 768px) {
       .modal-lg {
         width: 95%;
@@ -932,6 +1139,15 @@ import { ToastrService } from 'ngx-toastr';
 
       .modal-actions {
         flex-direction: column;
+      }
+
+      .card-actions {
+        flex-wrap: wrap;
+      }
+
+      .btn-sm {
+        font-size: 0.7rem;
+        padding: 0.2rem 0.4rem;
       }
     }
   `]
@@ -967,6 +1183,20 @@ export class CustomerListComponent implements OnInit {
   resendEmail = '';
   resendLoading = false;
   availableCustomers: Customer[] = [];
+
+  // Edit customer modal
+  showEditModal = false;
+  editingCustomer: any = {
+    _id: '',
+    name: '',
+    email: '',
+    phone: '',
+    company: ''
+  };
+
+  // Delete customer modal
+  showDeleteModal = false;
+  customerToDelete: Customer | null = null;
 
   constructor(
     private customerService: CustomerService,
@@ -1229,5 +1459,89 @@ export class CustomerListComponent implements OnInit {
           this.resendLoading = false;
         }
       });
+  }
+
+  // Edit Customer Methods
+  openEditModal(customer: Customer) {
+    this.editingCustomer = {
+      _id: customer._id,
+      name: customer.name,
+      email: customer.email,
+      phone: customer.phone || '',
+      company: customer.company || ''
+    };
+    this.showEditModal = true;
+  }
+
+  closeEditModal() {
+    this.showEditModal = false;
+    this.editingCustomer = {
+      _id: '',
+      name: '',
+      email: '',
+      phone: '',
+      company: ''
+    };
+  }
+
+  saveCustomerEdit() {
+    if (!this.editingCustomer.name || !this.editingCustomer.email) {
+      this.toastr.error('Name and email are required');
+      return;
+    }
+
+    this.isUpdating = true;
+
+    const updateData = {
+      name: this.editingCustomer.name,
+      email: this.editingCustomer.email,
+      phone: this.editingCustomer.phone || undefined,
+      company: this.editingCustomer.company || undefined
+    };
+
+    this.customerService.updateCustomer(this.editingCustomer._id, updateData).subscribe({
+      next: () => {
+        this.isUpdating = false;
+        this.toastr.success('Customer updated successfully');
+        this.closeEditModal();
+        this.loadCustomers();
+      },
+      error: (error) => {
+        this.isUpdating = false;
+        this.toastr.error('Failed to update customer');
+        console.error('Error updating customer:', error);
+      }
+    });
+  }
+
+  // Delete Customer Methods
+  openDeleteModal(customer: Customer) {
+    this.customerToDelete = customer;
+    this.showDeleteModal = true;
+  }
+
+  closeDeleteModal() {
+    this.showDeleteModal = false;
+    this.customerToDelete = null;
+  }
+
+  confirmDeleteCustomer() {
+    if (!this.customerToDelete) return;
+
+    this.isUpdating = true;
+
+    this.customerService.deleteCustomer(this.customerToDelete._id).subscribe({
+      next: () => {
+        this.isUpdating = false;
+        this.toastr.success(`Customer "${this.customerToDelete!.name}" and all records deleted successfully`);
+        this.closeDeleteModal();
+        this.loadCustomers();
+      },
+      error: (error) => {
+        this.isUpdating = false;
+        this.toastr.error('Failed to delete customer');
+        console.error('Error deleting customer:', error);
+      }
+    });
   }
 }

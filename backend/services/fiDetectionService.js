@@ -149,39 +149,92 @@ class FIDetectionService {
    */
   get SYSTEM_FI_DETECT() {
     return `You detect if a document is a formal Further Information (FI) request from a planning authority to an applicant.
-    Look for FORMAL REQUEST LANGUAGE such as:
-    'The applicant is requested to', 'The applicant is invited to', 'The applicant should',
-    'A [report type] needs should be provided', 'should be submitted', 'carry out a full',
-    'address the concerns raised', 'provide a proposal for', 'submit a full'.
-    Also look for STRUCTURAL INDICATORS:
-    - Numbered or lettered items (1., 2., (a), (b), etc.)
-    - References to council departments or officers
-    - Phrases like 'for this application', 'in relation to this request'
-    - Council letterhead or formal government formatting
-    IMPORTANT: This should be a REQUEST FROM the council TO the applicant, not a submission BY the applicant.
-    If the document appears to be an applicant's response or submission, mark as isFIRequest=false.
-    Return JSON for detect_fi_request – isFIRequest true/false.`;
+
+CRITICAL: Distinguish between:
+1. ACTUAL FI REQUESTS: Planning authority ASKING applicant to provide/submit information
+2. EXISTING DOCUMENTS: Reports or submissions that already exist (e.g., "Acoustic Report by XYZ")
+3. THIRD-PARTY COMMENTS: Objectors or consultees suggesting FI requests
+4. APPLICANT SUBMISSIONS: The applicant describing what they've provided
+
+ONLY mark as isFIRequest=true if you find:
+- Clear evidence this is FROM the planning authority (letterhead, officer signature, formal council language)
+- REQUEST VERBS: "is requested to", "is invited to", "should submit", "must provide", "carry out", "undertake", "prepare and submit"
+- DIRECTED AT APPLICANT: "The applicant...", "You are requested...", "Please submit..."
+
+Look for FORMAL REQUEST LANGUAGE such as:
+- 'The applicant is requested to submit...'
+- 'The applicant is invited to provide...'
+- 'The applicant should prepare and submit...'
+- 'A [report type] is required to be submitted...'
+- 'Please submit the following: ...'
+- 'You are requested to carry out...'
+- 'The planning authority requires the applicant to...'
+
+Also look for STRUCTURAL INDICATORS:
+- Numbered or lettered requirements (1., 2., (a), (b), etc.)
+- References to council departments or planning officers
+- Phrases like 'for this application', 'in relation to planning application ref...'
+- Council letterhead or formal government formatting
+- Deadlines for submission of information
+
+REJECT (mark as false) if document shows:
+- "Acoustic Report prepared by..." (existing report, not a request)
+- "We have submitted..." (applicant speaking, not planning authority)
+- "Objector recommends FI request for..." (third party, not planning authority)
+- "Planning policy requires..." (general policy, not specific request)
+- Just titles or headers without request context
+- Acknowledgment letters without specific requests
+
+STRICT RULE: When in doubt, mark as isFIRequest=false. Better to miss than create false positive.
+
+Return JSON for detect_fi_request – isFIRequest true/false.`;
   }
 
   get SYSTEM_FI_MATCH() {
     return `You are given a formal Further Information request from a planning authority and a target report type.
     Your job is to determine if this FI request asks for SPECIFIC information related to the target report type.
-    Look for these specific connections:
-    - 'acoustic': noise impact assessment, acoustic assessment/report/survey, sound measurements, noise monitoring, decibel readings, acoustic mitigation
-    - 'transport': transport assessment/statement, traffic impact assessment, parking survey, highway assessment, travel plan, access arrangements
-    - 'ecological': ecological assessment/survey/report, biodiversity survey, habitat assessment, species survey, ecological mitigation, wildlife impact
-    - 'flood': flood risk assessment, drainage strategy, surface water management, SUDS scheme, hydrology report, flood mitigation
-    - 'heritage': heritage assessment, archaeological survey/report, historic impact assessment, conservation report, cultural heritage study
-    - 'lighting': lighting assessment/report, light pollution study, artificial lighting impact, illumination scheme, lighting design
 
-    IMPORTANT MATCHING RULES:
-    1. Only mark as TRUE if there is a CLEAR, SPECIFIC request for the target report type
-    2. Generic mentions without specific requests should return FALSE
-    3. If the request asks for multiple different report types, only match the specific types mentioned
-    4. Look for formal request language like "provide a [type] assessment", "submit a [type] report", "carry out a [type] survey"
-    5. When in doubt, be SELECTIVE rather than inclusive - only match clear, unambiguous requests
+CRITICAL DISTINCTION:
+- "An acoustic report was submitted" = FALSE (report exists, not requested)
+- "The applicant should submit an acoustic report" = TRUE (report is being requested)
 
-    Return JSON for match_fi_request – requestsReportType true/false.`;
+STRICT MATCHING CRITERIA - ALL must be present:
+1. Evidence of a REQUEST (not just mention) - must have request verbs
+2. The request must be FROM planning authority TO applicant
+3. The specific report type must be mentioned IN THE REQUEST
+4. The report type and request verb must appear in same context (same sentence or adjacent sentences)
+
+REQUEST VERBS (must appear with report type):
+- submit, provide, prepare, carry out, undertake, produce, include, supply
+- is required, is requested, is necessary, should be submitted, must be provided, needs to be
+
+Look for these specific REQUEST patterns:
+- 'acoustic': "submit acoustic assessment", "provide noise impact assessment", "carry out acoustic survey", "noise monitoring is required", "undertake noise assessment"
+- 'transport': "submit transport assessment", "provide traffic impact assessment", "carry out parking survey", "travel plan is required", "undertake transport study"
+- 'ecological': "submit ecological assessment", "provide biodiversity survey", "carry out habitat assessment", "ecological survey is required", "undertake ecological study"
+- 'flood': "submit flood risk assessment", "provide drainage strategy", "carry out SUDS assessment", "hydrology report is required", "undertake flood study"
+- 'heritage': "submit heritage assessment", "provide archaeological survey", "carry out historic impact assessment", "heritage study is required"
+- 'lighting': "submit lighting assessment", "provide light pollution study", "carry out lighting impact assessment", "lighting study is required"
+
+REJECT patterns (mark as FALSE):
+- "Acoustic Report by ABC Consultants" (existing report title)
+- "The acoustic report shows..." (discussing existing report)
+- "Objector recommends acoustic assessment" (third party suggestion, not planning authority request)
+- "Planning policy requires acoustic assessments" (general policy, not specific request)
+- "noise" mentioned but no request for noise assessment
+- Report type keyword appears but NOT in request context
+
+VALIDATION CHECKLIST:
+1. Is there a request verb (submit, provide, carry out, etc.)?
+2. Is the planning authority making the request?
+3. Is the specific report type mentioned?
+4. Are the request verb and report type in the same context (same sentence or adjacent)?
+
+STRICT RULE: If ANY of these 4 criteria are not met, return FALSE.
+When in doubt, be SELECTIVE rather than inclusive - only match clear, unambiguous requests.
+Better to miss a potential match than create a false positive.
+
+Return JSON for match_fi_request – requestsReportType true/false.`;
   }
 
   get SYSTEM_EXTRACT_FI_REQUEST() {
@@ -191,9 +244,15 @@ class FIDetectionService {
     • **RequestingAuthority** – the planning authority or officer making the request
     • **RequestDate** – date of the request if mentioned
     • **Summary** – ≤ 60 words summary of what information is being requested
-    • **SpecificRequests** – detailed breakdown of what is being asked for
+    • **SpecificRequests** – detailed breakdown of what is being asked for, INCLUDING direct quotes showing request verbs (submit, provide, carry out, etc.) with the specific items requested
     • **Deadline** – any deadline mentioned for response
     • **ReferenceNumbers** – any planning application or case reference numbers
+
+    CRITICAL for SpecificRequests field:
+    - Include EXACT QUOTES from the document showing request language
+    - Each quote must contain a REQUEST VERB (submit, provide, carry out, undertake, prepare, etc.)
+    - Format as: "Quote: 'The applicant is requested to submit...' - Requesting: [what is being requested]"
+    - This will be validated - quotes without request verbs will be flagged
 
     Return **JSON only** for the provided function; do **not** add any commentary outside JSON.`;
   }
@@ -393,54 +452,155 @@ class FIDetectionService {
   }
 
   /**
-   * Quick keyword filter - from your RAG pipeline
+   * Split text into sentences for sentence-level matching
+   */
+  splitIntoSentences(text) {
+    // Crude but effective for planning prose
+    return text
+      .replace(/\n+/g, ' ')
+      .split(/(?<=[\.\!\?;:])\s+/)
+      .map(x => x.trim())
+      .filter(Boolean);
+  }
+
+  /**
+   * Quick keyword filter - SURGICAL PRECISION VERSION
+   * Implements strict gates to eliminate false positives.
+   * ACCOUNTABILITY: Logs exact matching phrase when passes.
    */
   quickKeywordFilter(text, keyword) {
+    // HIGH PRECISION FI INDICATORS
     const fiIndicators = [
-      "further information", "additional information", "clarification required",
-      "applicant is requested", "applicant is invited", "should be provided",
-      "submit the following", "carry out a full", "address the concerns",
-      "planning authority", "county council", "in relation to this request"
+      "request for further information",
+      "further information request",
+      "clarification of further information",
+      "you are requested to",
+      "the applicant is requested to",
+      "please submit the following",
+      "please submit",
+      "is requested to submit",
+      "is required to submit",
+      "must be submitted",
+      "must provide",
+    ];
+
+    // NEGATIVE GATES
+    const negativeFIIndicators = [
+      "response to further information",
+      "response to clarification of further information",
+      "clarification response",
+      "we have submitted", "we have provided", "the applicant has submitted",
+      "grant permission", "permission is granted", "conditions set out",
+      "subject to conditions", "decision to grant", "decision: grant",
+      "refuse permission", "decision to refuse"
     ];
 
     const textLower = text.toLowerCase();
 
-    // If this looks like an FI request, always allow it through
-    if (fiIndicators.some(indicator => textLower.includes(indicator))) {
-      logger.info(`✅ Document passed FI indicator filter: found "${fiIndicators.find(indicator => textLower.includes(indicator))}"`);
-      return true;
+    // GATE 1: Negative indicators
+    if (negativeFIIndicators.some(p => textLower.includes(p))) {
+      return false;
     }
 
-    // If document is too short (likely OCR failed), be more lenient
-    if (text.length < 200) {
-      logger.info(`⚠️ Document too short (${text.length} chars), allowing through for AI analysis`);
-      return true;
+    // GATE 2: Strict FI indicators
+    const hasFIIndicator = fiIndicators.some(indicator => textLower.includes(indicator));
+    if (!hasFIIndicator) {
+      return false;
     }
 
     const keywordLower = keyword.toLowerCase();
 
-    // Quick keyword presence check
-    if (!textLower.includes(keywordLower)) {
-      // Check for related terms - expanded list
-      const relatedTerms = {
-        "acoustic": ["noise", "sound", "decibel", "db", "vibration", "noise assessment", "sound level"],
-        "transport": ["traffic", "vehicle", "highway", "road", "parking", "transport assessment", "car park", "mobility"],
-        "ecological": ["ecology", "wildlife", "habitat", "species", "biodiversity", "environment", "ecological", "nature", "flora", "fauna"],
-        "flood": ["drainage", "water", "sewage", "storm", "rainfall", "suds", "surface water", "attenuation"],
-        "heritage": ["archaeological", "historic", "conservation", "listed", "cultural", "monument", "historic", "archaeology"],
-        "arboricultural": ["tree", "trees", "vegetation", "landscape", "planting", "hedge", "woodland", "green"],
-        "waste": ["waste", "refuse", "recycling", "bin", "storage", "collection", "disposal", "management plan"]
-      };
+    // Report type keywords
+    const relatedTerms = {
+      "acoustic": ["noise", "sound", "decibel", "db", "vibration", "noise assessment", "sound level", "acoustic"],
+      "transport": ["traffic", "vehicle", "highway", "road", "parking", "transport assessment", "car park", "mobility", "transport"],
+      "ecological": ["ecology", "wildlife", "habitat", "species", "biodiversity", "environment", "ecological", "nature", "flora", "fauna"],
+      "flood": ["drainage", "water", "sewage", "storm", "rainfall", "suds", "surface water", "attenuation", "flood"],
+      "heritage": ["archaeological", "historic", "conservation", "listed", "cultural", "monument", "archaeology", "heritage"],
+      "arboricultural": ["tree", "trees", "vegetation", "landscape", "planting", "hedge", "woodland", "green", "arboricultural"],
+      "waste": ["waste", "refuse", "recycling", "bin", "storage", "collection", "disposal", "management plan"],
+      "lighting": ["lighting", "light", "illumination", "lumens", "lux", "lamp"]
+    };
 
-      if (relatedTerms[keywordLower]) {
-        if (!relatedTerms[keywordLower].some(term => textLower.includes(term))) {
-          logger.info(`❌ Quick filter rejected: no ${keywordLower} keywords found in ${text.length} char document`);
-          return false;
+    // GATE 3: Report type keywords present
+    const hasReportTypeKeyword = relatedTerms[keywordLower]?.some(term => textLower.includes(term)) || textLower.includes(keywordLower);
+    if (!hasReportTypeKeyword) {
+      return false;
+    }
+
+    // GATE 4: Construction noise rejection
+    const constructionNoisePatterns = [
+      "laeq", "construction phase", "hours monday to friday",
+      "site development works shall be confined", "db(a)",
+      "best practicable means to prevent/minimise noise"
+    ];
+
+    if (keywordLower === "acoustic" || relatedTerms[keywordLower]?.includes("noise")) {
+      if (constructionNoisePatterns.some(p => textLower.includes(p))) {
+        return false;
+      }
+    }
+
+    // GATE 5: Sentence-level verb+term matching
+    const requestVerbs = [
+      "submit", "provide", "prepare", "carry out", "undertake", "produce",
+      "supply", "is required to", "is requested to", "should be submitted",
+      "must be provided", "needs to be"
+    ];
+
+    const reportTypeTerms = relatedTerms[keywordLower] || [keywordLower];
+    const sentences = this.splitIntoSentences(textLower);
+
+    let foundSentenceMatch = false;
+    let matchingSentence = '';
+
+    for (let i = 0; i < sentences.length; i++) {
+      const s = sentences[i];
+      const hasVerb = requestVerbs.some(v => s.includes(v));
+      const hasTerm = reportTypeTerms.some(t => s.includes(t));
+
+      if (hasVerb && hasTerm) {
+        foundSentenceMatch = true;
+        matchingSentence = s.substring(0, 200); // First 200 chars of matching sentence
+        break;
+      }
+
+      // Check adjacent sentences
+      if (i + 1 < sentences.length) {
+        const s2 = sentences[i + 1];
+        const combo = s + " " + s2;
+        const hasVerb2 = requestVerbs.some(v => combo.includes(v));
+        const hasTerm2 = reportTypeTerms.some(t => combo.includes(t));
+        if (hasVerb2 && hasTerm2) {
+          foundSentenceMatch = true;
+          matchingSentence = combo.substring(0, 200); // First 200 chars
+          break;
         }
       }
     }
 
-    logger.info(`✅ Document passed keyword filter for ${keywordLower}`);
+    if (!foundSentenceMatch) {
+      return false;
+    }
+
+    // GATE 6: Directionality
+    const authorityToApplicantMarkers = [
+      "the applicant is requested",
+      "you are requested",
+      "please submit",
+      "the planning authority requests",
+      "the planning authority requires",
+      "council requires",
+      "council requests",
+    ];
+
+    const hasDirectionality = authorityToApplicantMarkers.some(m => textLower.includes(m));
+    if (!hasDirectionality) {
+      return false;
+    }
+
+    // ACCOUNTABILITY: Store the matching sentence for logging
+    this._lastMatchingSentence = matchingSentence;
     return true;
   }
 
@@ -492,9 +652,82 @@ class FIDetectionService {
   }
 
   /**
+   * Validate that extracted FI request info contains actual request language
+   * @param {Object} extractedInfo - The extracted FI request information
+   * @param {string} targetReportType - The report type we're looking for
+   * @returns {Object} - Validation result with isValid flag and reasons
+   */
+  validateFIRequestExtraction(extractedInfo, targetReportType) {
+    // Request verbs - REMOVED "include" as it's too generic
+    const requestVerbs = [
+      "submit", "provide", "prepare", "carry out", "undertake", "produce",
+      "supply", "required", "requested", "necessary",
+      "should be submitted", "must be provided", "needs to be", "is to be"
+    ];
+
+    const validation = {
+      isValid: true,
+      reasons: [],
+      warnings: []
+    };
+
+    // Check if SpecificRequests contains request verbs
+    const specificRequests = extractedInfo.SpecificRequests || extractedInfo.Summary || '';
+    const requestsLower = specificRequests.toLowerCase();
+
+    // STRICT: Must contain BOTH a request verb AND the target report term
+    const reportTypeKeywords = {
+      "acoustic": ["acoustic", "noise", "sound"],
+      "transport": ["transport", "traffic", "parking", "highway"],
+      "ecological": ["ecological", "ecology", "biodiversity", "habitat", "wildlife"],
+      "flood": ["flood", "drainage", "suds", "hydrology"],
+      "heritage": ["heritage", "archaeological", "historic"],
+      "lighting": ["lighting", "light", "illumination"],
+      "arboricultural": ["tree", "arboricultural", "vegetation"],
+      "waste": ["waste", "refuse", "recycling"]
+    };
+
+    const reportTerms = (reportTypeKeywords[targetReportType.toLowerCase()] || [targetReportType]).map(x => x.toLowerCase());
+
+    const hasRequestVerb = requestVerbs.some(verb => requestsLower.includes(verb));
+    const hasReportTerm = reportTerms.some(term => requestsLower.includes(term));
+
+    if (!hasRequestVerb || !hasReportTerm) {
+      validation.isValid = false;
+      if (!hasRequestVerb) {
+        validation.reasons.push(`No request verbs found in extracted requests. Found text: "${specificRequests.substring(0, 100)}..."`);
+      }
+      if (!hasReportTerm) {
+        validation.reasons.push(`Target report type "${targetReportType}" not found in extracted requests`);
+      }
+      // Combined check
+      validation.reasons.push(`SpecificRequests must contain BOTH a request verb AND the target report term.`);
+    }
+
+    // Check if Summary is too generic
+    const genericPhrases = [
+      "further information required",
+      "additional information needed",
+      "clarification required"
+    ];
+
+    if (extractedInfo.Summary && genericPhrases.some(phrase => extractedInfo.Summary.toLowerCase().includes(phrase))) {
+      validation.warnings.push('Summary appears generic - may not be specific enough');
+    }
+
+    // Validate that we have meaningful content
+    if (!specificRequests || specificRequests.length < 20) {
+      validation.isValid = false;
+      validation.reasons.push('Extracted requests are too short or empty');
+    }
+
+    return validation;
+  }
+
+  /**
    * Extract information from FI request
    */
-  async extractFIRequestInfo(documentText, fileName = '') {
+  async extractFIRequestInfo(documentText, fileName = '', targetReportType = '') {
     try {
       const result = await this.runChat(
         [
@@ -504,6 +737,26 @@ class FIDetectionService {
         [this.EXTRACTION_FUNCTION],
         "extract_fi_request"
       );
+
+      // Validate the extraction if we have a target report type
+      if (targetReportType) {
+        const validation = this.validateFIRequestExtraction(result, targetReportType);
+
+        if (!validation.isValid) {
+          logger.warn(`⚠️ Extraction validation FAILED for ${targetReportType}:`, {
+            fileName,
+            reasons: validation.reasons,
+            extractedSummary: result.Summary?.substring(0, 100)
+          });
+
+          // Return null to indicate this is not a valid FI request for this report type
+          return null;
+        }
+
+        if (validation.warnings.length > 0) {
+          logger.warn(`⚠️ Extraction validation warnings for ${targetReportType}:`, validation.warnings);
+        }
+      }
 
       return {
         ...result,
@@ -517,58 +770,20 @@ class FIDetectionService {
   }
 
   /**
-   * Combined detection and processing - OPTIMIZED VERSION
+   * Combined detection and processing
+   * ACCOUNTABILITY: Logs exact phrase that triggered match
    */
   async processFIRequest(documentText, targetReportType, fileName = '') {
     try {
-      logger.info(`🔍 Processing FI request for ${targetReportType} in file: ${fileName} (${documentText.length} chars)`);
-
-      // CACHE CHECK: Check if we've already processed this document
+      // CACHE CHECK
       const cacheKey = this.generateCacheKey(documentText, targetReportType, fileName);
       const cachedResult = this.getCachedResult(cacheKey);
       if (cachedResult) {
         return cachedResult;
       }
 
-      // Log first 200 chars of document for debugging
-      if (documentText.length < 500) {
-        logger.info(`📄 Document content sample: "${documentText.substring(0, 200)}..."`);
-      }
-
-      // FAST TRACK: Check filename first - instant results for obvious cases
-      const fiInFilename = this.checkFilenameForFI(fileName);
-      const reportTypeInFilename = this.checkFilenameForReportType(fileName, targetReportType);
-
-      if (fiInFilename) {
-        logger.info(`🏃 Fast track: FI indicators in filename: ${fileName}`);
-      }
-      if (reportTypeInFilename) {
-        logger.info(`🎯 Fast track: Report type indicators in filename: ${fileName}`);
-      }
-
-      // If filename clearly indicates FI + correct report type, fast track to extraction
-      if (fiInFilename && reportTypeInFilename) {
-        logger.info(`⚡ FAST TRACK: Filename indicates FI request for ${targetReportType}: ${fileName}`);
-
-        // Still do basic validation but skip expensive AI calls
-        if (this.quickKeywordFilter(documentText, targetReportType)) {
-          const extractedInfo = await this.extractFIRequestInfo(documentText, fileName);
-          const result = {
-            isFIRequest: true,
-            matchesTargetType: true,
-            extractedInfo,
-            detectionMethod: 'filename_fast_track'
-          };
-
-          // Cache the result
-          this.setCachedResult(cacheKey, result);
-          return result;
-        }
-      }
-
-      // QUICK PRE-FILTER: Avoid expensive AI calls for obvious mismatches
+      // QUICK PRE-FILTER
       if (!this.quickKeywordFilter(documentText, targetReportType)) {
-        logger.info(`❌ Quick filter rejected document for ${targetReportType}: ${fileName}`);
         const result = {
           isFIRequest: false,
           matchesTargetType: false,
@@ -579,13 +794,9 @@ class FIDetectionService {
         return result;
       }
 
-      logger.info(`✅ Document passed pre-filters, proceeding to AI analysis for ${targetReportType}: ${fileName}`);
-
-      // STANDARD FLOW: Step 1 - Check if this is an FI request
+      // AI VALIDATION: Step 1 - Is this an FI request?
       const isFIRequest = await this.detectFIRequest(documentText);
-
       if (!isFIRequest) {
-        logger.info(`❌ AI determined not an FI request: ${fileName}`);
         const result = {
           isFIRequest: false,
           matchesTargetType: false,
@@ -596,13 +807,9 @@ class FIDetectionService {
         return result;
       }
 
-      logger.info(`✅ AI confirmed FI request, checking report type match for ${targetReportType}: ${fileName}`);
-
-      // STANDARD FLOW: Step 2 - Check if it matches the target report type
+      // AI VALIDATION: Step 2 - Does it match the target report type?
       const matchesTargetType = await this.matchFIRequestType(documentText, targetReportType);
-
       if (!matchesTargetType) {
-        logger.info(`❌ AI determined wrong report type for ${targetReportType}: ${fileName}`);
         const result = {
           isFIRequest: true,
           matchesTargetType: false,
@@ -613,15 +820,28 @@ class FIDetectionService {
         return result;
       }
 
-      logger.info(`🎉 MATCH FOUND! FI request for ${targetReportType} in ${fileName}`);
+      // EXTRACTION with validation
+      const extractedInfo = await this.extractFIRequestInfo(documentText, fileName, targetReportType);
+      if (!extractedInfo) {
+        const result = {
+          isFIRequest: true,
+          matchesTargetType: false,
+          extractedInfo: null,
+          detectionMethod: 'ai_extraction_validation_failed'
+        };
+        this.setCachedResult(cacheKey, result);
+        return result;
+      }
 
-      // STANDARD FLOW: Step 3 - Extract detailed information
-      const extractedInfo = await this.extractFIRequestInfo(documentText, fileName);
+      // SUCCESS - Log exact matching phrase
+      const matchingSentence = this._lastMatchingSentence || 'N/A';
+      logger.info(`🎯 MATCH | File: ${fileName} | Type: ${targetReportType} | Phrase: "${matchingSentence}"`);
 
       const result = {
         isFIRequest: true,
         matchesTargetType: true,
         extractedInfo,
+        matchingSentence, // Include for accountability
         detectionMethod: 'ai_full_processing'
       };
 
@@ -697,7 +917,6 @@ class FIDetectionService {
     if (this.fiResultCache.has(cacheKey)) {
       this.cacheStats.hits++;
       const cachedResult = this.fiResultCache.get(cacheKey);
-      logger.info(`Cache HIT for key: ${cacheKey.substring(0, 16)}...`);
       return { ...cachedResult, detectionMethod: `${cachedResult.detectionMethod}_cached` };
     }
     this.cacheStats.misses++;
@@ -716,7 +935,6 @@ class FIDetectionService {
 
     this.fiResultCache.set(cacheKey, result);
     this.cacheStats.saves++;
-    logger.info(`Cache SAVE for key: ${cacheKey.substring(0, 16)}...`);
   }
 
   /**
@@ -793,7 +1011,6 @@ class FIDetectionService {
 
           if (hasDocfiles) {
             processingStats.projectsWithDocfiles++;
-            logger.info(`� Found docfiles.txt for project ${projectId}`);
 
             // Get and analyze docfiles.txt
             const docfilesContent = await docfilesService.getDocfilesContent(projectId);
@@ -821,22 +1038,6 @@ class FIDetectionService {
                   if (!projectMetadata) {
                     projectMetadata = await buildingInfoService.getProjectMetadata(projectId);
                   }
-
-                  // Log metadata for debugging
-                  logger.info(`� Processing email match for project ${projectId}:`, {
-                    reportType,
-                    planningTitle: projectMetadata?.planning_title,
-                    planningStage: projectMetadata?.planning_stage,
-                    hasMetadata: !!projectMetadata,
-                    fullProjectMetadata: projectMetadata
-                  });
-
-                  logger.info(`📧 Mapped project data for ${projectId}:`, {
-                    projectTitle: projectMetadata?.planning_title || 'Title unavailable',
-                    planningStage: projectMetadata?.planning_stage || 'Unknown',
-                    planningSector: this.mapPlanningSector(projectMetadata?.planning_category, projectMetadata?.planning_subcategory) || 'N/A',
-                    biiUrl: this.constructBiiUrl(projectMetadata)
-                  });
 
                   // Enhance projectMetadata with computed fields for email templates
                   if (projectMetadata) {
@@ -875,15 +1076,12 @@ class FIDetectionService {
                     fullMetadata: projectMetadata,
                     detectionMethod: docfilesAnalysis.detectionMethod
                   });
-
-                  logger.info(`🎉 DOCFILES MATCH: ${reportType} found in project ${projectId} via docfiles.txt`);
                 }
               }
             }
           } else {
             processingStats.projectsWithoutDocfiles++;
             projectsWithoutDocfiles.push(projectId);
-            logger.info(`❌ No docfiles.txt found for project ${projectId}, will use individual document analysis`);
           }
         } catch (error) {
           logger.warn(`Error processing docfiles for project ${projectId}:`, error);
@@ -970,21 +1168,6 @@ class FIDetectionService {
                     projectMetadata = await buildingInfoService.getProjectMetadata(doc.projectId);
                   }
 
-                  logger.info(`📧 Processing email match for project ${doc.projectId}:`, {
-                    reportType,
-                    planningTitle: projectMetadata?.planning_title,
-                    planningStage: projectMetadata?.planning_stage,
-                    hasMetadata: !!projectMetadata,
-                    fullProjectMetadata: projectMetadata
-                  });
-
-                  logger.info(`📧 Mapped project data for ${doc.projectId}:`, {
-                    projectTitle: projectMetadata?.planning_title || 'Title unavailable',
-                    planningStage: projectMetadata?.planning_stage || 'Unknown',
-                    planningSector: this.mapPlanningSector(projectMetadata?.planning_category, projectMetadata?.planning_subcategory) || 'N/A',
-                    biiUrl: this.constructBiiUrl(projectMetadata)
-                  });
-
                   // Enhance projectMetadata with computed fields for email templates
                   if (projectMetadata) {
                     projectMetadata.bii_url = this.constructBiiUrl(projectMetadata);
@@ -1014,8 +1197,6 @@ class FIDetectionService {
                     detectionMethod: fiResult.detectionMethod
                   });
 
-                  logger.info(`✅ INDIVIDUAL DOC MATCH: ${reportType} in project ${doc.projectId}, document ${doc.fileName} - STOPPING project processing`);
-
                   // Early termination: stop processing this project for this report type
                   break;
                 }
@@ -1025,31 +1206,17 @@ class FIDetectionService {
               }
             }
 
-            // Log early termination for this project
+            // Track early termination
             if (foundFIForProject) {
               processingStats.earlyTerminations++;
-              const remainingDocs = projectDocs.length - projectDocs.findIndex(d => d === projectDocs.find(pd => docfilesMatches.some(m => m.documentName === pd.fileName && m.projectId === projectId)));
-              if (remainingDocs > 1) {
-                logger.info(`⚡ Early termination: Skipped ${remainingDocs - 1} remaining documents in project ${projectId} for ${reportType}`);
-              }
             }
           }
         }
       }
 
-      // Log final optimization impact
-      const totalEstimatedDocs = filteredProjectIds.length * 50; // Assume avg 50 docs per project
-      const actualProcessed = processingStats.individualDocProcessed;
-      const savedProcessing = totalEstimatedDocs - actualProcessed;
-
-      logger.info(`🚀 FINAL OPTIMIZATION SUMMARY:`);
-      logger.info(`📊 Total projects: ${processingStats.totalProjects}`);
-      logger.info(`📄 Projects with docfiles.txt: ${processingStats.projectsWithDocfiles} (${Math.round(processingStats.projectsWithDocfiles/processingStats.totalProjects*100)}%)`);
-      logger.info(`🎯 FI matches via docfiles: ${processingStats.docfilesMatches}`);
-      logger.info(`� Individual documents processed: ${processingStats.individualDocProcessed}`);
-      logger.info(`💾 Estimated documents saved: ${savedProcessing} (${Math.round(savedProcessing/totalEstimatedDocs*100)}% reduction)`);
-      logger.info(`⚡ Early terminations: ${processingStats.earlyTerminations}`);
-      logger.info(`⏱️ Estimated time saved: ~${Math.round(savedProcessing * 15 / 60)} minutes`);
+      // Log final statistics
+      logger.info(`📊 FI Detection Complete - Processed ${processingStats.totalProjects} projects, found ${processingStats.fiRequestsFound} FI requests`);
+      logger.info(`   Breakdown by type: ${JSON.stringify(processingStats.matchesByReportType)}`);
 
       // Step 4: Group results by customer if customer data provided
       const customerMatches = {};

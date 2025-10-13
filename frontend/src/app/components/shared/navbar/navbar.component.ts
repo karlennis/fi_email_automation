@@ -13,6 +13,7 @@ import { ToastrService } from 'ngx-toastr';
       <div class="navbar-container">
         <div class="navbar-brand">
           <a routerLink="/dashboard" class="brand-link">
+            <img src="assets/bii_logo.png" alt="BII Logo" class="brand-logo">
             <h2>FI Email Automation</h2>
           </a>
         </div>
@@ -52,10 +53,10 @@ import { ToastrService } from 'ngx-toastr';
   `,
   styles: [`
     .navbar {
-      background: #1976d2;
+      background: linear-gradient(135deg, #1e3a5f 0%, #2c5f8d 100%);
       color: white;
       padding: 0;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
     }
 
     .navbar-container {
@@ -65,12 +66,21 @@ import { ToastrService } from 'ngx-toastr';
       justify-content: space-between;
       align-items: center;
       padding: 0 20px;
-      height: 64px;
+      height: 70px;
     }
 
     .navbar-brand .brand-link {
       color: white;
       text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo {
+      height: 45px;
+      width: auto;
+      object-fit: contain;
     }
 
     .navbar-brand h2 {
@@ -102,11 +112,12 @@ import { ToastrService } from 'ngx-toastr';
     }
 
     .nav-link:hover {
-      background-color: rgba(255,255,255,0.1);
+      background-color: rgba(255,255,255,0.15);
     }
 
     .nav-link.active {
-      background-color: rgba(255,255,255,0.2);
+      background-color: rgba(255,255,255,0.25);
+      font-weight: 500;
     }
 
     .navbar-user {
