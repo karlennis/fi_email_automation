@@ -273,6 +273,19 @@ router.post('/process-fi-with-filters', async (req, res) => {
               );
 
               logger.info(`Email sent to ${customerMatch.email} with ${customerMatch.matches.length} matches`);
+
+              // Update customer email counter in database using model method
+              try {
+                const Customer = require('../models/Customer');
+                const customer = await Customer.findOne({ email: customerMatch.email });
+                if (customer) {
+                  await customer.recordEmailSent();
+                  logger.info(`📊 Updated email counter for ${customerMatch.email}`);
+                }
+              } catch (updateError) {
+                logger.warn(`Failed to update email counter for ${customerMatch.email}:`, updateError.message);
+                // Don't throw - email was sent successfully
+              }
             }
           }
         }

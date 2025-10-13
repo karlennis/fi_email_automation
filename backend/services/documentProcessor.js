@@ -51,11 +51,11 @@ class DocumentProcessor {
       // Check if OCR'd version already exists
       try {
         await fs.access(ocrPath);
-        logger.info(`Using cached OCR version: ${ocrPath}`);
+        logger.debug(`Using cached OCR version: ${ocrPath}`);
         return ocrPath;
       } catch {
         // OCR'd version doesn't exist, create it
-        logger.info(`Creating OCR version for: ${path.basename(pdfPath)}`);
+        logger.debug(`Creating OCR version for: ${path.basename(pdfPath)}`);
       }
 
       const tmpPath = ocrPath + '.tmp';
@@ -64,7 +64,7 @@ class DocumentProcessor {
         // Run OCR using ocrmypdf
         await this.runOCR(pdfPath, tmpPath);
         await fs.rename(tmpPath, ocrPath);
-        logger.info(`OCR completed: ${ocrPath}`);
+        logger.debug(`OCR completed: ${ocrPath}`);
         return ocrPath;
       } catch (ocrError) {
         logger.warn(`OCR failed for ${pdfPath}, using original:`, ocrError.message);
@@ -131,7 +131,7 @@ class DocumentProcessor {
       // Limit text length to prevent token overflow
       const text = data.text.slice(0, this.maxTextChars);
 
-      logger.info(`Extracted ${text.length} characters from ${path.basename(pdfPath)}`);
+      logger.debug(`Extracted ${text.length} characters from ${path.basename(pdfPath)}`);
       return text;
     } catch (error) {
       logger.error(`Error extracting text from ${pdfPath}:`, error);
@@ -173,7 +173,7 @@ class DocumentProcessor {
    */
   async processDocumentFromBuffer(buffer, fileName) {
     try {
-      logger.info(`📄 Processing document from buffer: ${fileName}`);
+      logger.debug(`📄 Processing document from buffer: ${fileName}`);
 
       // Create temporary file for processing (still needed for OCR)
       const tempPath = path.join(this.ocrDir, `temp_${Date.now()}_${fileName}`);

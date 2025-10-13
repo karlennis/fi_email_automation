@@ -20,6 +20,7 @@ const jobRoutes = require('./routes/jobs');
 const apiFilteringRoutes = require('./routes/api-filtering');
 const testRoutes = require('./routes/test');
 const reportsRoutes = require('./routes/reports');
+const documentRegisterRoutes = require('./routes/document-register');
 
 // Configure logger
 const logger = winston.createLogger({
@@ -87,6 +88,7 @@ app.use('/api/jobs', jobRoutes);
 app.use('/api/filtering', apiFilteringRoutes);
 app.use('/api/test', testRoutes);
 app.use('/api/reports', reportsRoutes);
+app.use('/api/document-register', documentRegisterRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {

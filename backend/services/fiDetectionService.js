@@ -1244,11 +1244,10 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
           }
         }
 
-        // Distribute matches across customers (simple round-robin for now)
+        // Give ALL matches to ALL customers (each customer subscribed to these report types)
         const customerEmails = Object.keys(customerMatches);
-        docfilesMatches.forEach((match, index) => {
-          const assignedEmail = customerEmails[index % customerEmails.length];
-          customerMatches[assignedEmail].matches.push(match);
+        customerEmails.forEach(email => {
+          customerMatches[email].matches = [...docfilesMatches];
         });
       }
 
@@ -1327,17 +1326,11 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
       }
 
       for (const customer of customerData) {
-        // Filter matches for this customer (or assign all if single customer)
-        const customerMatches = customerData.length === 1
-          ? docfilesMatches
-          : docfilesMatches.filter((match, index) => {
-              // Simple round-robin distribution
-              const customerIndex = customerData.findIndex(c => c.email === customer.email);
-              return index % customerData.length === customerIndex;
-            });
+        // Each customer gets ALL matches for their subscribed report types
+        const customerMatches = [...docfilesMatches];
 
         if (customerMatches.length === 0) {
-          logger.info(`No FI matches assigned to customer ${customer.email}`);
+          logger.info(`No FI matches for customer ${customer.email}`);
           continue;
         }
 

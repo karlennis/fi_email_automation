@@ -62,6 +62,7 @@ class S3Service {
 
   /**
    * List all documents for a specific project ID
+   * Uses pagination to retrieve ALL documents (not limited to 1000)
    */
   async listProjectDocuments(projectId) {
     try {
@@ -72,24 +73,42 @@ class S3Service {
         return [];
       }
 
-      const params = {
-        Bucket: this.bucket,
-        Prefix: projectPath,
-        MaxKeys: 1000
-      };
+      const allDocuments = [];
+      let continuationToken = null;
 
-      const response = await this.s3.listObjectsV2(params).promise();
+      // Paginate through all results
+      do {
+        const params = {
+          Bucket: this.bucket,
+          Prefix: projectPath,
+          MaxKeys: 1000
+        };
 
-      return response.Contents
-        .filter(obj => obj.Key.toLowerCase().endsWith('.pdf'))
-        .map(obj => ({
-          key: obj.Key,
-          fileName: path.basename(obj.Key),
-          size: obj.Size,
-          lastModified: obj.LastModified,
-          projectId: projectId,
-          folderPath: projectPath
-        }));
+        if (continuationToken) {
+          params.ContinuationToken = continuationToken;
+        }
+
+        const response = await this.s3.listObjectsV2(params).promise();
+
+        const documents = response.Contents
+          .filter(obj => obj.Key.toLowerCase().endsWith('.pdf'))
+          .map(obj => ({
+            key: obj.Key,
+            fileName: path.basename(obj.Key),
+            size: obj.Size,
+            lastModified: obj.LastModified,
+            projectId: projectId,
+            folderPath: projectPath
+          }));
+
+        allDocuments.push(...documents);
+
+        // Check if there are more results
+        continuationToken = response.IsTruncated ? response.NextContinuationToken : null;
+
+      } while (continuationToken);
+
+      return allDocuments;
 
     } catch (error) {
       logger.error(`Error listing documents for project ${projectId}:`, error);
@@ -140,7 +159,7 @@ class S3Service {
 
       const response = await this.s3.getObject(params).promise();
 
-      logger.info(`📄 Streamed ${s3Key} (${response.Body.length} bytes) without disk write`);
+      logger.debug(`📄 Streamed ${s3Key} (${response.Body.length} bytes) without disk write`);
 
       return {
         buffer: response.Body,
@@ -315,34 +334,54 @@ class S3Service {
 
   /**
    * List projects in the planning-docs folder only
+   * Uses pagination to retrieve ALL projects (not limited to 1000)
    */
   async listPlanningDocsProjects() {
     try {
       const planningDocsPrefix = 'planning-docs/';
+      const allProjects = [];
+      let continuationToken = null;
 
-      const params = {
-        Bucket: this.bucket,
-        Prefix: planningDocsPrefix,
-        Delimiter: '/',
-        MaxKeys: 1000
-      };
+      // Paginate through all results
+      do {
+        const params = {
+          Bucket: this.bucket,
+          Prefix: planningDocsPrefix,
+          Delimiter: '/',
+          MaxKeys: 1000
+        };
 
-      const response = await this.s3.listObjectsV2(params).promise();
+        if (continuationToken) {
+          params.ContinuationToken = continuationToken;
+        }
 
-      const projects = response.CommonPrefixes
-        .map(prefix => {
-          const fullPath = prefix.Prefix;
-          const projectId = fullPath.replace(planningDocsPrefix, '').replace('/', '');
-          return {
-            projectId: projectId,
-            folderPath: fullPath,
-            parentFolder: 'planning-docs'
-          };
-        })
-        .filter(project => project.projectId);
+        const response = await this.s3.listObjectsV2(params).promise();
 
-      logger.info(`Found ${projects.length} projects in planning-docs folder`);
-      return projects;
+        const projects = response.CommonPrefixes
+          .map(prefix => {
+            const fullPath = prefix.Prefix;
+            const projectId = fullPath.replace(planningDocsPrefix, '').replace('/', '');
+            return {
+              projectId: projectId,
+              folderPath: fullPath,
+              parentFolder: 'planning-docs'
+            };
+          })
+          .filter(project => project.projectId);
+
+        allProjects.push(...projects);
+
+        // Check if there are more results
+        continuationToken = response.IsTruncated ? response.NextContinuationToken : null;
+
+        if (continuationToken) {
+          logger.info(`Retrieved ${allProjects.length} projects so far, fetching more...`);
+        }
+
+      } while (continuationToken);
+
+      logger.info(`Found ${allProjects.length} total projects in planning-docs folder`);
+      return allProjects;
 
     } catch (error) {
       logger.error('Error listing projects in planning-docs folder:', error);
@@ -352,6 +391,7 @@ class S3Service {
 
   /**
    * List documents for projects filtered by API results (planning-docs only)
+   * Uses pagination to retrieve ALL documents per project
    */
   async listFilteredProjectDocuments(filteredProjectIds) {
     try {
@@ -367,27 +407,42 @@ class S3Service {
         const batchPromises = batch.map(async (projectId) => {
           try {
             const projectPath = `${planningDocsPrefix}${projectId}/`;
+            const projectDocuments = [];
+            let continuationToken = null;
 
-            const params = {
-              Bucket: this.bucket,
-              Prefix: projectPath,
-              MaxKeys: 1000
-            };
+            // Paginate through all documents for this project
+            do {
+              const params = {
+                Bucket: this.bucket,
+                Prefix: projectPath,
+                MaxKeys: 1000
+              };
 
-            const response = await this.s3.listObjectsV2(params).promise();
+              if (continuationToken) {
+                params.ContinuationToken = continuationToken;
+              }
 
-            const documents = response.Contents
-              .filter(obj => obj.Key.toLowerCase().endsWith('.pdf'))
-              .map(obj => ({
-                key: obj.Key,
-                fileName: path.basename(obj.Key),
-                size: obj.Size,
-                lastModified: obj.LastModified,
-                projectId: projectId,
-                folderPath: projectPath
-              }));
+              const response = await this.s3.listObjectsV2(params).promise();
 
-            return documents;
+              const documents = response.Contents
+                .filter(obj => obj.Key.toLowerCase().endsWith('.pdf'))
+                .map(obj => ({
+                  key: obj.Key,
+                  fileName: path.basename(obj.Key),
+                  size: obj.Size,
+                  lastModified: obj.LastModified,
+                  projectId: projectId,
+                  folderPath: projectPath
+                }));
+
+              projectDocuments.push(...documents);
+
+              // Check if there are more results
+              continuationToken = response.IsTruncated ? response.NextContinuationToken : null;
+
+            } while (continuationToken);
+
+            return projectDocuments;
 
           } catch (error) {
             logger.warn(`Error listing documents for project ${projectId}:`, error.message);
