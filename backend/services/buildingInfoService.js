@@ -274,22 +274,21 @@ class BuildingInfoService {
       apiUrl += `&nearby=${paramsObject.latitude},${paramsObject.longitude}&radius=${paramsObject.radius}`;
     }
 
-    // Add date filtering with _apion parameter
-    if (paramsObject.apion !== undefined && paramsObject.apion !== null) {
-      apiUrl += `&_apion=${paramsObject.apion}`;
+    // Add date filtering with _apion parameter (api_date field - all updates)
+    // Use min_apion with 'z' suffix for precise control (e.g., -1z = yesterday at 00:00:00)
+    if (paramsObject.min_apion !== undefined && paramsObject.min_apion !== null) {
+      apiUrl += `&min_apion=${paramsObject.min_apion}`;
+      // Don't set _apion when using min_apion
+    } else if (paramsObject._apion !== undefined && paramsObject._apion !== null) {
+      apiUrl += `&_apion=${paramsObject._apion}`;
 
-      // If using date range (apion = 8), add min and max dates
-      if (paramsObject.apion === 8 || paramsObject.apion === '8') {
-        if (paramsObject.min_apion) {
-          apiUrl += `&min_apion=${paramsObject.min_apion}`;
-        }
-        if (paramsObject.max_apion) {
-          apiUrl += `&max_apion=${paramsObject.max_apion}`;
-        }
+      // If using date range (_apion = 8), add max date
+      if ((paramsObject._apion === 8 || paramsObject._apion === '8') && paramsObject.max_apion) {
+        apiUrl += `&max_apion=${paramsObject.max_apion}`;
       }
     } else {
-      // Default to past 3 months if no date filter specified
-      apiUrl += `&_apion=1.1`;
+      // Default: Use min_apion=-1z to get everything from yesterday at 00:00:00
+      apiUrl += `&min_apion=-1z`;
     }
 
     apiUrl += `&more=limit ${limitStart},1000`;

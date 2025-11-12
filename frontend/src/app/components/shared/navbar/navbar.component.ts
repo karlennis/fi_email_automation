@@ -35,6 +35,10 @@ import { ToastrService } from 'ngx-toastr';
               <i class="icon-users"></i>
               Customers
             </a>
+            <a routerLink="/jobs" routerLinkActive="active" class="nav-link">
+              <i class="icon-calendar"></i>
+              Jobs
+            </a>
           </div>
 
           <div class="navbar-user">
@@ -165,11 +169,12 @@ import { ToastrService } from 'ngx-toastr';
       display: inline-block;
     }
 
-    .icon-dashboard::before { content: "📊"; }
-
-    .icon-list::before { content: "📋"; }
-    .icon-users::before { content: "👥"; }
-    .icon-logout::before { content: "🚪"; }
+    .icon-dashboard::before { content: ""; }
+    .icon-folder::before { content: ""; }
+    .icon-calendar::before { content: ""; }
+    .icon-list::before { content: ""; }
+    .icon-users::before { content: ""; }
+    .icon-logout::before { content: ""; }
   `]
 })
 export class NavbarComponent {

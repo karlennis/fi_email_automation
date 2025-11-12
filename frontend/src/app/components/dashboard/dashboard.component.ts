@@ -362,7 +362,34 @@ export class DashboardComponent implements OnInit {
   }
 
   private loadStats() {
-    // Load real statistics from API
+    // Load all statistics from the scheduled jobs dashboard API in one call
+    this.http.get<any>('http://localhost:3000/api/scheduled-jobs/dashboard/stats').subscribe({
+      next: (response: any) => {
+        console.log('Complete dashboard stats response:', response);
+        if (response.success && response.data) {
+          const data = response.data;
+
+          // Update all stats from the single API response
+          this.stats.emailsSent = data.emailsSent || 0;
+          this.stats.totalDocuments = data.processedProjects || 0;
+          this.stats.fiMatches = data.fiMatches || 0;
+
+          console.log('Updated stats:', this.stats);
+        }
+      },
+      error: (error: any) => {
+        console.error('Error loading dashboard stats:', error);
+        // Fallback to individual calls
+        this.loadStatsIndividually();
+      }
+    });
+
+    // Always load customers from the customer service (separate from scheduled jobs)
+    this.loadCustomerStats();
+  }
+
+  private loadStatsIndividually() {
+    // Fallback method with individual API calls
     this.loadCustomerStats();
     this.loadDocumentStats();
     this.loadEmailStats();
@@ -382,47 +409,69 @@ export class DashboardComponent implements OnInit {
   }
 
   private loadDocumentStats() {
-    // Get document processing statistics
-    this.http.get<any>('http://localhost:3000/api/documents/cache-stats').subscribe({
+    // Get document processing statistics from scheduled jobs
+    this.http.get<any>('http://localhost:3000/api/scheduled-jobs/dashboard/stats').subscribe({
       next: (response: any) => {
+        console.log('Document stats response:', response);
         if (response.success && response.data) {
-          this.stats.totalDocuments = response.data.totalFiles || 0;
+          console.log('Processed projects from response:', response.data.processedProjects);
+          this.stats.totalDocuments = response.data.processedProjects || 0;
         }
       },
       error: (error: any) => {
-        console.error('Error loading document stats:', error);
-        this.stats.totalDocuments = 0;
+        console.error('Error loading scheduled job document stats:', error);
+        // Fallback to document cache stats
+        this.http.get<any>('http://localhost:3000/api/documents/cache-stats').subscribe({
+          next: (response: any) => {
+            if (response.success && response.data) {
+              this.stats.totalDocuments = response.data.totalFiles || 0;
+            }
+          },
+          error: () => this.stats.totalDocuments = 0
+        });
       }
     });
   }
 
   private loadEmailStats() {
-    // Get email statistics from customer data
-    this.customerService.getCustomers({ limit: 1000 }).subscribe({
+    // Get email statistics from scheduled jobs dashboard stats
+    this.http.get<any>('http://localhost:3000/api/scheduled-jobs/dashboard/stats').subscribe({
       next: (response: any) => {
-        if (response.customers) {
-          this.stats.emailsSent = response.customers.reduce((total: number, customer: any) => {
-            return total + (customer.emailCount || 0);
-          }, 0);
+        console.log('Dashboard stats response:', response);
+        if (response.success && response.data) {
+          console.log('Email stats data:', response.data);
+          this.stats.emailsSent = response.data.emailsSent || 0;
         }
       },
       error: (error: any) => {
-        console.error('Error loading email stats:', error);
-        this.stats.emailsSent = 0;
+        console.error('Error loading scheduled job email stats:', error);
+        // Fallback to customer data
+        this.customerService.getCustomers({ limit: 1000 }).subscribe({
+          next: (response: any) => {
+            if (response.customers) {
+              this.stats.emailsSent = response.customers.reduce((total: number, customer: any) => {
+                return total + (customer.emailCount || 0);
+              }, 0);
+            }
+          },
+          error: () => this.stats.emailsSent = 0
+        });
       }
     });
   }
 
   private loadFIMatchStats() {
-    // Get FI match statistics from projects or jobs API
-    this.http.get<any>('http://localhost:3000/api/jobs/stats').subscribe({
+    // Get FI match statistics from scheduled jobs dashboard stats
+    this.http.get<any>('http://localhost:3000/api/scheduled-jobs/dashboard/stats').subscribe({
       next: (response: any) => {
+        console.log('FI Match stats response:', response);
         if (response.success && response.data) {
-          this.stats.fiMatches = response.data.completedJobs || 0;
+          console.log('FI matches from response:', response.data.fiMatches);
+          this.stats.fiMatches = response.data.fiMatches || 0;
         }
       },
       error: (error: any) => {
-        console.error('Error loading FI match stats:', error);
+        console.error('Error loading scheduled job FI stats:', error);
         this.stats.fiMatches = 0;
       }
     });

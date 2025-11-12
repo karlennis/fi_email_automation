@@ -5,6 +5,8 @@ import { HttpClient } from '@angular/common/http';
 import { ToastrService } from 'ngx-toastr';
 import { CustomerService } from '../../services/customer.service';
 import { ApiFilteringService, FilteringParams, DropdownData, ProjectPreview } from '../../services/api-filtering.service';
+import { CreateJobModalComponent } from '../jobs/create-job-modal.component';
+import { Router } from '@angular/router';
 
 interface Drive {
   name: string;
@@ -54,7 +56,7 @@ interface AWSProject {
 @Component({
   selector: 'app-documents-browser',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, CreateJobModalComponent],
   template: `
     <div class="documents-container">
       <div class="documents-header">
@@ -111,42 +113,69 @@ interface AWSProject {
             </div>
 
             <div class="filtering-controls" *ngIf="dropdownData">
+              <!-- Multi-select filters with checkboxes -->
               <div class="filter-row">
-                <div class="filter-group">
-                  <label>Category:</label>
-                  <select [(ngModel)]="selectedFilters.category" (change)="onCategoryChange()">
-                    <option value="">All Categories</option>
-                    <option *ngFor="let cat of dropdownData.categories" [value]="cat.id">{{cat.name}}</option>
-                  </select>
+                <div class="filter-group checkbox-group">
+                  <label class="filter-label">Category:</label>
+                  <div class="checkbox-scroll">
+                    <div *ngFor="let cat of dropdownData.categories" class="checkbox-item">
+                      <input
+                        type="checkbox"
+                        [id]="'cat-' + cat.id"
+                        [value]="cat.id"
+                        (change)="toggleFilter('category', cat.id)"
+                        [checked]="isFilterSelected('category', cat.id)">
+                      <label [for]="'cat-' + cat.id">{{cat.name}}</label>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="filter-group checkbox-group">
+                  <label class="filter-label">Subcategory:</label>
+                  <div class="checkbox-scroll">
+                    <div *ngFor="let subcat of getSubcategoriesForSelectedCategories()" class="checkbox-item">
+                      <input
+                        type="checkbox"
+                        [id]="'subcat-' + subcat.id"
+                        [value]="subcat.id"
+                        (change)="toggleFilter('subcategory', subcat.id)"
+                        [checked]="isFilterSelected('subcategory', subcat.id)">
+                      <label [for]="'subcat-' + subcat.id">{{subcat.name}}</label>
+                    </div>
+                    <div *ngIf="!selectedFilters.category || getSubcategoriesForSelectedCategories().length === 0" class="no-options">
+                      Select a category first
+                    </div>
+                  </div>
+                </div>
+
+                <div class="filter-group checkbox-group">
+                  <label class="filter-label">County:</label>
+                  <div class="checkbox-scroll">
+                    <div *ngFor="let county of dropdownData.counties" class="checkbox-item">
+                      <input
+                        type="checkbox"
+                        [id]="'county-' + county.id"
+                        [value]="county.id"
+                        (change)="toggleFilter('county', county.id)"
+                        [checked]="isFilterSelected('county', county.id)">
+                      <label [for]="'county-' + county.id">{{county.name}}</label>
+                    </div>
+                  </div>
                 </div>
 
                 <div class="filter-group">
-                  <label>Subcategory:</label>
-                  <select [(ngModel)]="selectedFilters.subcategory" [disabled]="!selectedFilters.category">
-                    <option value="">All Subcategories</option>
-                    <option
-                      *ngFor="let subcat of getSubcategoriesForCategory(selectedFilters.category)"
-                      [value]="subcat.id"
-                    >{{subcat.name}}</option>
-                  </select>
-                </div>
-
-                <div class="filter-group">
-                  <label>County:</label>
-                  <select [(ngModel)]="selectedFilters.county">
-                    <option value="">All Counties</option>
-                    <option *ngFor="let county of dropdownData.counties" [value]="county.id">{{county.name}}</option>
-                  </select>
-                </div>
-
-                <div class="filter-group">
-                  <label>Date Filter:</label>
+                  <label>Updates Filter:</label>
                   <select [(ngModel)]="selectedFilters.apion" (change)="onDateFilterChange()">
-                    <option value="">All Time</option>
-                    <option value="3">Today</option>
-                    <option value="-1.1">Yesterday</option>
-                    <option value="0.7">Past 7 Days</option>
-                    <option value="1">Past 30 Days</option>
+                    <option value="">No Filter</option>
+                    <option value="-1z">From Yesterday (00:00)</option>
+                    <option value="-7z">From 7 Days Ago (00:00)</option>
+                    <option value="-30z">From 30 Days Ago (00:00)</option>
+                    <option value="0z">From Today (00:00)</option>
+                    <option value="now">From Now</option>
+                    <option value="3">Today (legacy)</option>
+                    <option value="-1.1">Yesterday (legacy)</option>
+                    <option value="0.7">Past 7 Days (legacy)</option>
+                    <option value="1">Past 30 Days (legacy)</option>
                     <option value="1.1">Past 3 Months</option>
                     <option value="2">Past 12 Months</option>
                     <option value="3.1">Current Year</option>
@@ -155,7 +184,7 @@ interface AWSProject {
                 </div>
               </div>
 
-              <!-- Custom Date Range Row (only shown when Custom Date Range is selected) -->
+              <!-- Custom Date Range Row -->
               <div class="filter-row" *ngIf="selectedFilters.apion === '8'">
                 <div class="filter-group">
                   <label>From Date:</label>
@@ -168,21 +197,36 @@ interface AWSProject {
                 </div>
               </div>
 
+              <!-- Stage and Type Row -->
               <div class="filter-row">
-                <div class="filter-group">
-                  <label>Stage:</label>
-                  <select [(ngModel)]="selectedFilters.stage">
-                    <option value="">All Stages</option>
-                    <option *ngFor="let stage of dropdownData.stages" [value]="stage.id">{{stage.name}}</option>
-                  </select>
+                <div class="filter-group checkbox-group">
+                  <label class="filter-label">Stage:</label>
+                  <div class="checkbox-scroll">
+                    <div *ngFor="let stage of dropdownData.stages" class="checkbox-item">
+                      <input
+                        type="checkbox"
+                        [id]="'stage-' + stage.id"
+                        [value]="stage.id"
+                        (change)="toggleFilter('stage', stage.id)"
+                        [checked]="isFilterSelected('stage', stage.id)">
+                      <label [for]="'stage-' + stage.id">{{stage.name}}</label>
+                    </div>
+                  </div>
                 </div>
 
-                <div class="filter-group">
-                  <label>Type:</label>
-                  <select [(ngModel)]="selectedFilters.type">
-                    <option value="">All Types</option>
-                    <option *ngFor="let type of dropdownData.types" [value]="type.id">{{type.name}}</option>
-                  </select>
+                <div class="filter-group checkbox-group">
+                  <label class="filter-label">Type:</label>
+                  <div class="checkbox-scroll">
+                    <div *ngFor="let type of dropdownData.types" class="checkbox-item">
+                      <input
+                        type="checkbox"
+                        [id]="'type-' + type.id"
+                        [value]="type.id"
+                        (change)="toggleFilter('type', type.id)"
+                        [checked]="isFilterSelected('type', type.id)">
+                      <label [for]="'type-' + type.id">{{type.name}}</label>
+                    </div>
+                  </div>
                 </div>
 
                 <div class="filter-actions">
@@ -297,6 +341,12 @@ interface AWSProject {
                 <button class="process-filtered-btn" (click)="processFIWithApiFilters()" [disabled]="processingWithFilters || selectedCustomers.length === 0 || !hasSelectedReportTypes()">
                   <span *ngIf="!processingWithFilters">Process FI Detection ({{ selectedCustomers.length }} customer{{ selectedCustomers.length !== 1 ? 's' : '' }}, {{ getSelectedReportTypesCount() }} report type{{ getSelectedReportTypesCount() !== 1 ? 's' : '' }})</span>
                   <span *ngIf="processingWithFilters">Processing...</span>
+                </button>
+                <button
+                  class="create-job-btn"
+                  (click)="openCreateJobModalFromFilters()"
+                  [disabled]="selectedCustomers.length === 0 || !hasSelectedReportTypes()">
+                  📅 Create Scheduled Job
                 </button>
                 <div class="requirements" *ngIf="selectedCustomers.length === 0 || !hasSelectedReportTypes()">
                   <p class="customer-requirement" *ngIf="selectedCustomers.length === 0">
@@ -440,6 +490,14 @@ interface AWSProject {
               >
                 <i class="icon-play"></i>
                 Process {{selectedAWSFolders.size}} Folder(s) - All Projects
+              </button>
+              <button
+                class="process-btn secondary"
+                (click)="openCreateJobModal()"
+                [disabled]="!canProcessFolders()"
+              >
+                <i class="icon-calendar"></i>
+                Create Scheduled Job
               </button>
               <button class="clear-btn" (click)="clearFolderSelections()">
                 Clear Selections
@@ -828,6 +886,14 @@ interface AWSProject {
         </div>
       </div>
     </div>
+
+    <!-- Create Job Modal -->
+    <app-create-job-modal
+      [isOpen]="showCreateJobModal"
+      [prefilledData]="jobModalData"
+      (close)="closeCreateJobModal()"
+      (jobCreated)="onJobCreated($event)">
+    </app-create-job-modal>
   `,
   styles: [`
     .documents-container {
@@ -1443,6 +1509,15 @@ interface AWSProject {
       background: #229954;
     }
 
+    .process-btn.secondary {
+      background: #3498db;
+      color: white;
+    }
+
+    .process-btn.secondary:hover:not(:disabled) {
+      background: #2980b9;
+    }
+
     .process-btn:disabled {
       background: #bdc3c7;
       cursor: not-allowed;
@@ -1832,6 +1907,71 @@ interface AWSProject {
       color: #999;
     }
 
+    .filter-group.checkbox-group {
+      flex: 1;
+      min-width: 200px;
+    }
+
+    .filter-label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #2c3e50;
+      font-size: 14px;
+    }
+
+    .checkbox-scroll {
+      max-height: 200px;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background: white;
+      padding: 8px;
+    }
+
+    .checkbox-item {
+      display: flex;
+      align-items: center;
+      padding: 6px 8px;
+      margin-bottom: 2px;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .checkbox-item:hover {
+      background: #f0f7ff;
+    }
+
+    .checkbox-item input[type="checkbox"] {
+      margin-right: 10px;
+      cursor: pointer;
+      width: 16px;
+      height: 16px;
+    }
+
+    .checkbox-item label {
+      cursor: pointer;
+      margin: 0;
+      font-size: 14px;
+      color: #2c3e50;
+      flex: 1;
+      user-select: none;
+    }
+
+    .checkbox-item input[type="checkbox"]:checked + label {
+      font-weight: 600;
+      color: #3498db;
+    }
+
+    .no-options {
+      padding: 12px;
+      text-align: center;
+      color: #999;
+      font-size: 13px;
+      font-style: italic;
+    }
+
     .filter-actions {
       display: flex;
       gap: 10px;
@@ -1882,6 +2022,31 @@ interface AWSProject {
     .process-filtered-btn:disabled {
       background: #bdc3c7;
       cursor: not-allowed;
+    }
+
+    .create-job-btn {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      transition: all 0.3s;
+      background: #3498db;
+      color: white;
+    }
+
+    .create-job-btn:hover:not(:disabled) {
+      background: #2980b9;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+
+    .create-job-btn:disabled {
+      background: #bdc3c7;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
     }
 
     .filter-validation {
@@ -1983,9 +2148,18 @@ interface AWSProject {
     }
 
     .preview-actions {
-      text-align: center;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      align-items: center;
       padding-top: 15px;
       border-top: 1px solid #eee;
+    }
+
+    .preview-actions .requirements {
+      width: 100%;
+      text-align: center;
     }
   `]
 })
@@ -2028,10 +2202,10 @@ export class DocumentsBrowserComponent implements OnInit {
   ];
 
   // Customer management
-  selectedCustomers: Array<{name: string, email: string}> = [];
+  selectedCustomers: Array<{name: string, email: string, _id?: string}> = [];
   showAddCustomerModal = false;
   newCustomer = { name: '', email: '' };
-  existingCustomers: Array<{name: string, email: string}> = [];
+  existingCustomers: Array<{name: string, email: string, _id?: string}> = [];
   customerEmails = ''; // Keep for backward compatibility during transition
 
   // API Filtering properties
@@ -2047,12 +2221,17 @@ export class DocumentsBrowserComponent implements OnInit {
   processingMode: 'immediate' | 'scheduled' = 'immediate';
   scheduleTime = '';
 
+  // Create Job Modal
+  showCreateJobModal = false;
+  jobModalData: any = {};
+
   Math = Math;
 
   constructor(
     private http: HttpClient,
     private toastr: ToastrService,
     private customerService: CustomerService,
+    private router: Router,
     private apiFilteringService: ApiFilteringService
   ) {}
 
@@ -2094,6 +2273,43 @@ export class DocumentsBrowserComponent implements OnInit {
     });
   }
 
+  // Multi-select checkbox handlers
+  toggleFilter(filterName: string, value: number) {
+    if (!this.selectedFilters[filterName]) {
+      this.selectedFilters[filterName] = [];
+    }
+
+    // Ensure it's an array
+    if (!Array.isArray(this.selectedFilters[filterName])) {
+      this.selectedFilters[filterName] = [];
+    }
+
+    const index = this.selectedFilters[filterName].indexOf(value);
+    if (index > -1) {
+      // Remove if already selected
+      this.selectedFilters[filterName].splice(index, 1);
+    } else {
+      // Add if not selected
+      this.selectedFilters[filterName].push(value);
+    }
+
+    // Clear subcategory when category changes
+    if (filterName === 'category') {
+      this.selectedFilters.subcategory = [];
+    }
+
+    // Remove the property if array is empty
+    if (this.selectedFilters[filterName].length === 0) {
+      delete this.selectedFilters[filterName];
+    }
+  }
+
+  isFilterSelected(filterName: string, value: number): boolean {
+    if (!this.selectedFilters[filterName]) return false;
+    if (!Array.isArray(this.selectedFilters[filterName])) return false;
+    return this.selectedFilters[filterName].indexOf(value) > -1;
+  }
+
   onCategoryChange() {
     // Clear subcategory when category changes
     this.selectedFilters.subcategory = undefined;
@@ -2111,6 +2327,35 @@ export class DocumentsBrowserComponent implements OnInit {
     if (!categoryId || !this.dropdownData) return [];
     const category = this.dropdownData.categories.find(cat => cat.id === categoryId);
     return category ? category.subcategories : [];
+  }
+
+  getSubcategoriesForSelectedCategories(): Array<{ id: number; name: string }> {
+    // Handle multi-select categories - aggregate all subcategories from selected categories
+    if (!this.selectedFilters.category || !this.dropdownData || !this.dropdownData.categories) return [];
+
+    // Handle both single value and array
+    const categoryIds = Array.isArray(this.selectedFilters.category)
+      ? this.selectedFilters.category
+      : [this.selectedFilters.category];
+
+    // Aggregate subcategories from all selected categories
+    const allSubcategories: Array<{ id: number; name: string }> = [];
+    const seenIds = new Set<number>();
+
+    categoryIds.forEach(catId => {
+      const category = this.dropdownData!.categories.find(cat => cat.id === catId);
+      if (category && category.subcategories) {
+        category.subcategories.forEach(subcat => {
+          // Avoid duplicates
+          if (!seenIds.has(subcat.id)) {
+            seenIds.add(subcat.id);
+            allSubcategories.push(subcat);
+          }
+        });
+      }
+    });
+
+    return allSubcategories;
   }
 
   previewFilteredProjects() {
@@ -2160,28 +2405,62 @@ export class DocumentsBrowserComponent implements OnInit {
     });
   }
 
-  cleanFilterParams(filters: any): FilteringParams {
-    const cleaned: FilteringParams = {};
+  cleanFilterParams(filters: any): any {
+    const cleaned: any = {};
 
-    // Only include non-empty values and convert strings to numbers for numeric fields
-    if (filters.category && filters.category !== '' && filters.category !== null) {
-      cleaned.category = typeof filters.category === 'string' ? parseInt(filters.category) : filters.category;
+    // Helper function to handle both single values and arrays
+    const processParam = (value: any): string | number | null => {
+      if (value === '' || value === null || value === undefined) {
+        return null;
+      }
+      if (Array.isArray(value)) {
+        // Convert array to comma-separated string
+        return value.length > 0 ? value.join(',') : null;
+      }
+      // Single value - convert string to number if needed
+      return typeof value === 'string' ? parseInt(value) : value;
+    };
+
+    // Only include non-empty values and handle both single values and arrays
+    const categoryValue = processParam(filters.category);
+    if (categoryValue !== null) {
+      cleaned.category = categoryValue;
     }
-    if (filters.subcategory && filters.subcategory !== '' && filters.subcategory !== null) {
-      cleaned.subcategory = typeof filters.subcategory === 'string' ? parseInt(filters.subcategory) : filters.subcategory;
+
+    const subcategoryValue = processParam(filters.subcategory);
+    if (subcategoryValue !== null) {
+      cleaned.subcategory = subcategoryValue;
     }
-    if (filters.county && filters.county !== '' && filters.county !== null) {
-      cleaned.county = typeof filters.county === 'string' ? parseInt(filters.county) : filters.county;
+
+    const countyValue = processParam(filters.county);
+    if (countyValue !== null) {
+      cleaned.county = countyValue;
     }
-    if (filters.stage && filters.stage !== '' && filters.stage !== null) {
-      cleaned.stage = typeof filters.stage === 'string' ? parseInt(filters.stage) : filters.stage;
+
+    const stageValue = processParam(filters.stage);
+    if (stageValue !== null) {
+      cleaned.stage = stageValue;
     }
-    if (filters.type && filters.type !== '' && filters.type !== null) {
-      cleaned.type = typeof filters.type === 'string' ? parseInt(filters.type) : filters.type;
+
+    const typeValue = processParam(filters.type);
+    if (typeValue !== null) {
+      cleaned.type = typeValue;
     }
+
+    // Handle apion-based date filtering (api_date field - all updates)
+    // Priority: min_apion > apion (if min_apion is set, use it; otherwise use apion)
     if (filters.apion && filters.apion !== '' && filters.apion !== null) {
-      cleaned.apion = filters.apion;
+      // Check if it's a 'z' format (e.g., -1z, 0z) or special string
+      if (typeof filters.apion === 'string' && (filters.apion.includes('z') || filters.apion === 'now' || filters.apion === 'today')) {
+        // Use as min_apion
+        cleaned.min_apion = filters.apion;
+      } else {
+        // Use as _apion for legacy relative dates
+        cleaned._apion = filters.apion;
+      }
     }
+
+    // Explicit min_apion and max_apion (for custom ranges or z-format dates)
     if (filters.min_apion && filters.min_apion !== '' && filters.min_apion !== null) {
       cleaned.min_apion = filters.min_apion;
     }
@@ -2199,10 +2478,13 @@ export class DocumentsBrowserComponent implements OnInit {
   }
 
   hasValidFilters(): boolean {
-    return !!(this.selectedFilters.category ||
-              this.selectedFilters.county ||
-              this.selectedFilters.stage ||
-              this.selectedFilters.type);
+    const hasCategory = this.selectedFilters.category && (Array.isArray(this.selectedFilters.category) ? this.selectedFilters.category.length > 0 : true);
+    const hasCounty = this.selectedFilters.county && (Array.isArray(this.selectedFilters.county) ? this.selectedFilters.county.length > 0 : true);
+    const hasStage = this.selectedFilters.stage && (Array.isArray(this.selectedFilters.stage) ? this.selectedFilters.stage.length > 0 : true);
+    const hasType = this.selectedFilters.type && (Array.isArray(this.selectedFilters.type) ? this.selectedFilters.type.length > 0 : true);
+    const hasApion = !!this.selectedFilters.apion;
+
+    return !!(hasCategory || hasCounty || hasStage || hasType || hasApion);
   }
 
   processFIWithApiFilters() {
@@ -2800,6 +3082,7 @@ export class DocumentsBrowserComponent implements OnInit {
             this.existingCustomers = response.customers
               .filter((customer: any) => customer.isActive)
               .map((customer: any) => ({
+                _id: customer._id,
                 name: customer.name,
                 email: customer.email
               }));
@@ -2852,7 +3135,7 @@ export class DocumentsBrowserComponent implements OnInit {
     this.updateCustomerEmailsString();
   }
 
-  selectExistingCustomer(customer: {name: string, email: string}) {
+  selectExistingCustomer(customer: {name: string, email: string, _id?: string}) {
     if (this.selectedCustomers.some(c => c.email.toLowerCase() === customer.email.toLowerCase())) {
       this.toastr.warning('Customer already added to the list');
       return;
@@ -2879,6 +3162,68 @@ export class DocumentsBrowserComponent implements OnInit {
     this.selectedCustomers = [];
     this.customerEmails = '';
     this.toastr.info('Cleared all customers');
+  }
+
+  // Create Job Modal Methods
+  openCreateJobModal() {
+    const selectedReportTypes = this.reportTypes
+      .filter(type => type.selected)
+      .map(type => type.value);
+
+    // Gather project IDs from selected folders or projects
+    const projectIds: string[] = [];
+
+    if (this.selectedAWSFolders.size > 0) {
+      // Note: We don't have project IDs yet for folders, will need to be fetched or left empty
+      this.toastr.info('Scheduled job will process all projects in selected folders');
+    }
+
+    if (this.selectedAWSProjects.size > 0) {
+      projectIds.push(...Array.from(this.selectedAWSProjects));
+    }
+
+    // Extract customer IDs from selected customers
+    const customerIds = this.selectedCustomers.map(c => c._id).filter(id => id) as string[];
+
+    this.jobModalData = {
+      reportTypes: selectedReportTypes,
+      projectIds: projectIds.length > 0 ? projectIds : undefined,
+      customerIds: customerIds.length > 0 ? customerIds : undefined
+    };
+
+    this.showCreateJobModal = true;
+  }
+
+  openCreateJobModalFromFilters() {
+    const selectedReportTypes = this.reportTypes
+      .filter(type => type.selected)
+      .map(type => type.value);
+
+    // Get project IDs from previewed projects
+    const projectIds = this.previewedProjects.map(p => p.projectId);
+
+    // Extract customer IDs from selected customers
+    const customerIds = this.selectedCustomers.map(c => c._id).filter(id => id) as string[];
+
+    this.jobModalData = {
+      reportTypes: selectedReportTypes,
+      projectIds: projectIds.length > 0 ? projectIds : undefined,
+      customerIds: customerIds.length > 0 ? customerIds : undefined
+    };
+
+    this.showCreateJobModal = true;
+  }
+
+  closeCreateJobModal() {
+    this.showCreateJobModal = false;
+    this.jobModalData = {};
+  }
+
+  onJobCreated(job: any) {
+    this.toastr.success(`Job ${job.jobId} created successfully!`);
+
+    // Navigate to jobs page
+    this.router.navigate(['/jobs', job._id]);
   }
 
   // Utility Methods

@@ -215,36 +215,60 @@ class DropdownDataService {
     const errors = [];
     const warnings = [];
 
-    if (params.category && !this.getCategoryById(params.category)) {
-      errors.push(`Invalid category ID: ${params.category}`);
+    // Helper function to validate comma-separated IDs
+    const validateIds = (paramValue, validatorFunc, paramName) => {
+      if (!paramValue) return true;
+
+      // Convert to string and split by comma
+      const ids = String(paramValue).split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+
+      // Validate each ID
+      for (const id of ids) {
+        if (!validatorFunc.call(this, id)) {
+          errors.push(`Invalid ${paramName} ID: ${id}`);
+        }
+      }
+
+      return ids.length > 0;
+    };
+
+    // Validate all filter parameters (supports both single IDs and comma-separated lists)
+    if (params.category) {
+      validateIds(params.category, this.getCategoryById, 'category');
     }
 
-    if (params.subcategory && !this.getSubCategoryById(params.subcategory)) {
-      errors.push(`Invalid subcategory ID: ${params.subcategory}`);
+    if (params.subcategory) {
+      validateIds(params.subcategory, this.getSubCategoryById, 'subcategory');
     }
 
-    if (params.county && !this.getCountyById(params.county)) {
-      errors.push(`Invalid county ID: ${params.county}`);
+    if (params.county) {
+      validateIds(params.county, this.getCountyById, 'county');
     }
 
-    if (params.stage && !this.getStageById(params.stage)) {
-      errors.push(`Invalid stage ID: ${params.stage}`);
+    if (params.stage) {
+      validateIds(params.stage, this.getStageById, 'stage');
     }
 
-    if (params.type && !this.getTypeById(params.type)) {
-      errors.push(`Invalid type ID: ${params.type}`);
+    if (params.type) {
+      validateIds(params.type, this.getTypeById, 'type');
     }
 
-    // Check if subcategory belongs to selected category
+    // Check if subcategory belongs to selected category (for single values only)
     if (params.category && params.subcategory) {
-      const subcategory = this.getSubCategoryById(params.subcategory);
-      if (subcategory && subcategory.categoryID !== params.category) {
-        errors.push(`Subcategory ${params.subcategory} does not belong to category ${params.category}`);
+      const categoryIds = String(params.category).split(',').map(id => parseInt(id.trim()));
+      const subcategoryIds = String(params.subcategory).split(',').map(id => parseInt(id.trim()));
+
+      // Only validate relationship if both are single values
+      if (categoryIds.length === 1 && subcategoryIds.length === 1) {
+        const subcategory = this.getSubCategoryById(subcategoryIds[0]);
+        if (subcategory && subcategory.categoryID !== categoryIds[0]) {
+          errors.push(`Subcategory ${subcategoryIds[0]} does not belong to category ${categoryIds[0]}`);
+        }
       }
     }
 
-    // Warning if no filters are applied
-    if (!params.category && !params.county && !params.stage && !params.type) {
+    // Warning if no filters are applied (but _apion or min_apion alone is fine - filters by update date)
+    if (!params.category && !params.county && !params.stage && !params.type && !params._apion && !params.min_apion) {
       warnings.push('No filters applied - this may return a large number of results');
     }
 
@@ -261,29 +285,47 @@ class DropdownDataService {
   buildFilterSummary(params) {
     const parts = [];
 
+    // Helper function to get names for comma-separated IDs
+    const getNames = (paramValue, getterFunc) => {
+      if (!paramValue) return [];
+      const ids = String(paramValue).split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+      return ids.map(id => {
+        const item = getterFunc.call(this, id);
+        return item ? item.name : `Unknown (${id})`;
+      });
+    };
+
     if (params.category) {
-      const category = this.getCategoryById(params.category);
-      if (category) parts.push(`Category: ${category.name}`);
+      const names = getNames(params.category, this.getCategoryById);
+      if (names.length > 0) parts.push(`Category: ${names.join(', ')}`);
     }
 
     if (params.subcategory) {
-      const subcategory = this.getSubCategoryById(params.subcategory);
-      if (subcategory) parts.push(`Subcategory: ${subcategory.name}`);
+      const names = getNames(params.subcategory, this.getSubCategoryById);
+      if (names.length > 0) parts.push(`Subcategory: ${names.join(', ')}`);
     }
 
     if (params.county) {
-      const county = this.getCountyById(params.county);
-      if (county) parts.push(`County: ${county.name}`);
+      const names = getNames(params.county, this.getCountyById);
+      if (names.length > 0) parts.push(`County: ${names.join(', ')}`);
     }
 
     if (params.stage) {
-      const stage = this.getStageById(params.stage);
-      if (stage) parts.push(`Stage: ${stage.name}`);
+      const names = getNames(params.stage, this.getStageById);
+      if (names.length > 0) parts.push(`Stage: ${names.join(', ')}`);
     }
 
     if (params.type) {
-      const type = this.getTypeById(params.type);
-      if (type) parts.push(`Type: ${type.name}`);
+      const names = getNames(params.type, this.getTypeById);
+      if (names.length > 0) parts.push(`Type: ${names.join(', ')}`);
+    }
+
+    if (params._apion) {
+      parts.push(`All updates within: ${params._apion} days`);
+    }
+
+    if (params.min_apion) {
+      parts.push(`All updates from: ${params.min_apion}`);
     }
 
     return parts.length > 0 ? parts.join(', ') : 'No filters applied';

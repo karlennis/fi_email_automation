@@ -1,6 +1,6 @@
 # Document Register
 
-A comprehensive document tracking system for all projects in AWS S3 `planning-docs` folder.
+A comprehensive document tracking and management system for all projects in AWS S3 `planning-docs` folder.
 
 ## Overview
 
@@ -21,17 +21,26 @@ Documents are sorted by **most recent updates first**, so the latest changes are
 - 🚀 **Fast Processing**: Efficient S3 scanning with metadata caching
 - 🔌 **API Integration**: RESTful API endpoints for programmatic access
 - 🖥️ **CLI Tool**: Command-line interface for manual operations
+- 🧹 **S3 Cleanup**: Remove outdated/unneeded projects from AWS (NEW!)
+- 📦 **Auto Batching**: Large files automatically split for Google Sheets
 
 ## File Structure
 
 ```
 document-register/
-├── index.js                    # CLI tool
-├── documentRegisterService.js  # Core service
-├── README.md                   # This file
+├── index.js                       # CLI tool for register generation
+├── cleanup-s3.js                  # NEW: S3 cleanup tool
+├── documentRegisterService.js     # Core service
+├── 2025_ids.csv                   # Your approved project IDs (create this)
+├── README.md                      # This file
+├── S3-CLEANUP.md                  # Cleanup tool documentation
+├── S3-CLEANUP-QUICKSTART.md       # Quick start guide
+├── BATCHING.md                    # Large file batching guide
 └── outputs/
-    ├── document-register.csv      # CSV export
-    ├── document-register.xlsx     # Excel export
+    ├── document-register.csv      # CSV export (or batched files)
+    ├── document-register.xlsx     # Excel export (or batched files)
+    ├── document-register-INDEX.txt # Batch index (if batched)
+    ├── deletion-list.txt          # S3 cleanup list (after dry-run)
     └── register-metadata.json     # Scan metadata & stats
 ```
 
@@ -40,9 +49,31 @@ document-register/
 Install required dependencies:
 
 ```bash
-cd backend
-npm install xlsx
+cd document-register
+npm install csv-parser
 ```
+
+## Tools
+
+### 1. Document Register (Inventory)
+
+Generate comprehensive inventory of all S3 documents.
+
+### 2. S3 Cleanup (NEW!)
+
+Remove unwanted projects from S3 to keep only approved IDs.
+
+**Quick Start:**
+```bash
+# 1. Create 2025_ids.csv with your approved project IDs
+# 2. Preview what will be deleted
+node cleanup-s3.js --dry-run
+
+# 3. Execute cleanup
+node cleanup-s3.js --execute
+```
+
+See [S3-CLEANUP-QUICKSTART.md](./S3-CLEANUP-QUICKSTART.md) for details.
 
 ## Usage
 

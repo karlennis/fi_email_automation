@@ -1,7 +1,9 @@
 {
   "dependencies": {
     "aws-sdk": "^2.1692.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "dotenv": "^16.4.5",
+    "csv-parser": "^3.0.0"
   },
   "name": "document-register",
   "version": "1.0.0",

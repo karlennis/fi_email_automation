@@ -114,9 +114,8 @@ class DocumentRegisterService {
 
   async scanAllDocuments() {
     const startTime = Date.now();
-    logger.info('🔍 Starting OPTIMIZED document register scan...');
+    logger.info('🔍 Starting document register scan...');
     logger.info('⚡ Single recursive S3 scan for maximum performance');
-    logger.info('📄 Including ALL file types (PDF, DOC, DOCX, TXT, images, etc.)');
 
     try {
       const AWS = require('aws-sdk');
@@ -135,7 +134,7 @@ class DocumentRegisterService {
       let objectsScanned = 0;
       let documentsFound = 0;
 
-      logger.info('📊 Scanning planning-docs/ (10-20 minutes for 19K projects)...');
+      logger.info('📊 Scanning planning-docs/...');
 
       do {
         const params = {
@@ -161,21 +160,16 @@ class DocumentRegisterService {
                     projectId: projectId,
                     fileName: fileName,
                     filePath: obj.Key,
-                    fileSize: obj.Size,
-                    fileSizeReadable: this.formatFileSize(obj.Size),
                     lastModified: obj.LastModified,
-                    lastModifiedISO: new Date(obj.LastModified).toISOString(),
-                    documentType: this.detectDocumentType(fileName),
-                    fileExtension: path.extname(fileName).toLowerCase()
+                    lastModifiedISO: new Date(obj.LastModified).toISOString()
                   });
                   documentsFound++;
                   if (!projectStats[projectId]) {
-                    projectStats[projectId] = { documentCount: 0, lastUpdated: null, mostRecentDocument: null };
+                    projectStats[projectId] = { documentCount: 0, lastUpdated: null };
                   }
                   projectStats[projectId].documentCount++;
                   if (!projectStats[projectId].lastUpdated || new Date(obj.LastModified) > new Date(projectStats[projectId].lastUpdated)) {
                     projectStats[projectId].lastUpdated = obj.LastModified;
-                    projectStats[projectId].mostRecentDocument = fileName;
                   }
                 }
               }
@@ -207,7 +201,7 @@ class DocumentRegisterService {
       logger.info(`✅ Scan complete!`);
       logger.info(`   📊 Scanned ${objectsScanned.toLocaleString()} objects`);
       logger.info(`   📁 Found ${projectCount.toLocaleString()} projects`);
-      logger.info(`   📄 Found ${allDocuments.length.toLocaleString()} documents (ALL file types)`);
+      logger.info(`   📄 Found ${allDocuments.length.toLocaleString()} documents`);
       logger.info(`   ⏱️  Time: ${(processingTime / 1000 / 60).toFixed(1)} minutes`);
       logger.info(`   ⚡ ${(objectsScanned / (processingTime / 1000)).toFixed(0)} objects/second`);
 
@@ -218,9 +212,7 @@ class DocumentRegisterService {
         totalObjectsScanned: objectsScanned,
         processingTimeMs: processingTime,
         processingTimeMinutes: (processingTime / 1000 / 60).toFixed(1),
-        documentsByProject: projectStats,
-        includesAllFileTypes: true,
-        fileTypesCounted: 'ALL (not just PDFs)'
+        documentsByProject: projectStats
       };
       this.saveMetadata(metadata);
 
@@ -231,83 +223,67 @@ class DocumentRegisterService {
     }
   }
 
-  detectDocumentType(fileName) {
-    const ext = path.extname(fileName).toLowerCase();
-    const typeMap = {
-      '.pdf': 'PDF Document', '.doc': 'Word Document', '.docx': 'Word Document',
-      '.txt': 'Text File', '.rtf': 'Rich Text',
-      '.jpg': 'Image', '.jpeg': 'Image', '.png': 'Image', '.gif': 'Image',
-      '.bmp': 'Image', '.tiff': 'Image',
-      '.xls': 'Excel Spreadsheet', '.xlsx': 'Excel Spreadsheet',
-      '.ppt': 'PowerPoint', '.pptx': 'PowerPoint',
-      '.zip': 'Archive', '.rar': 'Archive', '.7z': 'Archive',
-      '.csv': 'CSV File', '.xml': 'XML File', '.json': 'JSON File'
-    };
-    return typeMap[ext] || 'Other Document';
-  }
-
   async exportToCSV(documents) {
-    logger.info('📊 Exporting to CSV...');
-    const headers = ['Project ID','File Name','File Path','File Size','File Size (Readable)','Last Modified','Document Type','File Extension'];
+    logger.info('📄 Exporting to CSV...');
+
+    const headers = ['Project ID', 'File Name', 'File Path', 'Last Modified'];
     let csvContent = headers.join(',') + '\n';
+
     documents.forEach(doc => {
       const row = [
         doc.projectId,
         `"${doc.fileName.replace(/"/g, '""')}"`,
         doc.filePath,
-        doc.fileSize,
-        doc.fileSizeReadable,
-        doc.lastModifiedISO,
-        doc.documentType,
-        doc.fileExtension
+        doc.lastModifiedISO
       ];
       csvContent += row.join(',') + '\n';
     });
+
     fs.writeFileSync(this.csvFile, csvContent);
     logger.info(`✅ CSV exported: ${this.csvFile}`);
+
+    const fileSize = fs.statSync(this.csvFile).size;
+    logger.info(`   📊 File size: ${this.formatFileSize(fileSize)}`);
+
     return this.csvFile;
   }
 
   async exportToXLSX(documents, metadata) {
     logger.info('📊 Exporting to XLSX...');
+
     try {
       const XLSX = require('xlsx');
       const wb = XLSX.utils.book_new();
 
-      const wsData = [['Project ID','File Name','File Path','File Size','File Size (Readable)','Last Modified','Document Type','File Extension']];
+      // Main register sheet - simplified columns
+      const wsData = [['Project ID', 'File Name', 'File Path', 'Last Modified']];
       documents.forEach(doc => {
-        wsData.push([doc.projectId, doc.fileName, doc.filePath, doc.fileSize, doc.fileSizeReadable, doc.lastModifiedISO, doc.documentType, doc.fileExtension]);
+        wsData.push([doc.projectId, doc.fileName, doc.filePath, doc.lastModifiedISO]);
       });
       const ws = XLSX.utils.aoa_to_sheet(wsData);
       XLSX.utils.book_append_sheet(wb, ws, 'Document Register');
 
-      const fileTypes = {};
-      documents.forEach(doc => {
-        const type = doc.documentType;
-        fileTypes[type] = (fileTypes[type] || 0) + 1;
-      });
-
+      // Summary sheet
       const summaryData = [
-        ['Metric','Value'],
+        ['Metric', 'Value'],
         ['Total Projects', metadata.totalProjects],
         ['Total Documents', metadata.totalDocuments],
-        ['File Types Included', 'ALL file types'],
         ['Last Scan Date', metadata.lastScanDate],
         ['Processing Time (minutes)', metadata.processingTimeMinutes],
-        ['Objects Scanned', metadata.totalObjectsScanned],
-        ['',''],
-        ['File Type Breakdown','Count']
+        ['Objects Scanned', metadata.totalObjectsScanned]
       ];
-      Object.entries(fileTypes).sort((a,b) => b[1] - a[1]).forEach(([type, count]) => {
-        summaryData.push([type, count]);
-      });
 
       const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
       XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary');
 
       XLSX.writeFile(wb, this.xlsxFile);
+
+      const fileSize = fs.statSync(this.xlsxFile).size;
       logger.info(`✅ XLSX exported: ${this.xlsxFile}`);
+      logger.info(`   📊 File size: ${this.formatFileSize(fileSize)}`);
+
       return this.xlsxFile;
+
     } catch (error) {
       logger.error('❌ Error creating XLSX:', error);
       throw error;
@@ -362,8 +338,7 @@ class DocumentRegisterService {
         quickCount,
         totalDocuments: scanResult.documents.length,
         totalProjects: scanResult.metadata.totalProjects,
-        processingTime: scanResult.metadata.processingTimeMs,
-        includesAllFileTypes: true,
+        processingTime: scanResult.metadata.processingTimeMinutes,
         outputs: {
           csv: csvPath,
           xlsx: xlsxPath,
@@ -378,7 +353,6 @@ class DocumentRegisterService {
       logger.info(`   📋 XLSX: ${xlsxPath}`);
       logger.info(`   💾 Metadata: ${this.metadataFile}`);
       logger.info(`   ⏱️  Total time: ${result.processingTime} minutes`);
-      logger.info(`   📁 Includes: ALL file types (not just PDFs)`);
 
       return result;
     } catch (error) {

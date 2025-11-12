@@ -37,6 +37,16 @@ export const routes: Routes = [
     canActivate: [AuthGuard, AdminGuard]
   },
   {
+    path: 'jobs',
+    loadComponent: () => import('./components/jobs/jobs-list.component').then(m => m.JobsListComponent),
+    canActivate: [AuthGuard]
+  },
+  {
+    path: 'jobs/:id',
+    loadComponent: () => import('./components/jobs/job-detail.component').then(m => m.JobDetailComponent),
+    canActivate: [AuthGuard]
+  },
+  {
     path: '**',
     redirectTo: 'dashboard'   // <-- no leading slash
   }

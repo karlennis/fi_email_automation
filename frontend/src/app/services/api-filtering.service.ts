@@ -4,14 +4,15 @@ import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 
 export interface FilteringParams {
-  category?: number;
-  subcategory?: number;
-  county?: number;
-  stage?: number;
-  type?: number;
-  apion?: number | string; // Date filter: 3 (today), -1.1 (yesterday), 0.7 (past 7 days), etc.
-  min_apion?: string; // Min date for range (YYYY-MM-DD)
-  max_apion?: string; // Max date for range (YYYY-MM-DD)
+  [key: string]: any; // Index signature for dynamic access
+  category?: number | number[]; // Can be single ID or array of IDs
+  subcategory?: number | number[]; // Can be single ID or array of IDs
+  county?: number | number[]; // Can be single ID or array of IDs
+  stage?: number | number[]; // Can be single ID or array of IDs
+  type?: number | number[]; // Can be single ID or array of IDs
+  apion?: number | string; // All updates filter (api_date field) - use for relative dates
+  min_apion?: string; // All updates from date: -1z (yesterday 00:00), -12z (12 days ago 00:00), 0z (today 00:00), 'now', 'today'
+  max_apion?: string; // Max date for range (YYYY-MM-DD) - only used when apion=8
   limit?: number;
   offset?: number;
 }
