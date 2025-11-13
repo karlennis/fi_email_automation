@@ -165,10 +165,9 @@ import { interval, Subscription } from 'rxjs';
                 <th>Type</th>
                 <th>Schedule</th>
                 <th>Status</th>
+                <th>Operator</th>
                 <th>Customers</th>
-                <th>Progress</th>
                 <th>Next Run</th>
-                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -194,56 +193,30 @@ import { interval, Subscription } from 'rxjs';
                     {{ job.status }}
                   </span>
                 </td>
-                <td>{{ job.customers.length }}</td>
                 <td>
-                  <div class="progress-cell">
-                    <div class="progress-bar">
-                      <div
-                        class="progress-fill"
-                        [style.width.%]="job.progress || 0"
-                        [ngClass]="getProgressClass(job)">
-                      </div>
+                  <div class="operator-cell">
+                    <div class="operator-name" *ngIf="getLastOperator(job) as operator; else systemOperator">
+                      {{ operator.username }}
                     </div>
-                    <span class="progress-text">{{ job.emailStats.sentEmails }}/{{ job.emailStats.totalEmails }}</span>
+                    <ng-template #systemOperator>
+                      <span class="text-muted">System</span>
+                    </ng-template>
+                    <button
+                      *ngIf="job.status !== 'CANCELLED' && job.status !== 'COMPLETED' && job.status !== 'FAILED'"
+                      class="btn-cancel-small"
+                      (click)="cancelJob(job)"
+                      title="Cancel Job">
+                      Cancel
+                    </button>
                   </div>
                 </td>
+                <td>{{ job.customers.length }}</td>
                 <td>
                   <div class="next-run-cell" *ngIf="job.execution.nextRunAt">
                     <div>{{ job.execution.nextRunAt | date: 'short' }}</div>
                     <small class="text-muted">{{ getNextRunDescription(job) }}</small>
                   </div>
                   <span *ngIf="!job.execution.nextRunAt" class="text-muted">-</span>
-                </td>
-                <td>
-                  <div class="action-buttons">
-                    <button class="btn-sm" (click)="viewJob(job)" title="View">
-                      <i class="icon-eye"></i>
-                    </button>
-                    <button
-                      class="btn-sm"
-                      (click)="executeNow(job)"
-                      [disabled]="job.status === 'PROCESSING' || job.status === 'SENDING'"
-                      title="Run Now">
-                      <i class="icon-play"></i>
-                    </button>
-                    <button
-                      *ngIf="job.status !== 'PAUSED'"
-                      class="btn-sm"
-                      (click)="pauseJob(job)"
-                      title="Pause">
-                      <i class="icon-pause"></i>
-                    </button>
-                    <button
-                      *ngIf="job.status === 'PAUSED'"
-                      class="btn-sm"
-                      (click)="resumeJob(job)"
-                      title="Resume">
-                      <i class="icon-play-circle"></i>
-                    </button>
-                    <button class="btn-sm danger" (click)="cancelJob(job)" title="Cancel">
-                      <i class="icon-cancel"></i>
-                    </button>
-                  </div>
                 </td>
               </tr>
             </tbody>
@@ -579,6 +552,39 @@ import { interval, Subscription } from 'rxjs';
       line-height: 1.4;
     }
 
+    .operator-cell {
+      line-height: 1.3;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .operator-name {
+      font-weight: 500;
+      color: #333;
+    }
+
+    .operator-action {
+      font-style: italic;
+      color: #666;
+    }
+
+    .btn-cancel-small {
+      padding: 4px 8px;
+      background: #dc3545;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+      align-self: flex-start;
+      transition: background-color 0.2s;
+    }
+
+    .btn-cancel-small:hover {
+      background: #c82333;
+    }
+
     .progress-cell {
       min-width: 150px;
     }
@@ -894,7 +900,7 @@ export class JobsListComponent implements OnInit, OnDestroy {
   }
 
   viewJob(job: ScheduledJob) {
-    this.router.navigate(['/jobs', job._id]);
+    this.router.navigate(['/jobs', job.jobId]);
   }
 
   executeNow(job: ScheduledJob) {
@@ -915,7 +921,7 @@ export class JobsListComponent implements OnInit, OnDestroy {
   }
 
   pauseJob(job: ScheduledJob) {
-    this.scheduledJobsService.pauseJob(job._id).subscribe({
+    this.scheduledJobsService.pauseJob(job.jobId).subscribe({
       next: (response) => {
         if (response.success) {
           this.toastr.success('Job paused');
@@ -930,7 +936,7 @@ export class JobsListComponent implements OnInit, OnDestroy {
   }
 
   resumeJob(job: ScheduledJob) {
-    this.scheduledJobsService.resumeJob(job._id).subscribe({
+    this.scheduledJobsService.resumeJob(job.jobId).subscribe({
       next: (response) => {
         if (response.success) {
           this.toastr.success('Job resumed');
@@ -946,7 +952,7 @@ export class JobsListComponent implements OnInit, OnDestroy {
 
   cancelJob(job: ScheduledJob) {
     if (confirm(`Are you sure you want to cancel job ${job.jobId}? This action cannot be undone.`)) {
-      this.scheduledJobsService.cancelJob(job._id).subscribe({
+      this.scheduledJobsService.cancelJob(job.jobId).subscribe({
         next: (response) => {
           if (response.success) {
             this.toastr.success('Job cancelled');
@@ -1001,5 +1007,34 @@ export class JobsListComponent implements OnInit, OnDestroy {
     if (progress === 100) return 'success';
     if (progress > 0) return 'warning';
     return 'danger';
+  }
+
+  getLastOperator(job: ScheduledJob): any {
+    // First check for execution history to find who ran the job
+    if (job.executionHistory && job.executionHistory.length > 0) {
+      const sortedHistory = job.executionHistory.sort((a, b) =>
+        new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime()
+      );
+
+      const lastExecution = sortedHistory[0];
+      if (lastExecution && lastExecution.executedBy) {
+        return {
+          username: lastExecution.executedBy.username,
+          email: lastExecution.executedBy.email,
+          action: lastExecution.action
+        };
+      }
+    }
+
+    // Fallback to createdBy if no execution history
+    if (job.createdBy) {
+      return {
+        username: job.createdBy.username,
+        email: job.createdBy.email,
+        action: 'created'
+      };
+    }
+
+    return null;
   }
 }

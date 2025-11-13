@@ -7,7 +7,19 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  role: 'admin' | 'user';
+  role: 'admin' | 'operator';
+  permissions?: {
+    canManageUsers: boolean;
+    canManageJobs: boolean;
+    canViewAllJobs: boolean;
+    canManageSystem: boolean;
+  };
+  department?: string;
+  jobTitle?: string;
+  isActive?: boolean;
+  lastLogin?: Date;
+  lastActivity?: Date;
+  loginCount?: number;
   createdAt: Date;
 }
 
@@ -20,7 +32,9 @@ export interface RegisterRequest {
   name: string;
   email: string;
   password: string;
-  role?: 'admin' | 'user';
+  role?: 'admin' | 'operator';
+  department?: string;
+  jobTitle?: string;
 }
 
 export interface AuthResponse {
@@ -106,11 +120,39 @@ export class AuthService {
       .pipe(map(response => response.data));
   }
 
+  /**
+   * Get current user information
+   */
+  getCurrentUser(): Observable<any> {
+    return this.http.get(`${this.baseUrl}/auth/me`, {
+      headers: this.getAuthHeaders()
+    });
+  }
+
+  /**
+   * Get authorization headers
+   */
   getAuthHeaders(): HttpHeaders {
     const token = typeof window !== 'undefined' && localStorage ? localStorage.getItem('token') : null;
     return new HttpHeaders({
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json'
     });
+  }
+
+  /**
+   * Refresh user permissions
+   */
+  refreshPermissions(): Observable<any> {
+    return this.getCurrentUser().pipe(
+      map(response => {
+        if (response.success && response.data) {
+          const user = response.data;
+          localStorage.setItem('user', JSON.stringify(user));
+          this.currentUserSubject.next(user);
+        }
+        return response.data;
+      })
+    );
   }
 }

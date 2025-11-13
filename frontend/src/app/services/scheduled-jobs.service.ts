@@ -61,7 +61,25 @@ export interface ScheduledJob {
   createdBy?: {
     userId: string;
     username: string;
+    email: string;
   };
+  modifiedBy?: {
+    userId: string;
+    username: string;
+    email: string;
+    modifiedAt: Date;
+  };
+  executionHistory?: Array<{
+    executedBy: {
+      userId: string;
+      username: string;
+      email: string;
+    };
+    executedAt: Date;
+    action: 'CREATED' | 'STARTED' | 'CANCELLED' | 'COMPLETED' | 'FAILED' | 'MODIFIED';
+    details: string;
+    result?: any;
+  }>;
   isActive: boolean;
   notes?: string;
   createdAt: Date;

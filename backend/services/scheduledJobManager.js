@@ -27,6 +27,33 @@ class ScheduledJobManager {
   }
 
   /**
+   * Get or create system user for automated jobs
+   */
+  async getSystemUser() {
+    const User = require('../models/User');
+
+    let systemUser = await User.findOne({ email: 'system@buildinginfo.com' });
+
+    if (!systemUser) {
+      systemUser = new User({
+        name: 'System',
+        email: 'system@buildinginfo.com',
+        role: 'admin',
+        isActive: true,
+        permissions: {
+          canManageUsers: true,
+          canManageJobs: true,
+          canViewAllJobs: true,
+          canManageSystem: true
+        }
+      });
+      await systemUser.save();
+    }
+
+    return systemUser;
+  }
+
+  /**
    * Initialize all active scheduled jobs from database
    */
   async initializeScheduledJobs() {
@@ -53,9 +80,9 @@ class ScheduledJobManager {
   }
 
   /**
-   * Create a new scheduled job
+   * Create a new scheduled job with user tracking
    */
-  async createScheduledJob(config) {
+  async createScheduledJob(config, user = null) {
     try {
       const {
         jobType,
@@ -71,9 +98,14 @@ class ScheduledJobManager {
         emailTemplate,
         customSubject,
         attachReports = true,
-        createdBy,
         notes
       } = config;
+
+      // Get system user if no user provided
+      let createdByUser = user;
+      if (!createdByUser) {
+        createdByUser = await this.getSystemUser();
+      }
 
       // Fetch customer details
       const customers = await Customer.find({
@@ -106,7 +138,21 @@ class ScheduledJobManager {
         emailStats: {
           totalEmails: customers.length
         },
-        createdBy,
+        createdBy: {
+          userId: createdByUser._id,
+          username: createdByUser.name,
+          email: createdByUser.email
+        },
+        executionHistory: [{
+          executedBy: {
+            userId: createdByUser._id,
+            username: createdByUser.name,
+            email: createdByUser.email
+          },
+          executedAt: new Date(),
+          action: 'CREATED',
+          details: `Job created with ${customers.length} recipients`
+        }],
         notes
       });
 
@@ -758,9 +804,15 @@ class ScheduledJobManager {
       throw new Error('Job not found');
     }
 
-    job.status = 'CANCELLED';
-    job.isActive = false;
-    await job.save();
+    // Update without running full document validation to avoid issues with missing required fields
+    await ScheduledJob.updateOne(
+      { jobId },
+      {
+        status: 'CANCELLED',
+        isActive: false
+      },
+      { runValidators: false }
+    );
 
     // Cancel schedule
     if (this.activeSchedules.has(jobId)) {
@@ -769,7 +821,9 @@ class ScheduledJobManager {
     }
 
     logger.info(`Cancelled job ${jobId}`);
-    return job;
+
+    // Return updated job
+    return await ScheduledJob.findOne({ jobId });
   }
 
   /**
@@ -782,8 +836,12 @@ class ScheduledJobManager {
       throw new Error('Job not found');
     }
 
-    job.status = 'PAUSED';
-    await job.save();
+    // Update without running full document validation
+    await ScheduledJob.updateOne(
+      { jobId },
+      { status: 'PAUSED' },
+      { runValidators: false }
+    );
 
     // Cancel schedule but keep job active
     if (this.activeSchedules.has(jobId)) {
@@ -792,7 +850,9 @@ class ScheduledJobManager {
     }
 
     logger.info(`Paused job ${jobId}`);
-    return job;
+
+    // Return updated job
+    return await ScheduledJob.findOne({ jobId });
   }
 
   /**
@@ -805,15 +865,27 @@ class ScheduledJobManager {
       throw new Error('Job not found');
     }
 
-    job.status = 'SCHEDULED';
+    // Calculate next run before updating
     await job.calculateNextRun();
-    await job.save();
+
+    // Update status and next run time
+    await ScheduledJob.updateOne(
+      { jobId },
+      {
+        status: 'SCHEDULED',
+        'execution.nextRunAt': job.execution.nextRunAt
+      },
+      { runValidators: false }
+    );
+
+    // Get updated job for rescheduling
+    const updatedJob = await ScheduledJob.findOne({ jobId });
 
     // Reschedule
-    await this.scheduleJob(job);
+    await this.scheduleJob(updatedJob);
 
     logger.info(`Resumed job ${jobId}`);
-    return job;
+    return updatedJob;
   }
 
   /**

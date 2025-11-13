@@ -39,6 +39,13 @@ import { ToastrService } from 'ngx-toastr';
               <i class="icon-calendar"></i>
               Jobs
             </a>
+            <a routerLink="/users"
+               routerLinkActive="active"
+               class="nav-link"
+               *ngIf="currentUser?.permissions?.canManageUsers">
+              <i class="icon-users-cog"></i>
+              User Management
+            </a>
           </div>
 
           <div class="navbar-user">
@@ -174,24 +181,25 @@ import { ToastrService } from 'ngx-toastr';
     .icon-calendar::before { content: ""; }
     .icon-list::before { content: ""; }
     .icon-users::before { content: ""; }
+    .icon-users-cog::before { content: ""; }
     .icon-logout::before { content: ""; }
   `]
 })
-export class NavbarComponent {
-  @Input() isAuthenticated = true; // Temporarily set to true for testing
-  @Input() currentUser: User | null = {
-    id: '1',
-    name: 'Test User',
-    role: 'admin',
-    email: 'test@example.com',
-    createdAt: new Date()
-  }; // Mock user for testing
+export class NavbarComponent implements OnInit {
+  currentUser: User | null = null;
 
   constructor(
     private authService: AuthService,
     private router: Router,
     private toastr: ToastrService
   ) {}
+
+  ngOnInit() {
+    // Subscribe to current user changes
+    this.authService.currentUser$.subscribe(user => {
+      this.currentUser = user;
+    });
+  }
 
   logout() {
     this.authService.logout();

@@ -2,13 +2,14 @@ const express = require('express');
 const router = express.Router();
 const scheduledJobManager = require('../services/scheduledJobManager');
 const Customer = require('../models/Customer');
+const { authenticate, requirePermission } = require('../middleware/auth');
 const logger = require('../utils/logger');
 
 /**
  * POST /api/scheduled-jobs/create
- * Create a new scheduled job
+ * Create a new scheduled job (requires authentication)
  */
-router.post('/create', async (req, res) => {
+router.post('/create', authenticate, requirePermission('canManageJobs'), async (req, res) => {
   try {
     const {
       jobType,
@@ -56,9 +57,8 @@ router.post('/create', async (req, res) => {
       emailTemplate,
       customSubject,
       attachReports,
-      createdBy: req.user || { username: 'system' },
       notes
-    });
+    }, req.user); // Pass the authenticated user
 
     res.json({
       success: true,

@@ -212,9 +212,44 @@ const scheduledJobSchema = new mongoose.Schema({
 
   // Created by
   createdBy: {
-    userId: String,
-    username: String
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    username: String,
+    email: String
   },
+
+  // Modified by (for job updates)
+  modifiedBy: {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    username: String,
+    email: String,
+    modifiedAt: Date
+  },
+
+  // Execution history with user tracking
+  executionHistory: [{
+    executedBy: {
+      userId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+      },
+      username: String,
+      email: String
+    },
+    executedAt: Date,
+    action: {
+      type: String,
+      enum: ['CREATED', 'STARTED', 'CANCELLED', 'COMPLETED', 'FAILED', 'MODIFIED']
+    },
+    details: String,
+    result: mongoose.Schema.Types.Mixed
+  }],
 
   // Active flag
   isActive: {
@@ -248,7 +283,7 @@ scheduledJobSchema.index({ jobType: 1, status: 1 });
 scheduledJobSchema.index({ createdAt: -1 });
 
 // Methods
-scheduledJobSchema.methods.updateStatus = function(newStatus, error = null) {
+scheduledJobSchema.methods.updateStatus = function(newStatus, error = null, user = null) {
   this.status = newStatus;
   if (error) {
     this.execution.lastError = {
@@ -258,6 +293,36 @@ scheduledJobSchema.methods.updateStatus = function(newStatus, error = null) {
     };
     this.execution.failureCount += 1;
   }
+
+  // Add to execution history if user provided
+  if (user) {
+    this.executionHistory.push({
+      executedBy: {
+        userId: user._id,
+        username: user.name,
+        email: user.email
+      },
+      executedAt: new Date(),
+      action: newStatus === 'FAILED' ? 'FAILED' : 'STARTED',
+      details: error ? error.message : `Status changed to ${newStatus}`
+    });
+  }
+
+  return this.save();
+};
+
+scheduledJobSchema.methods.addExecutionHistory = function(action, user, details = '', result = null) {
+  this.executionHistory.push({
+    executedBy: {
+      userId: user._id,
+      username: user.name,
+      email: user.email
+    },
+    executedAt: new Date(),
+    action,
+    details,
+    result
+  });
   return this.save();
 };
 
