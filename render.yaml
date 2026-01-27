@@ -1,0 +1,71 @@
+services:
+  # Backend API Service
+  - type: web
+    name: fi-email-automation-backend
+    runtime: node
+    region: frankfurt
+    plan: starter
+    buildCommand: cd backend && npm install
+    startCommand: cd backend && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        value: eu-north-1
+      - key: AWS_S3_BUCKET
+        value: planning-documents-2
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: EMAIL_HOST
+        sync: false
+      - key: EMAIL_PORT
+        sync: false
+      - key: EMAIL_SECURE
+        value: true
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASSWORD
+        sync: false
+      - key: EMAIL_FROM_ADDRESS
+        sync: false
+      - key: EMAIL_FROM_NAME
+        value: FI Email Automation
+      - key: BUILDING_INFO_API_KEY
+        sync: false
+      - key: BUILDING_INFO_API_URL
+        sync: false
+      - key: FRONTEND_URL
+        value: https://fi-email-automation-frontend.onrender.com
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 900000
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: 100
+    healthCheckPath: /health
+    autoDeploy: true
+
+  # Frontend Angular Service
+  - type: web
+    name: fi-email-automation-frontend
+    runtime: node
+    region: frankfurt
+    plan: starter
+    buildCommand: cd frontend && npm install && npm run build
+    startCommand: cd frontend && npm run serve:ssr:frontend
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      - key: API_URL
+        value: https://fi-email-automation-backend.onrender.com
+    autoDeploy: true
