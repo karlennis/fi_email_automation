@@ -83,7 +83,7 @@ class FastS3Scanner {
                             }
                         }
                     }
-                    
+
                     // Clear response.Contents from memory after processing to reduce memory footprint
                     response.Contents = null;
                     delete response.Contents;
