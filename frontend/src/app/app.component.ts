@@ -2,13 +2,14 @@ import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterOutlet } from '@angular/router';
 import { NavbarComponent } from './components/shared/navbar/navbar.component';
+import { AuthService } from './services/auth.service';
 
 @Component({
   selector: 'app-root',
   standalone: true,
   imports: [CommonModule, RouterOutlet, NavbarComponent],
   template: `
-    <app-navbar></app-navbar>
+    <app-navbar *ngIf="authService.currentUser$ | async"></app-navbar>
     <router-outlet></router-outlet>
   `,
   styles: [`
@@ -19,7 +20,7 @@ import { NavbarComponent } from './components/shared/navbar/navbar.component';
   `]
 })
 export class AppComponent {
-  constructor() {
+  constructor(public authService: AuthService) {
     console.log('AppComponent initialized. If you see this, Angular is running.');
   }
 }

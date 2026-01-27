@@ -286,9 +286,9 @@ class ScanJobProcessor {
                     };
                 }
 
-                // Truncate to max size for AI (8000 chars as per config)
-                if (documentText.length > 8000) {
-                    documentText = documentText.substring(0, 8000);
+                // Truncate to max size for AI (32000 chars - matches fiDetectionService.MAX_MSG_CHARS)
+                if (documentText.length > 32000) {
+                    documentText = documentText.substring(0, 32000);
                 }
 
                 logger.info(`✅ Extracted ${documentText.length} chars from ${fileName}`);
