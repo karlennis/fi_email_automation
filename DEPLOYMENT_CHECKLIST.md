@@ -23,13 +23,19 @@
 - [ ] AWS_ACCESS_KEY_ID - your AWS credentials
 - [ ] AWS_SECRET_ACCESS_KEY - your AWS credentials
 - [ ] OPENAI_API_KEY - from OpenAI platform
-- [ ] EMAIL_HOST - SMTP server (e.g., smtp.gmail.com)
-- [ ] EMAIL_PORT - SMTP port (587 or 465)
-- [ ] EMAIL_USER - your email address
-- [ ] EMAIL_PASSWORD - email app password
-- [ ] EMAIL_FROM_ADDRESS - sender email
+- [ ] SMTP_HOST - SMTP server (e.g., smtp.gmail.com)
+- [ ] SMTP_PORT - SMTP port (587 or 465)
+- [ ] SMTP_SECURE - false for 587, true for 465
+- [ ] SMTP_USER - your email address
+- [ ] SMTP_PASS - email app password
+- [ ] BUILDING_INFO_API_BASE_URL - your building info API base URL
 - [ ] BUILDING_INFO_API_KEY - your building info API key
-- [ ] BUILDING_INFO_API_URL - your building info API endpoint
+- [ ] BUILDING_INFO_API_UKEY - your building info API ukey
+- [ ] S3_BUCKET - planning-documents-2
+- [ ] S3_REGION - eu-north-1
+- [ ] FRONTEND_URL - will be set after deployment
+- [ ] QUEUE_CONCURRENCY - 3 (default)
+- [ ] LOG_LEVEL - info (default)
 
 ### Frontend:
 - [ ] API_URL - backend service URL (set after backend deploys)

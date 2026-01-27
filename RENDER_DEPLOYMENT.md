@@ -16,15 +16,16 @@
    - Get from https://platform.openai.com/api-keys
 
 4. **Email Configuration** (Gmail SMTP or other)
-   - EMAIL_HOST (e.g., smtp.gmail.com)
-   - EMAIL_PORT (e.g., 587 or 465)
-   - EMAIL_USER (your email)
-   - EMAIL_PASSWORD (app password for Gmail)
-   - EMAIL_FROM_ADDRESS
+   - SMTP_HOST (e.g., smtp.gmail.com)
+   - SMTP_PORT (e.g., 587 or 465)
+   - SMTP_SECURE (false for 587, true for 465)
+   - SMTP_USER (your email)
+   - SMTP_PASS (app password for Gmail)
 
 5. **Building Info API**
+   - BUILDING_INFO_API_BASE_URL
    - BUILDING_INFO_API_KEY
-   - BUILDING_INFO_API_URL
+   - BUILDING_INFO_API_UKEY
 
 ## Step 1: Prepare Your GitHub Repository
 
@@ -87,20 +88,22 @@ JWT_SECRET=<generate-random-string-min-32-chars>
 AWS_ACCESS_KEY_ID=<your-aws-key>
 AWS_SECRET_ACCESS_KEY=<your-aws-secret>
 AWS_REGION=eu-north-1
-AWS_S3_BUCKET=planning-documents-2
+S3_BUCKET=planning-documents-2
+S3_REGION=eu-north-1
 OPENAI_API_KEY=<your-openai-key>
-EMAIL_HOST=smtp.gmail.com
-EMAIL_PORT=587
-EMAIL_SECURE=true
-EMAIL_USER=<your-email>
-EMAIL_PASSWORD=<your-email-app-password>
-EMAIL_FROM_ADDRESS=<your-email>
-EMAIL_FROM_NAME=FI Email Automation
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=<your-email>
+SMTP_PASS=<your-email-app-password>
+BUILDING_INFO_API_BASE_URL=<your-building-api-base-url>
 BUILDING_INFO_API_KEY=<your-building-api-key>
-BUILDING_INFO_API_URL=<your-building-api-url>
+BUILDING_INFO_API_UKEY=<your-building-api-ukey>
 FRONTEND_URL=https://fi-email-automation-frontend.onrender.com
 RATE_LIMIT_WINDOW_MS=900000
 RATE_LIMIT_MAX_REQUESTS=100
+QUEUE_CONCURRENCY=3
+LOG_LEVEL=info
 ```
 
 ### Frontend Environment Variables:

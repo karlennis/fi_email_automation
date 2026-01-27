@@ -22,34 +22,38 @@ services:
         sync: false
       - key: AWS_REGION
         value: eu-north-1
-      - key: AWS_S3_BUCKET
-        value: planning-documents-2
       - key: OPENAI_API_KEY
         sync: false
-      - key: EMAIL_HOST
+      - key: SMTP_HOST
         sync: false
-      - key: EMAIL_PORT
+      - key: SMTP_PORT
         sync: false
-      - key: EMAIL_SECURE
-        value: true
-      - key: EMAIL_USER
+      - key: SMTP_SECURE
+        value: false
+      - key: SMTP_USER
         sync: false
-      - key: EMAIL_PASSWORD
+      - key: SMTP_PASS
         sync: false
-      - key: EMAIL_FROM_ADDRESS
+      - key: BUILDING_INFO_API_BASE_URL
         sync: false
-      - key: EMAIL_FROM_NAME
-        value: FI Email Automation
       - key: BUILDING_INFO_API_KEY
         sync: false
-      - key: BUILDING_INFO_API_URL
+      - key: BUILDING_INFO_API_UKEY
         sync: false
+      - key: S3_BUCKET
+        value: planning-documents-2
+      - key: S3_REGION
+        value: eu-north-1
       - key: FRONTEND_URL
         value: https://fi-email-automation-frontend.onrender.com
       - key: RATE_LIMIT_WINDOW_MS
         value: 900000
       - key: RATE_LIMIT_MAX_REQUESTS
         value: 100
+      - key: QUEUE_CONCURRENCY
+        value: 3
+      - key: LOG_LEVEL
+        value: info
     healthCheckPath: /health
     autoDeploy: true
 
