@@ -31,6 +31,9 @@ class S3Service {
     this.mainFoldersCache = null;
     this.mainFoldersCacheExpiry = null;
     this.CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
+    
+    // Singleflight lock to prevent concurrent duplicate S3 calls
+    this.inFlightPromise = null;
 
     this.ensureDownloadDir();
   }
@@ -220,7 +223,32 @@ class S3Service {
         logger.info('✅ Returning cached main folders (avoiding S3 call)');
         return this.mainFoldersCache;
       }
+      
+      // Singleflight: if already in progress, wait for it
+      if (this.inFlightPromise) {
+        logger.info('⏳ S3 call already in progress, waiting for result...');
+        return await this.inFlightPromise;
+      }
 
+      logger.info('🚀 Starting S3 call to list main folders:', this.bucket);
+      
+      // Create the in-flight promise
+      this.inFlightPromise = this._doListMainFolders();
+      
+      try {
+        const result = await this.inFlightPromise;
+        return result;
+      } finally {
+        this.inFlightPromise = null;
+      }
+    } catch (error) {
+      this.inFlightPromise = null;
+      throw error;
+    }
+  }
+  
+  async _doListMainFolders() {
+    try {
       logger.info('Attempting to list main folders from S3 bucket:', this.bucket);
 
       const params = {

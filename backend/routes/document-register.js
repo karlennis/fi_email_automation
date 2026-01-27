@@ -255,6 +255,19 @@ router.get('/documents', async (req, res) => {
     });
 
   } catch (error) {
+    // Handle the special case where register hasn't been generated yet
+    if (error.message && error.message.startsWith('REGISTER_NOT_GENERATED:')) {
+      const targetDate = error.message.split(':')[1];
+      logger.warn(`⚠️  Register not generated for ${targetDate} - returning 202`);
+      return res.status(202).json({
+        success: false,
+        status: 'not_generated',
+        message: 'Document register not generated yet. Please generate first.',
+        date: targetDate,
+        action: 'Generate register first using POST /api/document-register/generate'
+      });
+    }
+    
     logger.error('❌ Error getting documents by date:', error);
     logger.error('Stack trace:', error.stack);
     res.status(500).json({

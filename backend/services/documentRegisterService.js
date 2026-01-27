@@ -476,7 +476,7 @@ class DocumentRegisterService {
 
   /**
    * Get documents by date range from the stored register
-   * Auto-generates register for the target date if it doesn't exist
+   * MEMORY SAFE: NO auto-generation (prevents page-load OOM crashes)
    */
   async getDocumentsByDateRange(startDate, endDate) {
     try {
@@ -486,15 +486,13 @@ class DocumentRegisterService {
       const targetDateStr = new Date(startDate).toISOString().split('T')[0];
       const metadataPath = path.join(this.outputDir, `register-metadata-${targetDateStr}.json`);
 
-      // Check if register exists for this date
+      // Check if register exists for this date - NO AUTO-GENERATION
       if (!fs.existsSync(metadataPath)) {
         logger.warn(`⚠️  No document register found for ${targetDateStr}`);
-        logger.info(`🔄 Auto-generating document register for ${targetDateStr}...`);
-
-        // Generate register for this specific date
-        await this.generateRegister(true, startDate); // Skip quick count for speed
-
-        logger.info(`✅ Document register generated for ${targetDateStr}`);
+        logger.warn(`🚫 NOT auto-generating (prevents OOM crashes)`);
+        
+        // Return special status indicating register needs to be generated first
+        throw new Error(`REGISTER_NOT_GENERATED:${targetDateStr}`);
       }
 
       // Now read from the metadata file (either existing or just generated)
