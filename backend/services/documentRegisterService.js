@@ -94,6 +94,106 @@ class DocumentRegisterService {
     throw new Error('scanAllDocuments is disabled for memory safety - use streaming methods');
   }
 
+  /**
+   * STREAMING CSV GENERATION - Memory-safe document register
+   * Writes CSV incrementally, no in-memory arrays
+   */
+  async streamDailyRegisterToCSV(dayStart, dayEnd, outputPath) {
+    const fastS3Scanner = require('./fastS3Scanner');
+    const { createWriteStream } = fs;
+
+    this.ensureOutputDir();
+
+    const csvPath = outputPath || this.csvFile;
+    const metadataPath = dayStart
+      ? path.join(this.outputDir, `register-metadata-${new Date(dayStart).toISOString().split('T')[0]}.json`)
+      : this.metadataFile;
+
+    const logMemory = (label) => {
+      const mem = process.memoryUsage();
+      logger.info(`📊 Memory usage (${label}):`, {
+        rssMB: Math.round(mem.rss / 1024 / 1024),
+        heapUsedMB: Math.round(mem.heapUsed / 1024 / 1024),
+        heapTotalMB: Math.round(mem.heapTotal / 1024 / 1024),
+        externalMB: Math.round(mem.external / 1024 / 1024)
+      });
+    };
+
+    logMemory('before scan');
+
+    const csvStream = createWriteStream(csvPath, { encoding: 'utf8' });
+    csvStream.write('Project ID,File Name,File Path,Last Modified,Size,File Type\n');
+
+    let totalDocuments = 0;
+    let totalSize = 0;
+    const projectSet = new Set();
+
+    const memoryInterval = setInterval(() => {
+      logMemory('during scan');
+    }, 10000);
+
+    try {
+      const scanResult = await fastS3Scanner.streamDocumentsSince(
+        dayStart,
+        dayEnd,
+        async (doc) => {
+          const csvRow = `"${doc.projectId}","${doc.fileName}","${doc.filePath}","${doc.lastModified}","${doc.size}","${doc.fileType}"\n`;
+          csvStream.write(csvRow);
+
+          totalDocuments += 1;
+          totalSize += doc.size || 0;
+          projectSet.add(doc.projectId);
+        },
+        { maxObjects: 1000000, timeoutSeconds: 600 }
+      );
+
+      csvStream.end();
+      await new Promise((resolve) => csvStream.on('finish', resolve));
+
+      clearInterval(memoryInterval);
+      logMemory('after scan');
+
+      const metadata = {
+        lastScanDate: new Date().toISOString(),
+        totalProjects: projectSet.size,
+        totalDocuments,
+        totalSize,
+        totalObjectsScanned: scanResult.totalScanned,
+        processingTimeSeconds: scanResult.duration,
+        csvPath,
+        metadataPath,
+        processing: {
+          method: 'streaming',
+          memoryFootprint: 'constant',
+          note: 'Documents not stored in memory'
+        }
+      };
+
+      this.saveMetadata(metadata, metadataPath);
+
+      logger.info('✅ STREAMING CSV generation complete', {
+        totalDocuments,
+        uniqueProjects: projectSet.size,
+        csvPath,
+        metadataPath
+      });
+
+      return {
+        totalDocuments,
+        totalSize,
+        uniqueProjects: projectSet.size,
+        csvPath,
+        metadataPath,
+        duration: scanResult.duration
+      };
+    } catch (error) {
+      clearInterval(memoryInterval);
+      csvStream.end();
+      logger.error('❌ Error in streaming CSV generation:', error);
+      throw error;
+    }
+  }
+
   async exportToCSV(documents, customPath = null) {
     logger.info('📄 Exporting to CSV...');
 
@@ -121,6 +221,10 @@ class DocumentRegisterService {
   }
 
   async exportToXLSX(documents, metadata, customPath = null) {
+    if (!Array.isArray(documents) || documents.length > 2000) {
+      throw new Error('Use CSV export (XLSX disabled for large datasets)');
+    }
+
     logger.info('📊 Exporting to XLSX...');
 
     try {

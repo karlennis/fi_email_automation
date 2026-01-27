@@ -6,6 +6,31 @@ const documentRegisterScheduler = require('../services/documentRegisterScheduler
 const fs = require('fs');
 const path = require('path');
 
+const jobDir = path.join(__dirname, '../services/outputs');
+const jobFilePath = path.join(jobDir, 'register-job.json');
+
+function ensureJobDir() {
+  if (!fs.existsSync(jobDir)) {
+    fs.mkdirSync(jobDir, { recursive: true });
+  }
+}
+
+function readJobFile() {
+  try {
+    if (fs.existsSync(jobFilePath)) {
+      return JSON.parse(fs.readFileSync(jobFilePath, 'utf-8'));
+    }
+  } catch (error) {
+    logger.warn('⚠️ Failed to read job file:', error.message);
+  }
+  return null;
+}
+
+function writeJobFile(job) {
+  ensureJobDir();
+  fs.writeFileSync(jobFilePath, JSON.stringify(job, null, 2));
+}
+
 /**
  * Generate document register - MEMORY SAFE VERSION
  * POST /api/document-register/generate
@@ -21,25 +46,96 @@ router.post('/generate', async (req, res) => {
       logger.info('📋 API request: STREAMING document register (yesterday)');
     }
 
-    // Use the memory-safe streaming scheduler
-    const result = await documentRegisterScheduler.streamDailyRegisterToCSV({
-      date: targetDate,
-      csvPath: null // Will be auto-generated
+    // Do NOT run the scan inline in the HTTP request
+    const existingJob = readJobFile();
+    if (existingJob && ['queued', 'running'].includes(existingJob.status)) {
+      return res.status(202).json({
+        success: true,
+        status: existingJob.status,
+        jobId: existingJob.id,
+        message: 'A register generation job is already in progress',
+        statusUrl: '/api/document-register/status'
+      });
+    }
+
+    const jobId = `register-${Date.now()}`;
+    const job = {
+      id: jobId,
+      status: 'queued',
+      targetDate: targetDate || 'yesterday',
+      createdAt: new Date().toISOString(),
+      startedAt: null,
+      finishedAt: null,
+      progress: {
+        totalDocuments: 0,
+        totalSize: 0,
+        uniqueProjects: 0
+      },
+      error: null,
+      outputs: {
+        csv: null,
+        metadata: null
+      }
+    };
+
+    writeJobFile(job);
+
+    res.status(202).json({
+      success: true,
+      status: 'queued',
+      jobId,
+      message: 'Document register generation queued',
+      statusUrl: '/api/document-register/status'
     });
 
-    res.json({
-      success: true,
-      message: targetDate ?
-        `Document register streamed successfully for ${targetDate}` :
-        'Document register streamed successfully',
-      data: {
-        totalDocuments: result.totalDocuments,
-        uniqueProjects: result.uniqueProjects,
-        processingTime: result.duration,
-        csvPath: result.csvPath,
-        method: 'streaming',
-        memoryFootprint: 'constant',
-        scanDate: targetDate || 'yesterday'
+    // Run async after response (no inline scan)
+    setImmediate(async () => {
+      const runningJob = { ...job, status: 'running', startedAt: new Date().toISOString() };
+      writeJobFile(runningJob);
+
+      try {
+        const baseDate = targetDate ? new Date(targetDate) : new Date();
+        if (!targetDate) {
+          baseDate.setDate(baseDate.getDate() - 1);
+        }
+        baseDate.setHours(0, 0, 0, 0);
+        const dayStart = new Date(baseDate);
+        const dayEnd = new Date(baseDate);
+        dayEnd.setHours(23, 59, 59, 999);
+
+        const paths = documentRegisterService.getDateBasedPaths(dayStart);
+        const result = await documentRegisterService.streamDailyRegisterToCSV(
+          dayStart,
+          dayEnd,
+          paths.csvFile
+        );
+
+        const completedJob = {
+          ...runningJob,
+          status: 'success',
+          finishedAt: new Date().toISOString(),
+          progress: {
+            totalDocuments: result.totalDocuments,
+            totalSize: result.totalSize,
+            uniqueProjects: result.uniqueProjects
+          },
+          outputs: {
+            csv: result.csvPath,
+            metadata: result.metadataPath
+          }
+        };
+
+        writeJobFile(completedJob);
+      } catch (error) {
+        const failedJob = {
+          ...runningJob,
+          status: 'error',
+          finishedAt: new Date().toISOString(),
+          error: error.message
+        };
+
+        writeJobFile(failedJob);
+        logger.error('❌ Async document register job failed:', error);
       }
     });
 
@@ -89,20 +185,22 @@ router.get('/count', async (req, res) => {
  */
 router.get('/status', async (req, res) => {
   try {
-    const metadata = documentRegisterService.loadMetadata();
+    const metadata = documentRegisterService.loadMetadata() || {};
+    const job = readJobFile();
 
     res.json({
       success: true,
       data: {
-        lastScanDate: metadata.lastScanDate,
-        totalProjects: metadata.totalProjects,
-        totalDocuments: metadata.totalDocuments,
-        hasExistingRegister: metadata.lastScanDate !== null,
+        lastScanDate: metadata.lastScanDate || null,
+        totalProjects: metadata.totalProjects || 0,
+        totalDocuments: metadata.totalDocuments || 0,
+        hasExistingRegister: Boolean(metadata.lastScanDate),
         outputs: {
           csv: documentRegisterService.csvFile,
           xlsx: documentRegisterService.xlsxFile,
           metadata: documentRegisterService.metadataFile
-        }
+        },
+        job
       }
     });
 
@@ -130,6 +228,17 @@ router.get('/download/:format', async (req, res) => {
         success: false,
         message: 'Invalid format. Use "csv" or "xlsx"'
       });
+    }
+
+    if (format === 'xlsx') {
+      const metadata = documentRegisterService.loadMetadata();
+      const totalDocuments = metadata?.totalDocuments || 0;
+      if (totalDocuments > 2000 || !metadata) {
+        return res.status(400).json({
+          success: false,
+          message: 'Use CSV export (XLSX disabled for large datasets)'
+        });
+      }
     }
 
     const filePath = format === 'csv'
