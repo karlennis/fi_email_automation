@@ -26,8 +26,9 @@ class DocumentRegisterScheduler {
 
         logger.info('Document register scheduler initialized - runs daily at 12:05 AM');
 
-        // Also run once on startup if it hasn't run today
-        this.checkAndRunStartup();
+        // Disabled startup check to prevent memory issues on deployment
+        // The scheduled job will run at 12:05 AM daily
+        // this.checkAndRunStartup();
     }
 
     /**

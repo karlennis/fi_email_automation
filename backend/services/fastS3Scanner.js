@@ -21,10 +21,10 @@ class FastS3Scanner {
      * Get documents modified since a specific date
      * This is MUCH faster than the full scan approach
      * @param {Date} sinceDate - Get documents modified after this date
-     * @param {number} maxDocuments - Maximum documents to return (default: 5000, reduced from 10000 for memory)
+     * @param {number} maxDocuments - Maximum documents to return (default: 1000, reduced for memory safety)
      * @returns {Promise<Array>} Array of document objects
      */
-    async getDocumentsModifiedSince(sinceDate, maxDocuments = 5000) {
+    async getDocumentsModifiedSince(sinceDate, maxDocuments = 1000) {
         const startTime = Date.now();
         logger.info(`📅 Fast scan: Getting documents modified since ${sinceDate.toISOString()}`);
 
@@ -37,7 +37,7 @@ class FastS3Scanner {
             while (hasMore && documents.length < maxDocuments) {
                 const params = {
                     Bucket: this.bucketName,
-                    MaxKeys: 500, // Reduced from 1000 to lower memory usage
+                    MaxKeys: 100, // Further reduced from 500 to minimize memory per request
                     ContinuationToken: continuationToken
                 };
 
@@ -45,6 +45,7 @@ class FastS3Scanner {
                 const response = await this.s3Client.send(command);
 
                 if (response.Contents) {
+                    // Process each object immediately and discard
                     for (const object of response.Contents) {
                         totalScanned++;
 
@@ -56,7 +57,7 @@ class FastS3Scanner {
                             // Path structure: planning-docs/PROJECT_ID/file.pdf
                             // So project ID is at index 1
                             if (pathParts.length >= 3) {
-                                const projectId = pathParts[1]; // Changed from pathParts[0]
+                                const projectId = pathParts[1];
                                 const fileName = pathParts[pathParts.length - 1];
 
                                 // Skip folders, system files, and docfiles.txt
@@ -84,7 +85,8 @@ class FastS3Scanner {
                         }
                     }
 
-                    // Clear response.Contents from memory after processing to reduce memory footprint
+                    // Aggressively clear response from memory
+                    response.Contents.length = 0;
                     response.Contents = null;
                     delete response.Contents;
                 }
@@ -93,9 +95,14 @@ class FastS3Scanner {
                 continuationToken = response.NextContinuationToken;
                 hasMore = hasMore && !!continuationToken;
 
-                // Log progress every 10,000 objects
-                if (totalScanned % 10000 === 0) {
+                // Log progress every 5,000 objects (reduced from 10,000)
+                if (totalScanned % 5000 === 0) {
                     logger.info(`📊 Progress: Scanned ${totalScanned} objects, found ${documents.length} matching documents`);
+                }
+                
+                // Force garbage collection hint every 1000 scanned objects
+                if (totalScanned % 1000 === 0 && global.gc) {
+                    global.gc();
                 }
             }
 
