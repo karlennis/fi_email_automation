@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
+import { environment } from '../../environments/environment';
 
 export interface FilteringParams {
   [key: string]: any; // Index signature for dynamic access
@@ -60,7 +61,7 @@ export interface ProcessingResponse {
   providedIn: 'root'
 })
 export class ApiFilteringService {
-  private baseUrl = 'http://localhost:3000/api/filtering';
+  private baseUrl = `${environment.apiUrl}/api/filtering`;
 
   constructor(private http: HttpClient) {}
 
