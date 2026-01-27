@@ -168,7 +168,7 @@ class DailyRunService {
           }
 
           if (objectsScanned % 5000 === 0) {
-            logger.info(`   Scanned ${objectsScanned.toLocaleString()} objects, created ${itemsCreated} items...`);
+            logger.info(`📊 [RUN ${runId.slice(-8)}] Progress: ${objectsScanned.toLocaleString()} objects scanned, ${itemsCreated} items queued`);
           }
 
         } while (continuationToken);
@@ -186,9 +186,7 @@ class DailyRunService {
           }
         );
 
-        logger.info(`✅ S3 scan complete for run ${runId}`);
-        logger.info(`   📊 Scanned ${objectsScanned.toLocaleString()} objects in ${duration}s`);
-        logger.info(`   📄 Created ${itemsCreated} items for processing`);
+        logger.info(`✅ [RUN ${runId.slice(-8)}] Scan complete: ${itemsCreated} items queued from ${objectsScanned.toLocaleString()} objects (${duration}s)`);
 
         return {
           objectsScanned,

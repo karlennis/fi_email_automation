@@ -26,20 +26,17 @@ const logger = winston.createLogger({
       maxsize: 5242880, // 5MB
       maxFiles: 5
     }),
-    // Console transport for development
+    // Console transport - always enabled for visibility
     new winston.transports.Console({
-      format: winston.format.combine(
-        winston.format.colorize(),
-        winston.format.simple()
-      )
+      format: process.env.NODE_ENV === 'production'
+        ? winston.format.json()
+        : winston.format.combine(
+            winston.format.colorize(),
+            winston.format.simple()
+          )
     })
   ]
 });
-
-// If we're in production, log only to files, not console
-if (process.env.NODE_ENV === 'production') {
-  logger.remove(logger.transports[2]); // Remove console transport
-}
 
 // Create a stream object for HTTP request logging
 logger.stream = {

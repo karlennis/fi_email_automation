@@ -12,6 +12,7 @@ class DailyRunWorker {
     this.concurrency = 1; // Single worker for memory safety
     this.pollInterval = 2000; // 2 seconds
     this.memoryLogInterval = null;
+    this.totalProcessed = 0; // Track total items processed
   }
 
   /**
@@ -24,7 +25,8 @@ class DailyRunWorker {
     }
 
     this.isRunning = true;
-    logger.info('🚀 Daily run worker started (concurrency: 1)');
+    this.totalProcessed = 0;
+    logger.info('🚀 Daily run worker started (concurrency: 1, polling every 2s)');
 
     // Start memory monitoring
     this.startMemoryMonitoring();
@@ -114,7 +116,7 @@ class DailyRunWorker {
         }
       );
 
-      logger.info(`⚙️ Processing item: ${item.fileName} (${item.projectId})`);
+      logger.info(`⚙️ [RUN ${item.runId.slice(-8)}] Processing: ${item.projectId}/${item.fileName}`);
 
       try {
         // Download file using s3Service
@@ -210,7 +212,17 @@ class DailyRunWorker {
           }
         );
 
-        logger.info(`✅ Completed item: ${item.fileName} (FI: ${detectionResult.detected})`);
+        logger.info(`✅ Completed: ${item.fileName} (FI: ${detectionResult.detected})`);
+
+        this.totalProcessed++;
+
+        // Log processing summary every 10 items
+        if (this.totalProcessed % 10 === 0) {
+          const run = await DailyRun.findOne({ runId: item.runId });
+          if (run) {
+            logger.info(`📊 [RUN ${item.runId.slice(-8)}] Progress: ${run.counters.completed}/${run.counters.totalItems} completed, ${run.counters.failed} failed`);
+          }
+        }
 
         // Check if run is complete
         await this.checkRunCompletion(item.runId);
@@ -270,8 +282,10 @@ class DailyRunWorker {
           }
         );
 
-        logger.info(`🎉 Run ${runId} completed!`);
-        logger.info(`   Total: ${run.counters.totalItems}, Completed: ${run.counters.completed}, Failed: ${run.counters.failed}`);
+        const successRate = run.counters.totalItems > 0 
+          ? ((run.counters.completed / run.counters.totalItems) * 100).toFixed(1)
+          : 0;
+        logger.info(`🎉 [RUN ${runId.slice(-8)}] COMPLETE: ${run.counters.completed}/${run.counters.totalItems} succeeded (${successRate}%), ${run.counters.failed} failed`);
       }
 
     } catch (error) {
