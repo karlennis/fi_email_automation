@@ -63,7 +63,7 @@ services:
     runtime: node
     region: frankfurt
     plan: starter
-    buildCommand: cd frontend && npm install && npx ng build
+    buildCommand: cd frontend && npm install && npm run build
     startCommand: cd frontend && npm run serve:ssr:frontend
     envVars:
       - key: NODE_ENV
