@@ -21,10 +21,10 @@ class FastS3Scanner {
      * Get documents modified since a specific date
      * This is MUCH faster than the full scan approach
      * @param {Date} sinceDate - Get documents modified after this date
-     * @param {number} maxDocuments - Maximum documents to return (default: 10000)
+     * @param {number} maxDocuments - Maximum documents to return (default: 5000, reduced from 10000 for memory)
      * @returns {Promise<Array>} Array of document objects
      */
-    async getDocumentsModifiedSince(sinceDate, maxDocuments = 10000) {
+    async getDocumentsModifiedSince(sinceDate, maxDocuments = 5000) {
         const startTime = Date.now();
         logger.info(`📅 Fast scan: Getting documents modified since ${sinceDate.toISOString()}`);
 
@@ -37,7 +37,7 @@ class FastS3Scanner {
             while (hasMore && documents.length < maxDocuments) {
                 const params = {
                     Bucket: this.bucketName,
-                    MaxKeys: 1000, // Process in batches
+                    MaxKeys: 500, // Reduced from 1000 to lower memory usage
                     ContinuationToken: continuationToken
                 };
 
@@ -83,6 +83,10 @@ class FastS3Scanner {
                             }
                         }
                     }
+                    
+                    // Clear response.Contents from memory after processing to reduce memory footprint
+                    response.Contents = null;
+                    delete response.Contents;
                 }
 
                 // Check if there are more objects to process
