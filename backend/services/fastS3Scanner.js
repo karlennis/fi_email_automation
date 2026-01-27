@@ -38,7 +38,7 @@ class FastS3Scanner {
         let hasMore = true;
 
         try {
-            while (hasMore && totalScanned < maxObjects) {
+            while (hasMore && (maxObjects === null || totalScanned < maxObjects)) {
                 const params = {
                     Bucket: this.bucketName,
                     Prefix: 'planning-docs/', // MANDATORY: Scope to planning docs only
