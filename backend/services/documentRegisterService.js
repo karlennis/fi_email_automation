@@ -39,86 +39,43 @@ class DocumentRegisterService {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
 
+  /**
+   * MEMORY SAFE: Quick count using streaming - no document arrays
+   * Uses the new streaming scanner instead of accumulating objects
+   */
   async getQuickCount() {
     try {
-      logger.info('📊 Getting quick count of projects and documents...');
-      logger.info('⚡ Using optimized single-scan method');
-      logger.info('📄 Counting ALL file types (not just PDFs)');
-
-      const { S3Client, ListObjectsV2Command } = require('@aws-sdk/client-s3');
-      const s3Client = new S3Client({
-        region: process.env.AWS_REGION || 'eu-north-1',
-        credentials: {
-          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-        },
-        requestHandler: {
-          requestTimeout: 120000,
-          connectionTimeout: 10000
-        },
-        maxAttempts: 3
-      });
-      const bucket = process.env.S3_BUCKET || 'planning-documents-2';
-
+      logger.info('📊 Getting STREAMING count of projects and documents...');
+      
+      const fastS3Scanner = require('./fastS3Scanner');
+      
       let totalDocuments = 0;
-      const projectDocs = new Map();
-      let continuationToken = null;
-      let objectsScanned = 0;
-
-      logger.info('🔍 Scanning all objects in planning-docs/...');
-
-      do {
-        const command = new ListObjectsV2Command({
-          Bucket: bucket,
-          Prefix: 'planning-docs/',
-          MaxKeys: 1000,
-          ContinuationToken: continuationToken
-        });
-
-        try {
-          const response = await s3Client.send(command);
-          if (response.Contents) {
-            response.Contents.forEach(obj => {
-              objectsScanned++;
-              const match = obj.Key.match(/^planning-docs\/([^\/]+)\/(.+)$/);
-              if (match) {
-                const projectId = match[1];
-                const fileName = match[2];
-                if (fileName && !fileName.endsWith('/') && !fileName.startsWith('.')) {
-                  totalDocuments++;
-                  projectDocs.set(projectId, (projectDocs.get(projectId) || 0) + 1);
-                } else if (!projectDocs.has(projectId)) {
-                  projectDocs.set(projectId, 0);
-                }
-              }
-            });
-          }
-          continuationToken = response.IsTruncated ? response.NextContinuationToken : null;
-          if (objectsScanned % 10000 === 0) {
-            logger.info(`   Scanned ${objectsScanned.toLocaleString()} objects... (${totalDocuments.toLocaleString()} documents across ${projectDocs.size.toLocaleString()} projects)`);
-          }
-        } catch (error) {
-          logger.error('S3 API error:', error.message);
-          if (error.$retryable || error.name === 'TimeoutError') {
-            logger.warn('Timeout detected, retrying...');
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            continue;
-          }
-          throw error;
-        }
-      } while (continuationToken);
+      const projectSet = new Set(); // Bounded memory - just project IDs
+      
+      // Stream all documents and count without storing
+      const scanResult = await fastS3Scanner.streamDocumentsSince(
+        new Date('2020-01-01'), // Far back start date to capture all
+        null, // No end date
+        async (doc) => {
+          totalDocuments++;
+          projectSet.add(doc.projectId);
+        },
+        { maxObjects: 2000000, timeoutSeconds: 300 } // 5 min max
+      );
 
       const result = {
-        totalProjects: projectDocs.size,
+        totalProjects: projectSet.size,
         totalDocuments: totalDocuments,
-        averageDocsPerProject: projectDocs.size > 0 ? (totalDocuments / projectDocs.size).toFixed(2) : 0,
-        totalObjectsScanned: objectsScanned
+        averageDocsPerProject: projectSet.size > 0 ? (totalDocuments / projectSet.size).toFixed(2) : 0,
+        totalObjectsScanned: scanResult.totalScanned,
+        scanMethod: 'streaming',
+        memoryFootprint: 'constant'
       };
 
-      logger.info(`✅ Count complete!`);
-      logger.info(`   📊 Scanned ${objectsScanned.toLocaleString()} objects`);
+      logger.info(`✅ STREAMING count complete!`);
+      logger.info(`   📊 Scanned ${result.totalObjectsScanned.toLocaleString()} objects`);
       logger.info(`   📁 Found ${result.totalProjects.toLocaleString()} projects`);
-      logger.info(`   📄 Found ${totalDocuments.toLocaleString()} documents (ALL file types)`);
+      logger.info(`   📄 Found ${totalDocuments.toLocaleString()} documents`);
       logger.info(`   📈 Average: ${result.averageDocsPerProject} docs/project`);
 
       return result;
@@ -128,118 +85,13 @@ class DocumentRegisterService {
     }
   }
 
+  /**
+   * DEPRECATED - DANGEROUS: This method loads all documents into memory
+   * Use streaming methods instead
+   */
   async scanAllDocuments() {
-    const startTime = Date.now();
-    logger.info('🔍 Starting document register scan...');
-    logger.info('⚡ Single recursive S3 scan for maximum performance');
-
-    try {
-      const { S3Client, ListObjectsV2Command } = require('@aws-sdk/client-s3');
-      const s3Client = new S3Client({
-        region: process.env.AWS_REGION || 'eu-north-1',
-        credentials: {
-          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-        },
-        requestHandler: {
-          requestTimeout: 120000,
-          connectionTimeout: 10000
-        },
-        maxAttempts: 3
-      });
-      const bucket = process.env.S3_BUCKET || 'planning-documents-2';
-
-      const allDocuments = [];
-      const projectStats = {};
-      let continuationToken = null;
-      let objectsScanned = 0;
-      let documentsFound = 0;
-
-      logger.info('📊 Scanning planning-docs/...');
-
-      do {
-        const command = new ListObjectsV2Command({
-          Bucket: bucket,
-          Prefix: 'planning-docs/',
-          MaxKeys: 1000,
-          ContinuationToken: continuationToken
-        });
-
-        try {
-          const response = await s3Client.send(command);
-          if (response.Contents) {
-            response.Contents.forEach(obj => {
-              objectsScanned++;
-              const match = obj.Key.match(/^planning-docs\/([^\/]+)\/(.+)$/);
-              if (match) {
-                const projectId = match[1];
-                const fileName = match[2];
-                if (fileName && !fileName.endsWith('/') && !fileName.startsWith('.')) {
-                  allDocuments.push({
-                    projectId: projectId,
-                    fileName: fileName,
-                    filePath: obj.Key,
-                    lastModified: obj.LastModified,
-                    lastModifiedISO: new Date(obj.LastModified).toISOString()
-                  });
-                  documentsFound++;
-                  if (!projectStats[projectId]) {
-                    projectStats[projectId] = { documentCount: 0, lastUpdated: null };
-                  }
-                  projectStats[projectId].documentCount++;
-                  if (!projectStats[projectId].lastUpdated || new Date(obj.LastModified) > new Date(projectStats[projectId].lastUpdated)) {
-                    projectStats[projectId].lastUpdated = obj.LastModified;
-                  }
-                }
-              }
-            });
-          }
-          continuationToken = response.IsTruncated ? response.NextContinuationToken : null;
-          if (objectsScanned % 10000 === 0) {
-            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-            const rate = (objectsScanned / elapsed).toFixed(0);
-            logger.info(`   📊 ${objectsScanned.toLocaleString()} objects in ${elapsed}s (${rate} obj/s) - ${Object.keys(projectStats).length.toLocaleString()} projects, ${documentsFound.toLocaleString()} docs`);
-          }
-        } catch (error) {
-          logger.error('S3 API error:', error.message);
-          if (error.$retryable || error.name === 'TimeoutError') {
-            logger.warn('⚠️  Timeout, waiting 3s...');
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            continue;
-          }
-          throw error;
-        }
-      } while (continuationToken);
-
-      logger.info('🔄 Sorting by last modified (newest first)...');
-      allDocuments.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
-
-      const processingTime = Date.now() - startTime;
-      const projectCount = Object.keys(projectStats).length;
-
-      logger.info(`✅ Scan complete!`);
-      logger.info(`   📊 Scanned ${objectsScanned.toLocaleString()} objects`);
-      logger.info(`   📁 Found ${projectCount.toLocaleString()} projects`);
-      logger.info(`   📄 Found ${allDocuments.length.toLocaleString()} documents`);
-      logger.info(`   ⏱️  Time: ${(processingTime / 1000 / 60).toFixed(1)} minutes`);
-      logger.info(`   ⚡ ${(objectsScanned / (processingTime / 1000)).toFixed(0)} objects/second`);
-
-      const metadata = {
-        lastScanDate: new Date().toISOString(),
-        totalProjects: projectCount,
-        totalDocuments: allDocuments.length,
-        totalObjectsScanned: objectsScanned,
-        processingTimeMs: processingTime,
-        processingTimeMinutes: (processingTime / 1000 / 60).toFixed(1),
-        documentsByProject: projectStats
-      };
-      this.saveMetadata(metadata);
-
-      return { documents: allDocuments, metadata, projectStats };
-    } catch (error) {
-      logger.error('❌ Error scanning documents:', error);
-      throw error;
-    }
+    logger.error('🚨 DEPRECATED: scanAllDocuments() causes OOM - use streaming methods instead');
+    throw new Error('scanAllDocuments is disabled for memory safety - use streaming methods');
   }
 
   async exportToCSV(documents, customPath = null) {

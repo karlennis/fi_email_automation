@@ -11,6 +11,31 @@ class DocumentRegisterScheduler {
         this.isRunning = false;
         this.lastRunTime = null;
         this.lastRunStatus = null;
+        
+        // Start memory monitoring for production reliability
+        this.startMemoryMonitoring();
+    }
+
+    /**
+     * MEMORY DIAGNOSTICS - Track memory usage every 10s (lightweight)
+     */
+    startMemoryMonitoring() {
+        setInterval(() => {
+            const mem = process.memoryUsage();
+            const memMB = {
+                rss: Math.round(mem.rss / 1024 / 1024),
+                heapUsed: Math.round(mem.heapUsed / 1024 / 1024),
+                heapTotal: Math.round(mem.heapTotal / 1024 / 1024),
+                external: Math.round(mem.external / 1024 / 1024)
+            };
+            
+            // Log only if memory usage is concerning
+            if (memMB.heapUsed > 1500) { // > 1.5GB on 2GB system
+                logger.warn('🚨 High memory usage detected:', memMB);
+            } else if (memMB.heapUsed > 1000) { // > 1GB
+                logger.info('📊 Memory usage:', memMB);
+            }
+        }, 10000); // Every 10 seconds
     }
 
     /**
@@ -69,7 +94,8 @@ class DocumentRegisterScheduler {
     }
 
     /**
-     * Execute the daily document register generation using FAST scanning
+     * Execute the STREAMING document register generation (MEMORY SAFE)
+     * No longer accumulates documents in arrays - streams directly to CSV
      */
     async runDailyGeneration() {
         if (this.isRunning) {
@@ -88,85 +114,147 @@ class DocumentRegisterScheduler {
 
         this.isRunning = true;
         const startTime = new Date();
-        logger.info('⚡ Starting FAST scheduled document register generation...');
+        logger.info('⚡ Starting STREAMING document register generation (memory safe)...');
 
         try {
-            // Use the fast S3 scanner for yesterday's documents
-            logger.info('📅 Calling fastS3Scanner.getYesterdaysDocuments()...');
-            const documents = await fastS3Scanner.getYesterdaysDocuments();
-            logger.info(`📦 Received ${documents ? documents.length : 0} documents from scanner`);
-
-            if (!documents || documents.length === 0) {
-                logger.warn('⚠️ No documents returned from scanner');
-                return {
-                    totalDocuments: 0,
-                    uniqueProjects: 0,
-                    csvPath: null,
-                    xlsxPath: null,
-                    metadataPath: null,
-                    stats: null,
-                    noDocuments: true
-                };
-            }
-
-            // Get statistics
-            const stats = fastS3Scanner.getStatistics(documents);
-            logger.info('📊 Statistics calculated:', stats);
-
-            // Save to files
+            const timestamp = new Date().toISOString().split('T')[0];
             const outputDir = path.join(__dirname, 'outputs');
             if (!fs.existsSync(outputDir)) {
                 fs.mkdirSync(outputDir, { recursive: true });
             }
 
-            const timestamp = new Date().toISOString().split('T')[0];
-
-            // Save CSV
             const csvPath = path.join(outputDir, `document-register-${timestamp}.csv`);
-            const csvContent = this.generateCSV(documents);
-            fs.writeFileSync(csvPath, csvContent);
 
-            // Save XLSX
-            const xlsxPath = path.join(outputDir, `document-register-${timestamp}.xlsx`);
-            this.generateXLSX(documents, xlsxPath);
+            // STREAMING CSV GENERATION - No document arrays in memory
+            logger.info('📅 Starting streaming CSV generation for yesterday...');
+            const streamResult = await this.streamDailyRegisterToCSV({
+                csvPath,
+                date: timestamp
+            });
 
-            // Save JSON metadata
+            // Generate safe metadata - NO DOCUMENTS ARRAY
             const metadataPath = path.join(outputDir, `register-metadata-${timestamp}.json`);
-            fs.writeFileSync(metadataPath, JSON.stringify({
+            const safeMetadata = {
                 generatedAt: new Date().toISOString(),
-                ...stats,
-                documents: documents
-            }, null, 2));
+                date: timestamp,
+                totalDocuments: streamResult.totalDocuments,
+                totalSize: streamResult.totalSize,
+                uniqueProjects: streamResult.uniqueProjects,
+                csvPath: csvPath,
+                durationMs: streamResult.duration * 1000,
+                // NO documents array - memory safe
+                processing: {
+                    method: 'streaming',
+                    memoryFootprint: 'constant',
+                    note: 'Documents not stored in memory'
+                }
+            };
+            
+            fs.writeFileSync(metadataPath, JSON.stringify(safeMetadata, null, 2));
+
+            // XLSX is disabled for memory safety (can be re-enabled with streaming XLSX writer)
+            const xlsxPath = null;
+            logger.warn('📊 XLSX generation disabled for memory safety - use CSV instead');
 
             this.lastRunTime = new Date();
             this.lastRunStatus = 'success';
 
-            const duration = ((new Date() - startTime) / 1000).toFixed(2);
-            logger.info(`✅ FAST document register generation completed in ${duration}s`, {
-                totalDocuments: stats.totalDocuments,
-                uniqueProjects: stats.uniqueProjects,
+            const totalDuration = ((new Date() - startTime) / 1000).toFixed(2);
+            logger.info(`✅ STREAMING document register completed in ${totalDuration}s`, {
+                totalDocuments: streamResult.totalDocuments,
+                uniqueProjects: streamResult.uniqueProjects,
                 csvPath,
-                xlsxPath,
                 metadataPath
             });
 
             return {
-                totalDocuments: stats.totalDocuments,
-                uniqueProjects: stats.uniqueProjects,
+                totalDocuments: streamResult.totalDocuments,
+                uniqueProjects: streamResult.uniqueProjects,
                 csvPath,
                 xlsxPath,
                 metadataPath,
-                stats
+                stats: safeMetadata
             };
+
         } catch (error) {
             this.lastRunTime = new Date();
             this.lastRunStatus = 'error';
 
-            logger.error('❌ Error in scheduled document register generation:', error);
+            logger.error('❌ Error in STREAMING document register generation:', error);
             logger.error('Stack trace:', error.stack);
             throw error;
         } finally {
             this.isRunning = false;
+        }
+    }
+
+    /**
+     * STREAMING CSV GENERATION - Memory-safe document register
+     * Processes documents one-by-one, never accumulating arrays
+     */
+    async streamDailyRegisterToCSV({ csvPath, date }) {
+        const fs = require('fs');
+        const { createWriteStream } = fs;
+        
+        // Setup date range for yesterday (or specified date)
+        const targetDate = date ? new Date(date) : new Date();
+        if (!date) {
+            targetDate.setDate(targetDate.getDate() - 1); // Yesterday
+        }
+        targetDate.setHours(0, 0, 0, 0);
+        
+        const endDate = new Date(targetDate);
+        endDate.setHours(23, 59, 59, 999);
+
+        logger.info(`📊 STREAMING CSV generation: ${targetDate.toDateString()}`);
+
+        // Create CSV write stream
+        const csvStream = createWriteStream(csvPath, { encoding: 'utf8' });
+        
+        // Write CSV header
+        csvStream.write('Project ID,File Name,File Path,Last Modified,Size,File Type\n');
+
+        // Streaming stats (bounded memory)
+        let totalDocuments = 0;
+        let totalSize = 0;
+        const projectSet = new Set(); // Bounded - unique project IDs only
+        
+        try {
+            // STREAM documents directly to CSV - NO ARRAY ACCUMULATION
+            const scanResult = await fastS3Scanner.streamDocumentsSince(
+                targetDate,
+                endDate,
+                async (doc) => {
+                    // Write CSV row immediately - NO MEMORY RETENTION
+                    const csvRow = `"${doc.projectId}","${doc.fileName}","${doc.filePath}","${doc.lastModified}","${doc.size}","${doc.fileType}"\n`;
+                    csvStream.write(csvRow);
+                    
+                    // Update bounded stats only
+                    totalDocuments++;
+                    totalSize += doc.size;
+                    projectSet.add(doc.projectId);
+                },
+                { maxObjects: 1000000, timeoutSeconds: 600 } // 10 min max
+            );
+
+            // Close CSV stream
+            csvStream.end();
+            
+            const result = {
+                totalDocuments,
+                totalSize,
+                uniqueProjects: projectSet.size,
+                duration: scanResult.duration,
+                csvPath
+            };
+
+            logger.info(`✅ CSV streaming complete: ${totalDocuments} documents, ${projectSet.size} projects`);
+            return result;
+
+        } catch (error) {
+            csvStream.end();
+            logger.error('❌ Error in streaming CSV generation:', error);
+            throw error;
         }
     }
 

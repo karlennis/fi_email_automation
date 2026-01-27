@@ -18,26 +18,31 @@ class FastS3Scanner {
     }
 
     /**
-     * Get documents modified since a specific date
-     * ULTRA-LIGHTWEIGHT: Stops at first 250 documents to prevent OOM
+     * STREAMING S3 SCANNER - No array accumulation, constant memory
+     * Processes each document via callback to prevent OOM crashes
      * @param {Date} sinceDate - Get documents modified after this date
-     * @param {number} maxDocuments - Maximum documents to return (default: 250, HARD LIMIT for 2GB RAM)
-     * @returns {Promise<Array>} Array of document objects
+     * @param {Date} endDate - Get documents modified before this date (optional)
+     * @param {Function} onDocument - Callback for each matching document: (doc) => void
+     * @param {Object} options - { maxObjects, timeoutSeconds }
+     * @returns {Promise<Object>} Stats only: { totalScanned, totalMatched, duration }
      */
-    async getDocumentsModifiedSince(sinceDate, maxDocuments = 250) {
+    async streamDocumentsSince(sinceDate, endDate = null, onDocument, options = {}) {
+        const { maxObjects = 50000, timeoutSeconds = 300 } = options; // 5 min max
         const startTime = Date.now();
-        logger.info(`📅 Fast scan: Getting documents modified since ${sinceDate.toISOString()}`);
+        
+        logger.info(`📅 STREAMING scan: ${sinceDate.toISOString()} to ${endDate ? endDate.toISOString() : 'now'}`);
 
-        const documents = [];
         let totalScanned = 0;
+        let totalMatched = 0;
         let continuationToken = null;
         let hasMore = true;
 
         try {
-            while (hasMore && documents.length < maxDocuments) {
+            while (hasMore && totalScanned < maxObjects) {
                 const params = {
                     Bucket: this.bucketName,
-                    MaxKeys: 50, // ULTRA-LOW: 50 objects per request (was 100, 500, 1000)
+                    Prefix: 'planning-docs/', // MANDATORY: Scope to planning docs only
+                    MaxKeys: 1000, // MANDATORY: Max batch size as specified
                     ContinuationToken: continuationToken
                 };
 
@@ -45,40 +50,37 @@ class FastS3Scanner {
                 const response = await this.s3Client.send(command);
 
                 if (response.Contents) {
-                    // Process each object immediately and discard
+                    // Process each object immediately - NO ARRAY ACCUMULATION
                     for (const object of response.Contents) {
                         totalScanned++;
 
                         // Filter by last modified date
                         if (object.LastModified && object.LastModified >= sinceDate) {
-                            // Parse the S3 key to extract project ID and file info
-                            const pathParts = object.Key.split('/');
+                            if (!endDate || object.LastModified <= endDate) {
+                                // Parse S3 key structure
+                                const pathParts = object.Key.split('/');
+                                if (pathParts.length >= 3) {
+                                    const projectId = pathParts[1];
+                                    const fileName = pathParts[pathParts.length - 1];
 
-                            // Path structure: planning-docs/PROJECT_ID/file.pdf
-                            // So project ID is at index 1
-                            if (pathParts.length >= 3) {
-                                const projectId = pathParts[1];
-                                const fileName = pathParts[pathParts.length - 1];
-
-                                // Skip folders, system files, and docfiles.txt
-                                if (fileName &&
-                                    !fileName.startsWith('.') &&
-                                    fileName.includes('.') &&
-                                    fileName.toLowerCase() !== 'docfiles.txt') {
-                                    // ULTRA-LIGHTWEIGHT: Only store essential fields (removed fileType to save memory)
-                                    documents.push({
-                                        projectId,
-                                        fileName,
-                                        filePath: object.Key,
-                                        lastModified: object.LastModified.toISOString(),
-                                        size: object.Size || 0
-                                    });
-
-                                    // Check if we've reached the limit
-                                    if (documents.length >= maxDocuments) {
-                                        logger.info(`⚠️ Reached maximum document limit (${maxDocuments})`);
-                                        hasMore = false;
-                                        break;
+                                    // Skip folders, system files, and docfiles.txt
+                                    if (fileName &&
+                                        !fileName.startsWith('.') &&
+                                        fileName.includes('.') &&
+                                        fileName.toLowerCase() !== 'docfiles.txt') {
+                                        
+                                        // Stream document immediately - NO MEMORY RETENTION
+                                        const doc = {
+                                            projectId,
+                                            fileName,
+                                            filePath: object.Key,
+                                            lastModified: object.LastModified.toISOString(),
+                                            size: object.Size || 0,
+                                            fileType: this.getFileType(fileName)
+                                        };
+                                        
+                                        await onDocument(doc); // Process immediately
+                                        totalMatched++;
                                     }
                                 }
                             }
@@ -91,51 +93,91 @@ class FastS3Scanner {
                     delete response.Contents;
                 }
 
-                // Check if there are more objects to process
+                // Pagination control
                 continuationToken = response.NextContinuationToken;
                 hasMore = hasMore && !!continuationToken;
 
-                // STOP EARLY if we're taking too long (prevent runaway scans)
+                // Timeout protection
                 const elapsed = (Date.now() - startTime) / 1000;
-                if (elapsed > 30) {
-                    logger.warn(`⏱️ Stopping scan after 30 seconds (scanned ${totalScanned} objects)`);
-                    hasMore = false;
+                if (elapsed > timeoutSeconds) {
+                    logger.warn(`⏱️ Stopping scan after ${timeoutSeconds}s timeout (scanned ${totalScanned} objects)`);
                     break;
                 }
                 
-                // Log progress every 1,000 objects
-                if (totalScanned % 1000 === 0) {
-                    logger.info(`📊 Progress: Scanned ${totalScanned} objects, found ${documents.length} matching documents (${elapsed.toFixed(1)}s)`);
+                // Progress logging
+                if (totalScanned % 10000 === 0) {
+                    logger.info(`📊 Streaming: ${totalScanned} scanned, ${totalMatched} matched (${elapsed.toFixed(1)}s)`);
                 }
                 
-                // Force garbage collection hint every 500 scanned objects
-                if (totalScanned % 500 === 0 && global.gc) {
+                // Memory management
+                if (totalScanned % 5000 === 0 && global.gc) {
                     global.gc();
                 }
             }
 
             const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-            logger.info(`✅ Fast scan complete: Found ${documents.length} documents in ${duration}s (scanned ${totalScanned} objects)`);
+            logger.info(`✅ STREAMING scan complete: ${totalMatched} documents streamed in ${duration}s (scanned ${totalScanned} objects)`);
 
-            return documents;
+            return {
+                totalScanned,
+                totalMatched,
+                duration: parseFloat(duration)
+            };
 
         } catch (error) {
-            logger.error('❌ Error in fast S3 scan:', error);
+            logger.error('❌ Error in streaming S3 scan:', error);
             throw error;
         }
     }
 
     /**
-     * Get yesterday's documents (most common use case)
-     * @returns {Promise<Array>}
+     * LEGACY METHOD - DEPRECATED: Use streamDocumentsSince instead
+     * Kept for backward compatibility but limited to prevent OOM
      */
-    async getYesterdaysDocuments() {
+    async getDocumentsModifiedSince(sinceDate, maxDocuments = 100) {
+        logger.warn('⚠️ DEPRECATED: getDocumentsModifiedSince() - use streamDocumentsSince() instead');
+        
+        const documents = [];
+        await this.streamDocumentsSince(sinceDate, null, async (doc) => {
+            if (documents.length < maxDocuments) {
+                documents.push(doc);
+            }
+        }, { maxObjects: maxDocuments * 10, timeoutSeconds: 60 });
+        
+        return documents.slice(0, maxDocuments);
+    }
+
+    /**
+     * STREAMING method for yesterday's documents
+     * @param {Function} onDocument - Callback for each document: (doc) => void
+     * @returns {Promise<Object>} Stats only
+     */
+    async streamYesterdaysDocuments(onDocument) {
         const yesterday = new Date();
         yesterday.setDate(yesterday.getDate() - 1);
-        yesterday.setHours(0, 0, 0, 0); // Start of yesterday
+        yesterday.setHours(0, 0, 0, 0);
+        
+        const endOfYesterday = new Date(yesterday);
+        endOfYesterday.setHours(23, 59, 59, 999);
 
-        logger.info(`📅 Getting documents for ${yesterday.toDateString()}`);
-        return await this.getDocumentsModifiedSince(yesterday);
+        logger.info(`📅 STREAMING yesterday's documents: ${yesterday.toDateString()}`);
+        return await this.streamDocumentsSince(yesterday, endOfYesterday, onDocument);
+    }
+
+    /**
+     * LEGACY - DEPRECATED: Use streamYesterdaysDocuments instead
+     */
+    async getYesterdaysDocuments() {
+        logger.warn('⚠️ DEPRECATED: getYesterdaysDocuments() - use streamYesterdaysDocuments() instead');
+        return await this.getDocumentsModifiedSince(
+            (() => {
+                const yesterday = new Date();
+                yesterday.setDate(yesterday.getDate() - 1);
+                yesterday.setHours(0, 0, 0, 0);
+                return yesterday;
+            })(),
+            100 // Hard limit for legacy callers
+        );
     }
 
     /**

@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 
 /**
- * Generate document register
+ * Generate document register - MEMORY SAFE VERSION
  * POST /api/document-register/generate
  * Body: { targetDate: '2026-01-21' } (optional)
  */
@@ -16,34 +16,40 @@ router.post('/generate', async (req, res) => {
     const { targetDate } = req.body;
 
     if (targetDate) {
-      logger.info(`📋 API request: Generate document register for ${targetDate}`);
+      logger.info(`📋 API request: STREAMING document register for ${targetDate}`);
     } else {
-      logger.info('📋 API request: Generate document register');
+      logger.info('📋 API request: STREAMING document register (yesterday)');
     }
 
-    const result = await documentRegisterService.generateRegister(false, targetDate ? new Date(targetDate) : null);
+    // Use the memory-safe streaming scheduler
+    const result = await documentRegisterScheduler.streamDailyRegisterToCSV({
+      date: targetDate,
+      csvPath: null // Will be auto-generated
+    });
 
     res.json({
       success: true,
       message: targetDate ?
-        `Document register generated successfully for ${targetDate}` :
-        'Document register generated successfully',
+        `Document register streamed successfully for ${targetDate}` :
+        'Document register streamed successfully',
       data: {
         totalDocuments: result.totalDocuments,
-        totalProjects: result.totalProjects,
-        processingTime: result.processingTime,
-        targetDate: result.targetDate,
-        outputs: result.outputs,
-        scanDate: result.targetDate || new Date().toISOString()
+        uniqueProjects: result.uniqueProjects,
+        processingTime: result.duration,
+        csvPath: result.csvPath,
+        method: 'streaming',
+        memoryFootprint: 'constant',
+        scanDate: targetDate || 'yesterday'
       }
     });
 
   } catch (error) {
-    logger.error('❌ Error generating document register:', error);
+    logger.error('❌ Error generating STREAMING document register:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to generate document register',
-      error: error.message
+      error: error.message,
+      suggestion: 'Use streaming CSV method for large datasets'
     });
   }
 });
