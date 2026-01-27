@@ -249,6 +249,7 @@ class S3Service {
   
   async _doListMainFolders() {
     try {
+      const now = Date.now(); // Define 'now' for cache expiry calculation
       logger.info('Attempting to list main folders from S3 bucket:', this.bucket);
 
       const params = {
