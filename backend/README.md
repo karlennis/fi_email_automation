@@ -50,6 +50,22 @@ A Node.js/Express API for detecting Further Information (FI) requests in plannin
    npm run dev
    ```
 
+## Health Check
+
+The API exposes a `/health` endpoint for monitoring and load balancer checks:
+
+- **Endpoint**: `GET /health`
+- **Response**: `200 OK` with JSON status
+- **Features**:
+  - No authentication required
+  - No rate limiting applied
+  - No database dependency
+  - Always returns quickly
+
+**For Render.com deployment**: Set health check path to `/health` in service settings.
+
+**IMPORTANT**: The health endpoint is registered BEFORE all middleware to prevent 429 rate limit errors that can cause service restarts.
+
 The server will start on `http://localhost:3000` (or your configured PORT).
 
 ## Environment Variables

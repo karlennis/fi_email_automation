@@ -56,11 +56,40 @@ if (process.env.NODE_ENV !== 'production') {
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Health check endpoint - MUST be first, before any middleware
+// This prevents Render health checks from being rate-limited (429 errors)
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
+// Monitor health check responses - log if ever non-200
+app.use((req, res, next) => {
+  if (req.path === '/health') {
+    const originalSend = res.send;
+    res.send = function(data) {
+      if (res.statusCode !== 200) {
+        logger.error(`🚨 CRITICAL: /health returned ${res.statusCode} - this will cause Render restarts!`, {
+          statusCode: res.statusCode,
+          headers: req.headers,
+          ip: req.ip
+        });
+      }
+      return originalSend.call(this, data);
+    };
+  }
+  next();
+});
+
 // Rate limiting
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.'
+  message: 'Too many requests from this IP, please try again later.',
+  skip: (req) => req.path === '/health' // Never rate limit health checks
 });
 
 // Middleware
@@ -104,15 +133,6 @@ app.use('/api/document-register', documentRegisterRoutes);
 app.use('/api/register-fi', registerFiRoutes);
 app.use('/api/document-scan', documentScanRoutes);
 app.use('/api/runs', runsRoutes);
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({
-    status: 'OK',
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV
-  });
-});
 
 // Error handling middleware
 app.use((err, req, res, next) => {
