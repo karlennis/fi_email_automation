@@ -3,6 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { AuthService } from './auth.service';
+import { environment } from '../../environments/environment';
 
 export interface Customer {
   _id: string;
@@ -94,7 +95,7 @@ export interface CustomerResponse {
   providedIn: 'root'
 })
 export class CustomerService {
-  private baseUrl = 'http://localhost:3000/api/customers';
+  private baseUrl = `${environment.apiUrl}/api/customers`;
 
   constructor(
     private http: HttpClient,

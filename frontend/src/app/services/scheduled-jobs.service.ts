@@ -1,6 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
+import { environment } from '../../environments/environment';
 
 export interface ScheduledJob {
   _id: string;
@@ -139,7 +140,7 @@ export interface ApiResponse<T> {
   providedIn: 'root'
 })
 export class ScheduledJobsService {
-  private apiUrl = 'http://localhost:3000/api/scheduled-jobs';
+  private apiUrl = `${environment.apiUrl}/api/scheduled-jobs`;
 
   constructor(private http: HttpClient) {}
 
