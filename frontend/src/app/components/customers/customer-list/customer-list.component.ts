@@ -5,6 +5,7 @@ import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { CustomerService, Customer, CustomerHistory } from '../../../services/customer.service';
 import { ToastrService } from 'ngx-toastr';
+import { environment } from '../../../../environments/environment';
 
 @Component({
   selector: 'app-customer-list',
@@ -1204,7 +1205,7 @@ export class CustomerListComponent implements OnInit {
     private http: HttpClient
   ) {}
 
-  private baseUrl = 'http://localhost:3000/api/reports'; // Backend API URL
+  private baseUrl = '${environment.apiUrl}/api/reports'; // Backend API URL
 
   ngOnInit() {
     this.loadCustomers();
@@ -1545,3 +1546,4 @@ export class CustomerListComponent implements OnInit {
     });
   }
 }
+

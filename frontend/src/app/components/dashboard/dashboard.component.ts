@@ -4,6 +4,7 @@ import { RouterModule } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
 import { AuthService, User } from '../../services/auth.service';
 import { CustomerService } from '../../services/customer.service';
+import { environment } from '../../../environments/environment';
 
 @Component({
   selector: 'app-dashboard',
@@ -363,7 +364,7 @@ export class DashboardComponent implements OnInit {
 
   private loadStats() {
     // Load all statistics from the scheduled jobs dashboard API in one call
-    this.http.get<any>('http://localhost:3000/api/scheduled-jobs/dashboard/stats').subscribe({
+    this.http.get<any>('${environment.apiUrl}/api/scheduled-jobs/dashboard/stats').subscribe({
       next: (response: any) => {
         console.log('Complete dashboard stats response:', response);
         if (response.success && response.data) {
@@ -410,7 +411,7 @@ export class DashboardComponent implements OnInit {
 
   private loadDocumentStats() {
     // Get document processing statistics from scheduled jobs
-    this.http.get<any>('http://localhost:3000/api/scheduled-jobs/dashboard/stats').subscribe({
+    this.http.get<any>('${environment.apiUrl}/api/scheduled-jobs/dashboard/stats').subscribe({
       next: (response: any) => {
         console.log('Document stats response:', response);
         if (response.success && response.data) {
@@ -421,7 +422,7 @@ export class DashboardComponent implements OnInit {
       error: (error: any) => {
         console.error('Error loading scheduled job document stats:', error);
         // Fallback to document cache stats
-        this.http.get<any>('http://localhost:3000/api/documents/cache-stats').subscribe({
+        this.http.get<any>('${environment.apiUrl}/api/documents/cache-stats').subscribe({
           next: (response: any) => {
             if (response.success && response.data) {
               this.stats.totalDocuments = response.data.totalFiles || 0;
@@ -435,7 +436,7 @@ export class DashboardComponent implements OnInit {
 
   private loadEmailStats() {
     // Get email statistics from scheduled jobs dashboard stats
-    this.http.get<any>('http://localhost:3000/api/scheduled-jobs/dashboard/stats').subscribe({
+    this.http.get<any>('${environment.apiUrl}/api/scheduled-jobs/dashboard/stats').subscribe({
       next: (response: any) => {
         console.log('Dashboard stats response:', response);
         if (response.success && response.data) {
@@ -462,7 +463,7 @@ export class DashboardComponent implements OnInit {
 
   private loadFIMatchStats() {
     // Get FI match statistics from scheduled jobs dashboard stats
-    this.http.get<any>('http://localhost:3000/api/scheduled-jobs/dashboard/stats').subscribe({
+    this.http.get<any>('${environment.apiUrl}/api/scheduled-jobs/dashboard/stats').subscribe({
       next: (response: any) => {
         console.log('FI Match stats response:', response);
         if (response.success && response.data) {
