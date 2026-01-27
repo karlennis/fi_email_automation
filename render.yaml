@@ -64,7 +64,7 @@ services:
     region: frankfurt
     plan: starter
     buildCommand: cd frontend && npm install --include=dev && npm run build
-    startCommand: cd frontend && npm run serve:ssr:frontend
+    startCommand: cd frontend && npx serve -s dist/frontend/browser -l 4000
     envVars:
       - key: NODE_ENV
         value: production
