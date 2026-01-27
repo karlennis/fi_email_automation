@@ -65,14 +65,13 @@ class FastS3Scanner {
                                     !fileName.startsWith('.') &&
                                     fileName.includes('.') &&
                                     fileName.toLowerCase() !== 'docfiles.txt') {
-                                    // ULTRA-LIGHTWEIGHT: Only store essential fields
+                                    // ULTRA-LIGHTWEIGHT: Only store essential fields (removed fileType to save memory)
                                     documents.push({
                                         projectId,
                                         fileName,
                                         filePath: object.Key,
                                         lastModified: object.LastModified.toISOString(),
                                         size: object.Size || 0
-                                        // Removed fileType calculation to save memory
                                     });
 
                                     // Check if we've reached the limit
@@ -95,7 +94,8 @@ class FastS3Scanner {
                 // Check if there are more objects to process
                 continuationToken = response.NextContinuationToken;
                 hasMore = hasMore && !!continuationToken;
-STOP EARLY if we're taking too long (prevent runaway scans)
+
+                // STOP EARLY if we're taking too long (prevent runaway scans)
                 const elapsed = (Date.now() - startTime) / 1000;
                 if (elapsed > 30) {
                     logger.warn(`⏱️ Stopping scan after 30 seconds (scanned ${totalScanned} objects)`);
@@ -109,8 +109,7 @@ STOP EARLY if we're taking too long (prevent runaway scans)
                 }
                 
                 // Force garbage collection hint every 500 scanned objects
-                if (totalScanned % 5ection hint every 1000 scanned objects
-                if (totalScanned % 1000 === 0 && global.gc) {
+                if (totalScanned % 500 === 0 && global.gc) {
                     global.gc();
                 }
             }
