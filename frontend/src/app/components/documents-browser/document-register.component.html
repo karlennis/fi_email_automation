@@ -1,0 +1,131 @@
+<div class="document-register-container">
+  <!-- Header -->
+  <div class="register-header">
+    <div class="header-info">
+      <h2>📋 Document Register</h2>
+      <p>Recently updated documents in the system</p>
+    </div>
+
+    <!-- Date Selector -->
+    <div class="date-selector">
+      <label>Select Date:</label>
+      <input
+        type="date"
+        [(ngModel)]="selectedDate"
+        (change)="onDateChange()"
+        class="date-input">
+      <button class="refresh-btn" (click)="loadDocuments()" [disabled]="isLoading">
+        <span *ngIf="!isLoading">🔄</span>
+        <span *ngIf="isLoading">⏳</span>
+      </button>
+      <button class="run-scanner-btn" (click)="runScanner()" [disabled]="isScanning">
+        <span *ngIf="!isScanning">🚀 Run Scanner</span>
+        <span *ngIf="isScanning">⏳ Scanning...</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Scanner Status Message -->
+  <div *ngIf="scanMessage" class="scanner-message">
+    {{ scanMessage }}
+  </div>
+
+  <!-- Statistics Cards -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-value">{{ stats.totalDocuments }}</div>
+      <div class="stat-label">Total Documents</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{ stats.uniqueProjects }}</div>
+      <div class="stat-label">Unique Projects</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{ stats.todayDocuments }}</div>
+      <div class="stat-label">Today's Updates</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{ stats.yesterdayDocuments }}</div>
+      <div class="stat-label">Yesterday's Updates</div>
+    </div>
+  </div>
+
+  <!-- Search Bar -->
+  <div class="search-bar">
+    <input
+      type="text"
+      [(ngModel)]="searchTerm"
+      (ngModelChange)="onSearchChange()"
+      placeholder="🔍 Search by file name or project ID..."
+      class="search-input">
+    <span class="result-count">{{ filteredDocuments.length }} documents (showing {{ displayedDocuments.length }})</span>
+  </div>
+
+  <!-- Loading State -->
+  <div *ngIf="isLoading" class="loading-state">
+    <div class="spinner"></div>
+    <p>Loading documents...</p>
+  </div>
+
+  <!-- Documents Table -->
+  <div *ngIf="!isLoading" class="documents-table">
+    <div class="table-header">
+      <div class="col-file">File Name</div>
+      <div class="col-project">Project ID</div>
+      <div class="col-type">Type</div>
+      <div class="col-size">Size</div>
+      <div class="col-modified">Last Modified</div>
+    </div>
+
+    <div class="table-body">
+      <div *ngFor="let doc of displayedDocuments" class="table-row">
+        <div class="col-file">
+          <div class="file-info">
+            <span class="file-icon">📄</span>
+            <span class="file-name" [title]="doc.fileName">{{ doc.fileName }}</span>
+          </div>
+        </div>
+        <div class="col-project">
+          <span class="project-badge">{{ doc.projectId }}</span>
+        </div>
+        <div class="col-type">
+          <span class="file-type-badge" [ngClass]="getFileTypeColor(doc.fileName)">
+            {{ getFileExtension(doc.fileName) }}
+          </span>
+        </div>
+        <div class="col-size">{{ formatSize(doc.size) }}</div>
+        <div class="col-modified">{{ formatDate(doc.lastModified) }}</div>
+      </div>
+    </div>
+
+    <!-- Pagination Controls -->
+    <div *ngIf="filteredDocuments.length > 0" class="pagination-controls">
+      <button
+        class="btn btn-secondary"
+        (click)="showLess()"
+        [disabled]="!hasPrevious">
+        ← Previous {{ documentsPerPage }}
+      </button>
+      <span class="page-info">
+        Page {{ currentPage }} of {{ totalPages }} ({{ filteredDocuments.length }} total)
+      </span>
+      <button
+        class="btn btn-secondary"
+        (click)="loadMore()"
+        [disabled]="!hasMore">
+        Next {{ documentsPerPage }} →
+      </button>
+    </div>
+
+    <!-- Empty State -->
+    <div *ngIf="filteredDocuments.length === 0" class="empty-state">
+      <div class="empty-icon">📭</div>
+      <h3>No documents found for {{ selectedDate }}</h3>
+      <p>The document register shows documents updated on specific dates.</p>
+      <p class="hint">💡 Tip: Try selecting October 24, 2025 to see recent documents.</p>
+      <button class="quick-date-btn" (click)="selectedDate = '2025-10-24'; onDateChange()">
+        View Oct 24, 2025
+      </button>
+    </div>
+  </div>
+</div>

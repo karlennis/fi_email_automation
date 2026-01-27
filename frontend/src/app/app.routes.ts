@@ -52,6 +52,11 @@ export const routes: Routes = [
     canActivate: [AuthGuard, AdminGuard]
   },
   {
+    path: 'document-scan',
+    loadComponent: () => import('./components/document-scan/document-scan.component').then(m => m.DocumentScanComponent),
+    canActivate: [AuthGuard, AdminGuard]
+  },
+  {
     path: '**',
     redirectTo: 'dashboard'   // <-- no leading slash
   }

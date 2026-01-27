@@ -39,6 +39,13 @@ import { ToastrService } from 'ngx-toastr';
               <i class="icon-calendar"></i>
               Jobs
             </a>
+            <a routerLink="/document-scan"
+               routerLinkActive="active"
+               class="nav-link"
+               *ngIf="currentUser?.permissions?.canManageUsers">
+              <i class="icon-scan"></i>
+              Document Scan
+            </a>
             <a routerLink="/users"
                routerLinkActive="active"
                class="nav-link"
@@ -181,6 +188,7 @@ import { ToastrService } from 'ngx-toastr';
     .icon-calendar::before { content: ""; }
     .icon-list::before { content: ""; }
     .icon-users::before { content: ""; }
+    .icon-scan::before { content: ""; }
     .icon-users-cog::before { content: ""; }
     .icon-logout::before { content: ""; }
   `]

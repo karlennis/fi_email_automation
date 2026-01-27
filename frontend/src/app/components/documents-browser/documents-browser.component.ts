@@ -6,6 +6,7 @@ import { ToastrService } from 'ngx-toastr';
 import { CustomerService } from '../../services/customer.service';
 import { ApiFilteringService, FilteringParams, DropdownData, ProjectPreview } from '../../services/api-filtering.service';
 import { CreateJobModalComponent } from '../jobs/create-job-modal.component';
+import { DocumentRegisterComponent } from './document-register.component';
 import { Router } from '@angular/router';
 
 interface Drive {
@@ -56,7 +57,7 @@ interface AWSProject {
 @Component({
   selector: 'app-documents-browser',
   standalone: true,
-  imports: [CommonModule, FormsModule, CreateJobModalComponent],
+  imports: [CommonModule, FormsModule, CreateJobModalComponent, DocumentRegisterComponent],
   template: `
     <div class="documents-container">
       <div class="documents-header">
@@ -79,6 +80,13 @@ interface AWSProject {
           (click)="setActiveTab('local')"
         >
           <i class="icon-folder"></i> Local Documents
+        </button>
+        <button
+          class="tab-button"
+          [class.active]="activeTab === 'register'"
+          (click)="setActiveTab('register')"
+        >
+          <i class="icon-list"></i> Document Register
         </button>
       </div>
 
@@ -885,6 +893,11 @@ interface AWSProject {
           <button class="btn btn-primary" (click)="addNewCustomer()">Add Customer</button>
         </div>
       </div>
+    </div>
+
+    <!-- Document Register Tab -->
+    <div class="tab-content" *ngIf="activeTab === 'register'">
+      <app-document-register></app-document-register>
     </div>
 
     <!-- Create Job Modal -->
@@ -2164,7 +2177,7 @@ interface AWSProject {
   `]
 })
 export class DocumentsBrowserComponent implements OnInit {
-  activeTab: 'aws' | 'local' = 'aws';
+  activeTab: 'aws' | 'local' | 'register' = 'aws';
 
   // AWS S3 properties
   awsFolders: AWSFolder[] = [];
@@ -2243,7 +2256,7 @@ export class DocumentsBrowserComponent implements OnInit {
     this.loadDropdownData();
   }
 
-  setActiveTab(tab: 'aws' | 'local') {
+  setActiveTab(tab: 'aws' | 'local' | 'register') {
     this.activeTab = tab;
     if (tab === 'local' && this.availableDrives.length === 0) {
       this.loadAvailableDrives();

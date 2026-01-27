@@ -22,6 +22,12 @@ const apiFilteringRoutes = require('./routes/api-filtering');
 const testRoutes = require('./routes/test');
 const reportsRoutes = require('./routes/reports');
 const documentRegisterRoutes = require('./routes/document-register');
+const registerFiRoutes = require('./routes/register-fi');
+const documentScanRoutes = require('./routes/document-scan');
+
+// Services and schedulers
+const documentRegisterScheduler = require('./services/documentRegisterScheduler');
+const scanJobProcessor = require('./services/scanJobProcessor');
 
 // Configure logger
 const logger = winston.createLogger({
@@ -61,7 +67,8 @@ app.use(cors({
   origin: [
     process.env.FRONTEND_URL || 'http://localhost:4200',
     'http://localhost:4200',
-    'http://127.0.0.1:4200'
+    'http://127.0.0.1:4200',
+    'https://fi-email-automation-frontend.onrender.com'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -91,6 +98,8 @@ app.use('/api/filtering', apiFilteringRoutes);
 app.use('/api/test', testRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/document-register', documentRegisterRoutes);
+app.use('/api/register-fi', registerFiRoutes);
+app.use('/api/document-scan', documentScanRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -134,6 +143,22 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/fi-email-
 })
 .then(() => {
   logger.info('Connected to MongoDB');
+
+  // Initialize document register scheduler after DB connection
+  try {
+    documentRegisterScheduler.initialize();
+    logger.info('Document register scheduler initialized successfully');
+  } catch (error) {
+    logger.error('Failed to initialize document register scheduler:', error);
+  }
+
+  // Initialize scan job processor
+  try {
+    scanJobProcessor.initialize();
+    logger.info('Scan job processor initialized successfully');
+  } catch (error) {
+    logger.error('Failed to initialize scan job processor:', error);
+  }
 })
 .catch((err) => {
   logger.error('MongoDB connection error:', err);

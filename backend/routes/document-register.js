@@ -2,29 +2,39 @@ const express = require('express');
 const router = express.Router();
 const logger = require('../utils/logger');
 const documentRegisterService = require('../services/documentRegisterService');
+const documentRegisterScheduler = require('../services/documentRegisterScheduler');
 const fs = require('fs');
 const path = require('path');
 
 /**
  * Generate document register
  * POST /api/document-register/generate
+ * Body: { targetDate: '2026-01-21' } (optional)
  */
 router.post('/generate', async (req, res) => {
   try {
-    logger.info('📋 API request: Generate document register');
+    const { targetDate } = req.body;
 
-    const result = await documentRegisterService.generateRegister();
+    if (targetDate) {
+      logger.info(`📋 API request: Generate document register for ${targetDate}`);
+    } else {
+      logger.info('📋 API request: Generate document register');
+    }
+
+    const result = await documentRegisterService.generateRegister(false, targetDate ? new Date(targetDate) : null);
 
     res.json({
       success: true,
-      message: 'Document register generated successfully',
+      message: targetDate ?
+        `Document register generated successfully for ${targetDate}` :
+        'Document register generated successfully',
       data: {
         totalDocuments: result.totalDocuments,
         totalProjects: result.totalProjects,
         processingTime: result.processingTime,
+        targetDate: result.targetDate,
         outputs: result.outputs,
-        topProjects: result.topProjects,
-        scanDate: result.metadata.lastScanDate
+        scanDate: result.targetDate || new Date().toISOString()
       }
     });
 
@@ -199,4 +209,108 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+/**
+ * Get documents by date
+ * GET /api/document-register/documents?date=2026-01-22
+ */
+router.get('/documents', async (req, res) => {
+  try {
+    const { date } = req.query;
+
+    if (!date) {
+      return res.status(400).json({
+        success: false,
+        message: 'Date parameter is required'
+      });
+    }
+
+    logger.info(`📋 API request: Get documents for date ${date}`);
+
+    const targetDate = new Date(date);
+    const nextDay = new Date(targetDate);
+    nextDay.setDate(nextDay.getDate() + 1);
+
+    logger.info(`Calling getDocumentsByDateRange with ${targetDate.toISOString()} to ${nextDay.toISOString()}`);
+
+    const documents = await documentRegisterService.getDocumentsByDateRange(
+      targetDate,
+      nextDay
+    );
+
+    logger.info(`Found ${documents.length} documents for date ${date}`);
+
+    res.json({
+      success: true,
+      data: {
+        documents,
+        count: documents.length,
+        date: targetDate
+      }
+    });
+
+  } catch (error) {
+    logger.error('❌ Error getting documents by date:', error);
+    logger.error('Stack trace:', error.stack);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get documents',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Get scheduler status
+ * GET /api/document-register/scheduler/status
+ */
+router.get('/scheduler/status', async (req, res) => {
+  try {
+    const status = documentRegisterScheduler.getStatus();
+
+    res.json({
+      success: true,
+      data: status
+    });
+
+  } catch (error) {
+    logger.error('❌ Error getting scheduler status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get scheduler status',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Manually trigger document register generation
+ * POST /api/document-register/scheduler/run
+ */
+router.post('/scheduler/run', async (req, res) => {
+  try {
+    logger.info('📋 API request: Manual document register generation');
+
+    const result = await documentRegisterScheduler.runManual();
+
+    res.json({
+      success: true,
+      message: 'Document register generation triggered successfully',
+      data: {
+        totalDocuments: result.totalDocuments,
+        csvPath: result.csvPath,
+        xlsxPath: result.xlsxPath
+      }
+    });
+
+  } catch (error) {
+    logger.error('❌ Error manually running document register:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to run document register generation',
+      error: error.message
+    });
+  }
+});
+
 module.exports = router;
+

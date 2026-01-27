@@ -4,6 +4,9 @@
  * Command-line interface for document register operations
  */
 
+// Load environment variables
+require('dotenv').config({ path: require('path').join(__dirname, '../backend/.env') });
+
 const documentRegisterService = require('../backend/services/documentRegisterService');
 const logger = require('../backend/utils/logger');
 
@@ -20,6 +23,10 @@ async function main() {
 
     case 'count':
       await showCount();
+      break;
+
+    case 'projects':
+      await showProjects();
       break;
 
     case 'status':
@@ -131,6 +138,44 @@ async function showStats() {
   }
 }
 
+async function showProjects() {
+  try {
+    console.log('📁 Listing first 50 projects (most recent first) in planning-docs...\n');
+
+    const projects = await documentRegisterService.getFirst50Projects();
+
+    console.log('✅ Projects Retrieved!\n');
+    console.log(`📊 Showing first ${projects.length} projects (sorted by most recent documents):\n`);
+
+    // Create comma-separated list
+    const projectIds = projects.map(project => project.projectId);
+    console.log('📋 Project IDs (comma-separated):');
+    console.log(projectIds.join(', '));
+    console.log('\n');
+
+    // Also show detailed list
+    console.log('📋 Detailed Project List:\n');
+    projects.forEach((project, index) => {
+      console.log(`   ${(index + 1).toString().padStart(2, ' ')}. ${project.projectId}`);
+      if (project.documentCount !== undefined) {
+        console.log(`       📄 ${project.documentCount} documents`);
+      }
+      if (project.lastUpdated) {
+        const date = new Date(project.lastUpdated).toLocaleDateString();
+        const time = new Date(project.lastUpdated).toLocaleTimeString();
+        console.log(`       📅 Last updated: ${date} ${time}`);
+      }
+      console.log('');
+    });
+
+    console.log(`💡 Total projects found: ${projects.length}`);
+    console.log('\n');
+  } catch (error) {
+    console.error('❌ Error listing projects:', error.message);
+    process.exit(1);
+  }
+}
+
 async function showCount() {
   try {
     console.log('🔢 Counting projects and documents in planning-docs...\n');
@@ -154,11 +199,13 @@ function showHelp() {
   console.log('Commands:');
   console.log('  generate, scan  - Generate document register (scan all projects)');
   console.log('  count           - Quick count of projects and documents');
+  console.log('  projects        - List first 50 projects with details');
   console.log('  status          - Show current register status');
   console.log('  stats           - Show detailed statistics');
   console.log('  help            - Show this help message');
   console.log('\nExamples:');
   console.log('  node index.js count');
+  console.log('  node index.js projects');
   console.log('  node index.js generate');
   console.log('  node index.js status');
   console.log('  node index.js stats');

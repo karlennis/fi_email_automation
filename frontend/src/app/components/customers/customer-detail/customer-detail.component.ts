@@ -2,8 +2,10 @@ import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { FormBuilder, FormGroup, Validators, ReactiveFormsModule } from '@angular/forms';
+import { HttpClient } from '@angular/common/http';
 import { CustomerService, Customer } from '../../../services/customer.service';
 import { ToastrService } from 'ngx-toastr';
+import { environment } from '../../../../environments/environment';
 
 @Component({
   selector: 'app-customer-detail',
@@ -214,6 +216,80 @@ import { ToastrService } from 'ngx-toastr';
               <p>This customer has no active subscriptions.</p>
             </div>
           </ng-template>
+        </div>
+
+        <div class="detail-section">
+          <div class="section-header">
+            <h2>📄 Document Scan Jobs</h2>
+            <button class="btn btn-secondary btn-sm" (click)="showAddJobModal = true">
+              ➕ Add to Job
+            </button>
+          </div>
+
+          <div class="scan-jobs-content" *ngIf="customerScanJobs && customerScanJobs.length > 0; else noScanJobs">
+            <div class="scan-job-list">
+              <div class="scan-job-item" *ngFor="let job of customerScanJobs">
+                <div class="job-info">
+                  <span class="job-icon">{{ job.icon }}</span>
+                  <div class="job-details">
+                    <span class="job-name">{{ job.name }}</span>
+                    <span class="job-type">{{ job.documentType }}</span>
+                  </div>
+                </div>
+                <div class="job-status">
+                  <span class="status-badge" [ngClass]="getJobStatusClass(job.status)">
+                    {{ job.status }}
+                  </span>
+                  <button
+                    class="remove-job-btn"
+                    (click)="removeFromJob(job._id)"
+                    [disabled]="isUpdating"
+                    title="Remove from job"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <ng-template #noScanJobs>
+            <div class="no-subscriptions">
+              <p>This customer is not subscribed to any document scan jobs.</p>
+              <button class="btn btn-primary btn-sm" (click)="showAddJobModal = true">
+                Add to First Job
+              </button>
+            </div>
+          </ng-template>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add to Job Modal -->
+    <div class="modal" *ngIf="showAddJobModal" (click)="showAddJobModal = false">
+      <div class="modal-content" (click)="$event.stopPropagation()">
+        <div class="modal-header">
+          <h3>Add Customer to Scan Job</h3>
+          <button class="modal-close" (click)="showAddJobModal = false">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="job-selection-list">
+            <div
+              *ngFor="let job of availableScanJobs"
+              class="job-selection-item"
+              (click)="addToJob(job._id)"
+            >
+              <span class="job-icon">{{ job.icon }}</span>
+              <div class="job-info">
+                <span class="job-name">{{ job.name }}</span>
+                <span class="job-type">{{ job.documentType }} • {{ job.status }}</span>
+              </div>
+              <button class="btn btn-primary btn-sm">Add</button>
+            </div>
+            <div *ngIf="availableScanJobs.length === 0" class="no-jobs">
+              <p>All active jobs already include this customer or no jobs are available.</p>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -482,6 +558,184 @@ import { ToastrService } from 'ngx-toastr';
       color: #666;
     }
 
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .btn-sm {
+      padding: 0.5rem 1rem;
+      font-size: 0.85rem;
+    }
+
+    .scan-job-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .scan-job-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem;
+      background: #f9fafb;
+      border-radius: 8px;
+      transition: background 0.2s;
+    }
+
+    .scan-job-item:hover {
+      background: #f3f4f6;
+    }
+
+    .job-info {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .job-icon {
+      font-size: 1.5rem;
+    }
+
+    .job-details {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .job-name {
+      font-weight: 600;
+      color: #111827;
+    }
+
+    .job-type {
+      font-size: 0.85rem;
+      color: #6b7280;
+      text-transform: capitalize;
+    }
+
+    .job-status {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .job-active {
+      background: #d1fae5;
+      color: #065f46;
+    }
+
+    .job-paused {
+      background: #fed7aa;
+      color: #c2410c;
+    }
+
+    .job-stopped {
+      background: #fecaca;
+      color: #991b1b;
+    }
+
+    .remove-job-btn {
+      background: none;
+      border: none;
+      color: #dc2626;
+      font-size: 1.5rem;
+      cursor: pointer;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      transition: background 0.2s;
+    }
+
+    .remove-job-btn:hover:not(:disabled) {
+      background: #fee2e2;
+    }
+
+    .remove-job-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .modal-content {
+      background: white;
+      border-radius: 12px;
+      width: 90%;
+      max-width: 600px;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+
+    .modal-header {
+      padding: 1.5rem;
+      border-bottom: 1px solid #e5e7eb;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .modal-header h3 {
+      margin: 0;
+      color: #111827;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      font-size: 1.5rem;
+      cursor: pointer;
+      color: #6b7280;
+    }
+
+    .modal-close:hover {
+      color: #111827;
+    }
+
+    .modal-body {
+      padding: 1.5rem;
+    }
+
+    .job-selection-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .job-selection-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 1rem;
+      background: #f9fafb;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .job-selection-item:hover {
+      background: #f3f4f6;
+    }
+
+    .no-jobs {
+      text-align: center;
+      padding: 2rem;
+      color: #6b7280;
+    }
+
     .loading,
     .error {
       text-align: center;
@@ -604,12 +858,19 @@ export class CustomerDetailComponent implements OnInit {
   editForm: FormGroup;
   originalCustomerData: Partial<Customer> = {};
 
+  // Scan jobs
+  customerScanJobs: any[] = [];
+  availableScanJobs: any[] = [];
+  showAddJobModal = false;
+  private apiUrl = `${environment.apiUrl}/api/document-scan`;
+
   constructor(
     private route: ActivatedRoute,
     private router: Router,
     private customerService: CustomerService,
     private toastr: ToastrService,
-    private formBuilder: FormBuilder
+    private formBuilder: FormBuilder,
+    private http: HttpClient
   ) {
     this.editForm = this.formBuilder.group({
       name: ['', [Validators.required, Validators.minLength(2), Validators.maxLength(100)]],
@@ -623,6 +884,7 @@ export class CustomerDetailComponent implements OnInit {
     this.customerId = this.route.snapshot.paramMap.get('id');
     if (this.customerId) {
       this.loadCustomer(this.customerId);
+      this.loadScanJobs();
     } else {
       this.error = 'No customer ID provided';
     }
@@ -764,5 +1026,96 @@ export class CustomerDetailComponent implements OnInit {
   formatDate(date: Date | string): string {
     const d = new Date(date);
     return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  async loadScanJobs() {
+    if (!this.customerId) return;
+
+    try {
+      const response: any = await this.http.get(`${this.apiUrl}/jobs`).toPromise();
+      const allJobs = response.jobs || [];
+
+      // Get document types for icons
+      const typesResponse: any = await this.http.get(`${this.apiUrl}/document-types`).toPromise();
+      const documentTypes = typesResponse.documentTypes || [];
+
+      // Find jobs this customer is in
+      this.customerScanJobs = allJobs
+        .filter((job: any) =>
+          job.customers?.some((c: any) => c.customerId === this.customerId)
+        )
+        .map((job: any) => {
+          const docType = documentTypes.find((dt: any) => dt.value === job.documentType);
+          return {
+            ...job,
+            icon: docType?.icon || '📄'
+          };
+        });
+
+      // Find jobs this customer is NOT in (available to add)
+      this.availableScanJobs = allJobs
+        .filter((job: any) =>
+          job.status === 'ACTIVE' &&
+          !job.customers?.some((c: any) => c.customerId === this.customerId)
+        )
+        .map((job: any) => {
+          const docType = documentTypes.find((dt: any) => dt.value === job.documentType);
+          return {
+            ...job,
+            icon: docType?.icon || '📄'
+          };
+        });
+    } catch (err: any) {
+      console.error('Error loading scan jobs:', err);
+    }
+  }
+
+  getJobStatusClass(status: string): string {
+    switch (status) {
+      case 'ACTIVE': return 'job-active';
+      case 'PAUSED': return 'job-paused';
+      case 'STOPPED': return 'job-stopped';
+      default: return '';
+    }
+  }
+
+  async addToJob(jobId: string) {
+    if (!this.customerId || !this.customer) return;
+
+    this.isUpdating = true;
+    try {
+      await this.http.post(`${this.apiUrl}/jobs/${jobId}/customers`, {
+        customers: [{
+          customerId: this.customerId,
+          email: this.customer.email,
+          company: this.customer.company || this.customer.name
+        }]
+      }).toPromise();
+
+      this.toastr.success('Customer added to job successfully');
+      this.showAddJobModal = false;
+      await this.loadScanJobs();
+    } catch (err: any) {
+      this.toastr.error('Failed to add customer to job');
+      console.error('Error adding to job:', err);
+    } finally {
+      this.isUpdating = false;
+    }
+  }
+
+  async removeFromJob(jobId: string) {
+    if (!this.customerId || !confirm('Remove this customer from the scan job?')) return;
+
+    this.isUpdating = true;
+    try {
+      await this.http.delete(`${this.apiUrl}/jobs/${jobId}/customers/${this.customerId}`).toPromise();
+      this.toastr.success('Customer removed from job successfully');
+      await this.loadScanJobs();
+    } catch (err: any) {
+      this.toastr.error('Failed to remove customer from job');
+      console.error('Error removing from job:', err);
+    } finally {
+      this.isUpdating = false;
+    }
   }
 }

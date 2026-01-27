@@ -12,7 +12,7 @@ const scheduledJobSchema = new mongoose.Schema({
   // Job type and configuration
   jobType: {
     type: String,
-    enum: ['REPORT_GENERATION', 'EMAIL_BATCH', 'FI_DETECTION'],
+    enum: ['REPORT_GENERATION', 'EMAIL_BATCH', 'FI_DETECTION', 'REGISTER_ACOUSTIC_SCAN'],
     required: true
   },
 
@@ -127,6 +127,30 @@ const scheduledJobSchema = new mongoose.Schema({
     attachReports: {
       type: Boolean,
       default: true
+    },
+    // Register-based acoustic scan configuration
+    registerScan: {
+      confidenceThreshold: {
+        type: Number,
+        min: 0,
+        max: 1,
+        default: 0.8
+      },
+      reviewThreshold: {
+        type: Number,
+        min: 0,
+        max: 1,
+        default: 0.5
+      },
+      autoProcess: {
+        type: Boolean,
+        default: true
+      },
+      checkpointTimestamp: Date,
+      enableVisionAPI: {
+        type: Boolean,
+        default: true
+      }
     }
   },
 

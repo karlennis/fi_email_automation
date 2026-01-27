@@ -10,6 +10,7 @@ const customerSchema = Joi.object({
   email: Joi.string().email().required().lowercase().trim(),
   company: Joi.string().trim().max(200),
   phone: Joi.string().trim().max(20),
+  projectId: Joi.string().trim().uppercase().max(50),
   reportTypes: Joi.array().items(
     Joi.string().valid('acoustic', 'transport', 'ecological', 'flood', 'heritage', 'arboricultural', 'waste', 'lighting')
   ).min(1).required(),
@@ -24,6 +25,7 @@ const updateCustomerSchema = Joi.object({
   name: Joi.string().trim().min(2).max(100),
   company: Joi.string().trim().max(200),
   phone: Joi.string().trim().max(20),
+  projectId: Joi.string().trim().uppercase().max(50),
   reportTypes: Joi.array().items(
     Joi.string().valid('acoustic', 'transport', 'ecological', 'flood', 'heritage', 'arboricultural', 'waste', 'lighting')
   ).min(1),

@@ -1,0 +1,340 @@
+<div class="document-scan-container">
+  <div class="header">
+    <div class="header-content">
+      <h1>📄 Document Scan Jobs</h1>
+      <p>Create automated scan jobs to detect specific document types and notify customers</p>
+    </div>
+    <button class="btn btn-primary" (click)="openCreateModal()">
+      <span class="btn-icon">➕</span>
+      Create Job
+    </button>
+  </div>
+
+  <!-- Document Register Section -->
+  <div class="register-section">
+    <div class="register-header">
+      <h3>📚 Document Register</h3>
+      <p>Generate document metadata for specific dates before running scans</p>
+    </div>
+    <div class="register-controls">
+      <div class="form-group-inline">
+        <label for="registerDate">Date:</label>
+        <input
+          type="date"
+          id="registerDate"
+          [(ngModel)]="registerDate"
+          [disabled]="generatingRegister"
+          class="form-control"
+        />
+      </div>
+      <button
+        class="btn btn-success"
+        (click)="generateRegister()"
+        [disabled]="generatingRegister || !registerDate"
+      >
+        <span *ngIf="!generatingRegister">🔄 Generate Register</span>
+        <span *ngIf="generatingRegister">⏳ Generating...</span>
+      </button>
+    </div>
+    <div *ngIf="registerStatus" class="register-status">
+      <span class="status-icon">{{ registerStatus.success ? '✅' : '❌' }}</span>
+      {{ registerStatus.message }}
+      <span *ngIf="registerStatus.success && registerStatus.data" class="status-details">
+        ({{ (registerStatus.data.totalDocuments || 0).toLocaleString() }} docs,
+        {{ (registerStatus.data.totalProjects || 0).toLocaleString() }} projects in
+        {{ registerStatus.data.processingTime || 'N/A' }} min)
+      </span>
+    </div>
+  </div>
+
+  <!-- Messages -->
+  <div *ngIf="error" class="alert alert-error">
+    <span class="alert-icon">⚠️</span>
+    {{ error }}
+    <button class="alert-close" (click)="error = null">×</button>
+  </div>
+
+  <div *ngIf="successMessage" class="alert alert-success">
+    <span class="alert-icon">✓</span>
+    {{ successMessage }}
+  </div>
+
+  <!-- Jobs List -->
+  <div *ngIf="loading && jobs.length === 0" class="loading">
+    <div class="spinner"></div>
+    <p>Loading jobs...</p>
+  </div>
+
+  <div *ngIf="!loading && jobs.length === 0" class="empty-state">
+    <div class="empty-icon">📋</div>
+    <h3>No scan jobs yet</h3>
+    <p>Create your first document scan job to start automating FI detection</p>
+    <button class="btn btn-primary" (click)="openCreateModal()">Create First Job</button>
+  </div>
+
+  <div class="jobs-grid" *ngIf="jobs.length > 0">
+    <div class="job-card" *ngFor="let job of jobs">
+      <div class="job-header">
+        <div class="job-title">
+          <span class="job-icon">{{ getDocumentTypeIcon(job.documentType) }}</span>
+          <div>
+            <h3>{{ job.name }}</h3>
+            <span class="job-type">{{ getDocumentTypeLabel(job.documentType) }}</span>
+          </div>
+        </div>
+        <span class="job-status" [ngClass]="getStatusClass(job.status)">
+          {{ job.status }}
+        </span>
+      </div>
+
+      <div class="job-stats">
+        <div class="stat">
+          <span class="stat-label">Total Scans</span>
+          <span class="stat-value">{{ job.statistics.totalScans || 0 }}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Documents</span>
+          <span class="stat-value">{{ job.statistics.totalDocumentsProcessed || 0 }}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Matches</span>
+          <span class="stat-value">{{ job.statistics.totalMatches || 0 }}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Emails Sent</span>
+          <span class="stat-value">{{ job.statistics.totalEmailsSent || 0 }}</span>
+        </div>
+      </div>
+
+      <div class="job-config">
+        <h4>Configuration</h4>
+        <div class="config-grid">
+          <div class="config-item">
+            <span class="config-label">Confidence Threshold:</span>
+            <span class="config-value">{{ (job.config.confidenceThreshold * 100).toFixed(0) }}%</span>
+          </div>
+          <div class="config-item">
+            <span class="config-label">Review Threshold:</span>
+            <span class="config-value">{{ (job.config.reviewThreshold * 100).toFixed(0) }}%</span>
+          </div>
+          <div class="config-item">
+            <span class="config-label">Auto Process:</span>
+            <span class="config-value">{{ job.config.autoProcess ? 'Yes' : 'No' }}</span>
+          </div>
+          <div class="config-item">
+            <span class="config-label">Vision API:</span>
+            <span class="config-value">{{ job.config.enableVisionAPI ? 'Enabled' : 'Disabled' }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="job-customers">
+        <h4>Customers ({{ job.customers.length || 0 }})</h4>
+        <div class="customer-list" *ngIf="job.customers && job.customers.length > 0">
+          <div class="customer-item" *ngFor="let customer of job.customers">
+            <div class="customer-info">
+              <span class="customer-name">{{ customer.company }}</span>
+              <span class="customer-email">{{ customer.email }}</span>
+            </div>
+            <button class="btn-icon-only btn-danger" (click)="removeCustomer(job, getCustomerId(customer))" title="Remove customer">
+              ×
+            </button>
+          </div>
+        </div>
+        <p *ngIf="!job.customers || job.customers.length === 0" class="no-customers">
+          No customers assigned
+        </p>
+      </div>
+
+      <div class="job-actions">
+        <button class="btn btn-success" *ngIf="job.status !== 'ACTIVE'" (click)="startJob(job)">
+          <span class="btn-icon">▶️</span>
+          Start
+        </button>
+        <button class="btn btn-warning" *ngIf="job.status === 'ACTIVE'" (click)="stopJob(job)">
+          <span class="btn-icon">⏸️</span>
+          Stop
+        </button>
+        <button class="btn btn-info" (click)="openRunNowModal(job)" [disabled]="loading" title="Run this job now for testing">
+          <span class="btn-icon">🚀</span>
+          Run Now
+        </button>
+        <button class="btn btn-danger" (click)="deleteJob(job)">
+          <span class="btn-icon">🗑️</span>
+          Delete
+        </button>
+      </div>
+
+      <div class="job-meta">
+        <small>Created by {{ job.createdBy.name || 'Unknown' }} on {{ job.createdAt | date:'short' }}</small>
+        <small *ngIf="job.statistics.lastScanDate"> • Last scan: {{ job.statistics.lastScanDate | date:'short' }}</small>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Job Modal -->
+  <div class="modal" *ngIf="showCreateModal" (click)="closeCreateModal()">
+    <div class="modal-content" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <h2>Create Scan Job</h2>
+        <button class="modal-close" (click)="closeCreateModal()">×</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Job Name *</label>
+          <input type="text" [(ngModel)]="newJob.name" placeholder="e.g., Daily Acoustic Scan" class="form-control">
+        </div>
+
+        <div class="form-group">
+          <label>Document Type *</label>
+          <select [(ngModel)]="newJob.documentType" class="form-control">
+            <option value="">Select document type...</option>
+            <option *ngFor="let type of documentTypes" [value]="type.value">
+              {{ type.icon }} {{ type.label }}
+            </option>
+          </select>
+          <small class="form-hint" *ngIf="documentTypes.length === 0">Loading document types...</small>
+        </div>
+
+        <div class="form-group">
+          <label>Configuration</label>
+          <div class="config-inputs">
+            <div class="input-row">
+              <label>Confidence Threshold</label>
+              <input type="number" [(ngModel)]="newJob.config.confidenceThreshold" min="0" max="1" step="0.05" class="form-control">
+            </div>
+            <div class="input-row">
+              <label>Review Threshold</label>
+              <input type="number" [(ngModel)]="newJob.config.reviewThreshold" min="0" max="1" step="0.05" class="form-control">
+            </div>
+            <div class="input-row">
+              <label>
+                <input type="checkbox" [(ngModel)]="newJob.config.autoProcess">
+                Auto Process
+              </label>
+            </div>
+            <div class="input-row">
+              <label>
+                <input type="checkbox" [(ngModel)]="newJob.config.enableVisionAPI">
+                Enable Vision API
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <label>Assign Customers ({{ selectedCustomers.length }} selected)</label>
+            <button class="btn btn-sm btn-success" type="button" (click)="openAddCustomerModal()">+ Add New</button>
+          </div>
+          <input type="text" [(ngModel)]="customerSearch" placeholder="Search customers..." class="form-control search-input">
+          <div class="customer-select-list" *ngIf="customers.length > 0">
+            <div
+              *ngFor="let customer of filteredCustomers"
+              class="customer-select-item"
+              [class.selected]="isCustomerSelected(customer)"
+              (click)="toggleCustomerSelection(customer)"
+            >
+              <input type="checkbox" [checked]="isCustomerSelected(customer)" (click)="$event.stopPropagation()">
+              <div class="customer-select-info">
+                <span class="customer-select-name">{{ customer.company }}</span>
+                <span class="customer-select-detail">{{ customer.email }} • {{ customer.projectId }}</span>
+              </div>
+            </div>
+          </div>
+          <div class="no-customers" *ngIf="customers.length === 0">
+            <p>Loading customers...</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeCreateModal()">Cancel</button>
+        <button class="btn btn-primary" (click)="createJob()" [disabled]="loading">
+          {{ loading ? 'Creating...' : 'Create Job' }}
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Add Customer Modal -->
+<div class="modal-overlay" *ngIf="showAddCustomerModal" (click)="closeAddCustomerModal()">
+  <div class="modal-content" (click)="$event.stopPropagation()">
+    <div class="modal-header">
+      <h3>Add New Customer</h3>
+      <button class="close-btn" (click)="closeAddCustomerModal()">×</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Company Name *</label>
+        <input type="text" [(ngModel)]="newCustomer.company" placeholder="Company name" class="form-control">
+      </div>
+
+      <div class="form-group">
+        <label>Contact Name *</label>
+        <input type="text" [(ngModel)]="newCustomer.name" placeholder="Contact name" class="form-control">
+      </div>
+
+      <div class="form-group">
+        <label>Email *</label>
+        <input type="email" [(ngModel)]="newCustomer.email" placeholder="email@example.com" class="form-control">
+      </div>
+
+      <div class="form-group">
+        <label>Phone</label>
+        <input type="tel" [(ngModel)]="newCustomer.phone" placeholder="Phone number" class="form-control">
+      </div>
+
+      <div class="form-group">
+        <label>Project ID</label>
+        <input type="text" [(ngModel)]="newCustomer.projectId" placeholder="Project ID" class="form-control">
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" (click)="closeAddCustomerModal()">Cancel</button>
+      <button class="btn btn-primary" (click)="createCustomer()" [disabled]="loading">
+        {{ loading ? 'Creating...' : 'Create Customer' }}
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Run Now Modal with Date Picker -->
+<div class="modal" *ngIf="showRunNowModal" (click)="closeRunNowModal()">
+  <div class="modal-content" (click)="$event.stopPropagation()">
+    <div class="modal-header">
+      <h2>Run Scan Job</h2>
+      <button class="close-btn" (click)="closeRunNowModal()">×</button>
+    </div>
+
+    <div class="modal-body">
+      <p *ngIf="runNowJob">Run <strong>"{{ runNowJob.name }}"</strong> for a specific date:</p>
+
+      <div class="form-group">
+        <label for="targetDate">Target Date:</label>
+        <input
+          type="date"
+          id="targetDate"
+          [(ngModel)]="runNowTargetDate"
+          [disabled]="loading"
+          class="form-control"
+        />
+        <small class="help-text">Select the date of documents to scan (defaults to yesterday)</small>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" (click)="closeRunNowModal()" [disabled]="loading">
+        Cancel
+      </button>
+      <button class="btn btn-primary" (click)="executeRunNow()" [disabled]="loading || !runNowTargetDate">
+        <span *ngIf="!loading">🚀 Run Scan</span>
+        <span *ngIf="loading">Processing...</span>
+      </button>
+    </div>
+  </div>
+</div>

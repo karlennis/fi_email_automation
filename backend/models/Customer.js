@@ -22,6 +22,11 @@ const customerSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  projectId: {
+    type: String,
+    trim: true,
+    uppercase: true
+  },
   reportTypes: [{
     type: String,
     enum: ['acoustic', 'transport', 'ecological', 'flood', 'heritage', 'arboricultural', 'waste', 'lighting'],

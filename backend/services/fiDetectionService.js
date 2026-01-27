@@ -33,7 +33,7 @@ class FIDetectionService {
     // Configuration matching rag_pipeline
     this.config = {
       ocrTimeout: 1000,
-      maxTextChars: 8000,
+      maxTextChars: 10000,
       maxMsgChars: 32000,
       model: "gpt-4o-mini",
       temperature: 0.0,
@@ -151,15 +151,17 @@ class FIDetectionService {
     return `You detect if a document is a formal Further Information (FI) request from a planning authority to an applicant.
 
 CRITICAL: Distinguish between:
-1. ACTUAL FI REQUESTS: Planning authority ASKING applicant to provide/submit information
-2. EXISTING DOCUMENTS: Reports or submissions that already exist (e.g., "Acoustic Report by XYZ")
-3. THIRD-PARTY COMMENTS: Objectors or consultees suggesting FI requests
-4. APPLICANT SUBMISSIONS: The applicant describing what they've provided
+1. ACTUAL FI REQUESTS: Planning authority ASKING applicant to provide/submit information (ACCEPT)
+2. FI RESPONSES/RECEIVED: Applicant RESPONDING to or SUBMITTING requested information (REJECT)
+3. EXISTING DOCUMENTS: Reports or submissions that already exist (e.g., "Acoustic Report by XYZ") (REJECT)
+4. THIRD-PARTY COMMENTS: Objectors or consultees suggesting FI requests (REJECT)
+5. FI RECEIVED COVER LETTERS: Documents stating FI has been received or submitted (REJECT)
 
 ONLY mark as isFIRequest=true if you find:
 - Clear evidence this is FROM the planning authority (letterhead, officer signature, formal council language)
 - REQUEST VERBS: "is requested to", "is invited to", "should submit", "must provide", "carry out", "undertake", "prepare and submit"
 - DIRECTED AT APPLICANT: "The applicant...", "You are requested...", "Please submit..."
+- Document is ASKING for information, NOT responding to previous requests
 
 Look for FORMAL REQUEST LANGUAGE such as:
 - 'The applicant is requested to submit...'
@@ -177,15 +179,21 @@ Also look for STRUCTURAL INDICATORS:
 - Council letterhead or formal government formatting
 - Deadlines for submission of information
 
-REJECT (mark as false) if document shows:
+CRITICAL - REJECT (mark as false) if document shows:
+- "Further Information Received" (applicant has submitted, request already fulfilled)
+- "FI Response" or "Response to FI Request" (applicant responding)
+- "Please refer to..." followed by report names (applicant referencing submitted reports)
+- "We have submitted..." / "We have provided..." (applicant speaking)
+- Quotes from old FI requests followed by responses (e.g., "ITEM 2: Please submit... [Response:] Please refer to...")
 - "Acoustic Report prepared by..." (existing report, not a request)
-- "We have submitted..." (applicant speaking, not planning authority)
 - "Objector recommends FI request for..." (third party, not planning authority)
 - "Planning policy requires..." (general policy, not specific request)
 - Just titles or headers without request context
 - Acknowledgment letters without specific requests
+- Cover letters stating information has been received or is enclosed
 
 STRICT RULE: When in doubt, mark as isFIRequest=false. Better to miss than create false positive.
+If document contains BOTH a quoted old request AND a response, it is a RESPONSE document (mark false).
 
 Return JSON for detect_fi_request – isFIRequest true/false.`;
   }
@@ -627,13 +635,17 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
 
   /**
    * Check if FI request matches target report type
+   * Returns object with match result and validation quote
    */
   async matchFIRequestType(documentText, targetReportType) {
     try {
-      // Quick pre-filter
+      // Quick pre-filter - this sets _lastMatchingSentence
       if (!this.quickKeywordFilter(documentText, targetReportType)) {
-        return false;
+        return { matches: false };
       }
+
+      // Store the matching sentence from keyword filter
+      const matchingSentence = this._lastMatchingSentence || '';
 
       const result = await this.runChat(
         [
@@ -644,7 +656,10 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
         "match_fi_request"
       );
 
-      return result.requestsReportType;
+      return {
+        matches: result.requestsReportType,
+        validationQuote: matchingSentence
+      };
     } catch (error) {
       logger.error('Error matching FI request type:', error);
       throw error;
@@ -653,6 +668,7 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
 
   /**
    * Validate that extracted FI request info contains actual request language
+   * Also checks for response indicators to reject FI response/received documents
    * @param {Object} extractedInfo - The extracted FI request information
    * @param {string} targetReportType - The report type we're looking for
    * @returns {Object} - Validation result with isValid flag and reasons
@@ -665,6 +681,15 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
       "should be submitted", "must be provided", "needs to be", "is to be"
     ];
 
+    // Response indicators - these suggest it's a RESPONSE not a REQUEST
+    const responseIndicators = [
+      "please refer to", "as outlined in", "as detailed in",
+      "the assessment", "the report", "prepared by",
+      "we have submitted", "we have provided", "has been submitted",
+      "further information received", "fi response", "response to fi",
+      "in response to", "following receipt", "submitted on"
+    ];
+
     const validation = {
       isValid: true,
       reasons: [],
@@ -674,6 +699,14 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
     // Check if SpecificRequests contains request verbs
     const specificRequests = extractedInfo.SpecificRequests || extractedInfo.Summary || '';
     const requestsLower = specificRequests.toLowerCase();
+
+    // CRITICAL: Check for response indicators first
+    const hasResponseIndicator = responseIndicators.some(indicator => requestsLower.includes(indicator));
+    if (hasResponseIndicator) {
+      validation.isValid = false;
+      validation.reasons.push('Document appears to be a FI RESPONSE/RECEIVED document, not a request. Contains response language like "please refer to", "the report", "prepared by", etc.');
+      return validation;
+    }
 
     // STRICT: Must contain BOTH a request verb AND the target report term
     const reportTypeKeywords = {
