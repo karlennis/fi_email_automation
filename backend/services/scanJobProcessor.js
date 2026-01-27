@@ -147,7 +147,7 @@ class ScanJobProcessor {
                         documents.push(doc);
                     }
                 },
-                { maxObjects: 100000, timeoutSeconds: 300 }
+                { maxObjects: null, timeoutSeconds: 600 } // No limit, 10 min timeout for full scan
             );
         } catch (scanError) {
             logger.error(`❌ Error streaming S3 documents:`, scanError);
