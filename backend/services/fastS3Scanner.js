@@ -19,12 +19,12 @@ class FastS3Scanner {
 
     /**
      * Get documents modified since a specific date
-     * This is MUCH faster than the full scan approach
+     * ULTRA-LIGHTWEIGHT: Stops at first 250 documents to prevent OOM
      * @param {Date} sinceDate - Get documents modified after this date
-     * @param {number} maxDocuments - Maximum documents to return (default: 1000, reduced for memory safety)
+     * @param {number} maxDocuments - Maximum documents to return (default: 250, HARD LIMIT for 2GB RAM)
      * @returns {Promise<Array>} Array of document objects
      */
-    async getDocumentsModifiedSince(sinceDate, maxDocuments = 1000) {
+    async getDocumentsModifiedSince(sinceDate, maxDocuments = 250) {
         const startTime = Date.now();
         logger.info(`📅 Fast scan: Getting documents modified since ${sinceDate.toISOString()}`);
 
@@ -37,7 +37,7 @@ class FastS3Scanner {
             while (hasMore && documents.length < maxDocuments) {
                 const params = {
                     Bucket: this.bucketName,
-                    MaxKeys: 100, // Further reduced from 500 to minimize memory per request
+                    MaxKeys: 50, // ULTRA-LOW: 50 objects per request (was 100, 500, 1000)
                     ContinuationToken: continuationToken
                 };
 
@@ -65,13 +65,14 @@ class FastS3Scanner {
                                     !fileName.startsWith('.') &&
                                     fileName.includes('.') &&
                                     fileName.toLowerCase() !== 'docfiles.txt') {
+                                    // ULTRA-LIGHTWEIGHT: Only store essential fields
                                     documents.push({
                                         projectId,
                                         fileName,
                                         filePath: object.Key,
-                                        lastModified: object.LastModified,
-                                        size: object.Size,
-                                        fileType: this.getFileType(fileName)
+                                        lastModified: object.LastModified.toISOString(),
+                                        size: object.Size || 0
+                                        // Removed fileType calculation to save memory
                                     });
 
                                     // Check if we've reached the limit
@@ -94,13 +95,21 @@ class FastS3Scanner {
                 // Check if there are more objects to process
                 continuationToken = response.NextContinuationToken;
                 hasMore = hasMore && !!continuationToken;
-
-                // Log progress every 5,000 objects (reduced from 10,000)
-                if (totalScanned % 5000 === 0) {
-                    logger.info(`📊 Progress: Scanned ${totalScanned} objects, found ${documents.length} matching documents`);
+STOP EARLY if we're taking too long (prevent runaway scans)
+                const elapsed = (Date.now() - startTime) / 1000;
+                if (elapsed > 30) {
+                    logger.warn(`⏱️ Stopping scan after 30 seconds (scanned ${totalScanned} objects)`);
+                    hasMore = false;
+                    break;
                 }
                 
-                // Force garbage collection hint every 1000 scanned objects
+                // Log progress every 1,000 objects
+                if (totalScanned % 1000 === 0) {
+                    logger.info(`📊 Progress: Scanned ${totalScanned} objects, found ${documents.length} matching documents (${elapsed.toFixed(1)}s)`);
+                }
+                
+                // Force garbage collection hint every 500 scanned objects
+                if (totalScanned % 5ection hint every 1000 scanned objects
                 if (totalScanned % 1000 === 0 && global.gc) {
                     global.gc();
                 }
