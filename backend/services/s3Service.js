@@ -27,6 +27,11 @@ class S3Service {
     this.bucket = process.env.S3_BUCKET || 'planning-documents-2';
     this.downloadDir = process.env.DOWNLOAD_DIR || './temp/downloads';
 
+    // Cache for listMainFolders to prevent hammering S3
+    this.mainFoldersCache = null;
+    this.mainFoldersCacheExpiry = null;
+    this.CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
+
     this.ensureDownloadDir();
   }
 
@@ -205,9 +210,17 @@ class S3Service {
 
   /**
    * List all main folders in the S3 bucket (like june_2025/, planning_documents_2025_03/, etc.)
+   * CACHED to prevent excessive S3 API calls (5 min TTL)
    */
   async listMainFolders() {
     try {
+      // Check cache first
+      const now = Date.now();
+      if (this.mainFoldersCache && this.mainFoldersCacheExpiry && now < this.mainFoldersCacheExpiry) {
+        logger.info('✅ Returning cached main folders (avoiding S3 call)');
+        return this.mainFoldersCache;
+      }
+
       logger.info('Attempting to list main folders from S3 bucket:', this.bucket);
 
       const params = {
@@ -229,6 +242,12 @@ class S3Service {
         .filter(folder => folder.name); // Filter out empty names
 
       logger.info('Processed folders:', folders);
+      
+      // Cache the result
+      this.mainFoldersCache = folders;
+      this.mainFoldersCacheExpiry = now + this.CACHE_TTL;
+      logger.info(`📦 Cached main folders for ${this.CACHE_TTL / 1000}s`);
+      
       return folders;
 
     } catch (error) {

@@ -74,7 +74,16 @@ class DocumentRegisterScheduler {
     async runDailyGeneration() {
         if (this.isRunning) {
             logger.warn('Document register generation already running, skipping...');
-            return;
+            return {
+                totalDocuments: 0,
+                uniqueProjects: 0,
+                csvPath: null,
+                xlsxPath: null,
+                metadataPath: null,
+                stats: null,
+                skipped: true,
+                reason: 'Already running'
+            };
         }
 
         this.isRunning = true;
@@ -83,10 +92,26 @@ class DocumentRegisterScheduler {
 
         try {
             // Use the fast S3 scanner for yesterday's documents
+            logger.info('📅 Calling fastS3Scanner.getYesterdaysDocuments()...');
             const documents = await fastS3Scanner.getYesterdaysDocuments();
+            logger.info(`📦 Received ${documents ? documents.length : 0} documents from scanner`);
+
+            if (!documents || documents.length === 0) {
+                logger.warn('⚠️ No documents returned from scanner');
+                return {
+                    totalDocuments: 0,
+                    uniqueProjects: 0,
+                    csvPath: null,
+                    xlsxPath: null,
+                    metadataPath: null,
+                    stats: null,
+                    noDocuments: true
+                };
+            }
 
             // Get statistics
             const stats = fastS3Scanner.getStatistics(documents);
+            logger.info('📊 Statistics calculated:', stats);
 
             // Save to files
             const outputDir = path.join(__dirname, 'outputs');
@@ -137,7 +162,8 @@ class DocumentRegisterScheduler {
             this.lastRunTime = new Date();
             this.lastRunStatus = 'error';
 
-            logger.error('Error in scheduled document register generation:', error);
+            logger.error('❌ Error in scheduled document register generation:', error);
+            logger.error('Stack trace:', error.stack);
             throw error;
         } finally {
             this.isRunning = false;
