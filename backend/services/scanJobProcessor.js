@@ -1,7 +1,7 @@
 const schedule = require('node-schedule');
 const ScanJob = require('../models/ScanJob');
 const Customer = require('../models/Customer');
-const documentRegisterService = require('./documentRegisterService');
+const fastS3Scanner = require('./fastS3Scanner');
 const fiDetectionService = require('./fiDetectionService');
 const s3Service = require('./s3Service');
 const emailService = require('./emailService');
@@ -130,11 +130,29 @@ class ScanJobProcessor {
             logger.info(`📅 Scanning document register for ${scanDate.toISOString().split('T')[0]} (projects updated the day before)`);
         }
 
-        // Get all documents from the target date's register
-        const documents = await documentRegisterService.getDocumentsByDateRange(
-            scanDate,
-            nextDay
-        );
+        // Stream documents directly from S3 (memory safe, no register dependency)
+        const documents = [];
+        const dayEnd = new Date(nextDay);
+        dayEnd.setHours(23, 59, 59, 999);
+
+        logger.info(`🔍 Streaming S3 documents for date range: ${scanDate.toISOString()} to ${dayEnd.toISOString()}`);
+
+        try {
+            await fastS3Scanner.streamDocumentsSince(
+                scanDate,
+                dayEnd,
+                async (doc) => {
+                    // Only collect PDF files
+                    if (doc.fileName && doc.fileName.toLowerCase().endsWith('.pdf')) {
+                        documents.push(doc);
+                    }
+                },
+                { maxObjects: 100000, timeoutSeconds: 300 }
+            );
+        } catch (scanError) {
+            logger.error(`❌ Error streaming S3 documents:`, scanError);
+            throw scanError;
+        }
 
         if (documents.length === 0) {
             logger.info(`📋 No documents in register for ${scanDate.toISOString().split('T')[0]} for job ${job.jobId}`);
