@@ -1,6 +1,6 @@
 # Render Deployment Checklist
 
-## Pre-Deployment Setup 
+## Pre-Deployment Setup
 
 - [x] render.yaml created in project root
 - [x] environment.prod.ts created for Angular production build
@@ -114,7 +114,7 @@ If services are slow:
 - [ ] Configure automated backups for MongoDB
 - [ ] Set up CI/CD pipeline (automatic deploys on push)
 
-## Deployment Complete! 
+## Deployment Complete!
 
 Your FI Email Automation system should now be live and accessible at:
 - Frontend: https://fi-email-automation-frontend.onrender.com
