@@ -24,10 +24,13 @@ const reportsRoutes = require('./routes/reports');
 const documentRegisterRoutes = require('./routes/document-register');
 const registerFiRoutes = require('./routes/register-fi');
 const documentScanRoutes = require('./routes/document-scan');
+const runsRoutes = require('./routes/runs');
 
 // Services and schedulers
 const documentRegisterScheduler = require('./services/documentRegisterScheduler');
 const scanJobProcessor = require('./services/scanJobProcessor');
+const dailyRunService = require('./services/dailyRunService');
+const dailyRunWorker = require('./services/dailyRunWorker');
 
 // Configure logger
 const logger = winston.createLogger({
@@ -100,6 +103,7 @@ app.use('/api/reports', reportsRoutes);
 app.use('/api/document-register', documentRegisterRoutes);
 app.use('/api/register-fi', registerFiRoutes);
 app.use('/api/document-scan', documentScanRoutes);
+app.use('/api/runs', runsRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -158,6 +162,23 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/fi-email-
     logger.info('Scan job processor initialized successfully');
   } catch (error) {
     logger.error('Failed to initialize scan job processor:', error);
+  }
+
+  // Reset stale processing items for restart safety
+  dailyRunService.resetStaleItems().then(count => {
+    if (count > 0) {
+      logger.info(`♻️ Reset ${count} stale items on startup`);
+    }
+  }).catch(err => {
+    logger.error('Failed to reset stale items:', err);
+  });
+
+  // Start daily run worker
+  try {
+    dailyRunWorker.start();
+    logger.info('Daily run worker started successfully');
+  } catch (error) {
+    logger.error('Failed to start daily run worker:', error);
   }
 })
 .catch((err) => {
