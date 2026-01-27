@@ -121,7 +121,7 @@ class DailyRunWorker {
       try {
         // Download file using s3Service
         const downloadResult = await s3Service.downloadDocument(item.s3Key);
-        
+
         if (!downloadResult || !downloadResult.localPath) {
           throw new Error('Failed to download file from S3');
         }
@@ -132,17 +132,17 @@ class DailyRunWorker {
         let documentText = '';
         try {
           documentText = await fiDetectionService.extractPdfText(tempFilePath);
-          
-          // Truncate to max size for AI (8000 chars)
-          if (documentText.length > 8000) {
-            documentText = documentText.substring(0, 8000);
+
+          // Truncate to max size for AI (32000 chars - matches fiDetectionService.MAX_MSG_CHARS)
+          if (documentText.length > 32000) {
+            documentText = documentText.substring(0, 32000);
           }
         } catch (extractError) {
           logger.warn(`⚠️ Failed to extract text from ${item.fileName}, trying OCR...`);
           try {
             documentText = await fiDetectionService.ocrIfNeeded(tempFilePath);
-            if (documentText.length > 8000) {
-              documentText = documentText.substring(0, 8000);
+            if (documentText.length > 32000) {
+              documentText = documentText.substring(0, 32000);
             }
           } catch (ocrError) {
             throw new Error(`Text extraction failed: ${ocrError.message}`);
@@ -159,7 +159,7 @@ class DailyRunWorker {
 
         if (documentText.length > 100) {
           const isFIRequest = await fiDetectionService.detectFIRequest(documentText);
-          
+
           if (isFIRequest) {
             detectionResult.detected = true;
             detectionResult.method = 'fi-detection';
@@ -282,7 +282,7 @@ class DailyRunWorker {
           }
         );
 
-        const successRate = run.counters.totalItems > 0 
+        const successRate = run.counters.totalItems > 0
           ? ((run.counters.completed / run.counters.totalItems) * 100).toFixed(1)
           : 0;
         logger.info(`🎉 [RUN ${runId.slice(-8)}] COMPLETE: ${run.counters.completed}/${run.counters.totalItems} succeeded (${successRate}%), ${run.counters.failed} failed`);
