@@ -2560,7 +2560,7 @@ export class DocumentsBrowserComponent implements OnInit {
   // AWS Methods
   async loadAWSStats() {
     try {
-      const response = await this.http.get<any>('${environment.apiUrl}/api/documents-browser/aws/stats').toPromise();
+      const response = await this.http.get<any>(`${environment.apiUrl}/api/documents-browser/aws/stats`).toPromise();
       this.awsStats = response.data;
     } catch (error) {
       console.error('Error loading AWS stats:', error);
@@ -2570,7 +2570,7 @@ export class DocumentsBrowserComponent implements OnInit {
   async loadAWSFolders() {
     this.loadingAWS = true;
     try {
-      const response = await this.http.get<any>('${environment.apiUrl}/api/documents-browser/aws/folders').toPromise();
+      const response = await this.http.get<any>(`${environment.apiUrl}/api/documents-browser/aws/folders`).toPromise();
       this.awsFolders = response.data.folders;
       this.showingFolders = true;
     } catch (error) {
@@ -2670,7 +2670,7 @@ export class DocumentsBrowserComponent implements OnInit {
     try {
       this.toastr.info(`Starting FI processing for entire folder: ${folderName}...`);
 
-      const response = await this.http.post<any>('${environment.apiUrl}/api/documents-browser/aws/process-folder', {
+      const response = await this.http.post<any>(`${environment.apiUrl}/api/documents-browser/aws/process-folder`, {
         folderNames: [folderName],
         reportTypes: selectedReportTypes,
         customers: customers // Send customer objects instead of just emails
@@ -2730,7 +2730,7 @@ export class DocumentsBrowserComponent implements OnInit {
     try {
       this.toastr.info(`Starting FI processing for ${folderNames.length} folders...`);
 
-      const response = await this.http.post<any>('${environment.apiUrl}/api/documents-browser/aws/process-folder', {
+      const response = await this.http.post<any>(`${environment.apiUrl}/api/documents-browser/aws/process-folder`, {
         folderNames,
         reportTypes: selectedReportTypes,
         customers: customers // Send customer objects instead of just emails
@@ -2821,7 +2821,7 @@ export class DocumentsBrowserComponent implements OnInit {
   // Local Methods
   async loadAvailableDrives() {
     try {
-      const response = await this.http.get<any>('${environment.apiUrl}/api/documents-browser/local/drives').toPromise();
+      const response = await this.http.get<any>(`${environment.apiUrl}/api/documents-browser/local/drives`).toPromise();
       this.availableDrives = response.data.drives;
     } catch (error) {
       console.error('Error loading drives:', error);
@@ -2853,7 +2853,7 @@ export class DocumentsBrowserComponent implements OnInit {
 
     this.loadingLocal = true;
     try {
-      const response = await this.http.post<any>('${environment.apiUrl}/api/documents-browser/local/scan-projects', {
+      const response = await this.http.post<any>(`${environment.apiUrl}/api/documents-browser/local/scan-projects`, {
         rootPath: this.currentLocalPath
       }).toPromise();
 
@@ -2919,7 +2919,7 @@ export class DocumentsBrowserComponent implements OnInit {
     try {
       this.toastr.info(`Starting FI processing for entire folder: ${this.currentLocalPath}...`);
 
-      const response = await this.http.post<any>('${environment.apiUrl}/api/documents-browser/local/process-folder', {
+      const response = await this.http.post<any>(`${environment.apiUrl}/api/documents-browser/local/process-folder`, {
         folderPaths: [this.currentLocalPath],
         reportTypes: selectedReportTypes,
         customers: customers // Send customer objects instead of just emails
@@ -3004,7 +3004,7 @@ export class DocumentsBrowserComponent implements OnInit {
       if (this.selectedAWSProjects.size > 0) {
         const awsProjectIds = Array.from(this.selectedAWSProjects);
 
-        const awsResponse = await this.http.post<any>('${environment.apiUrl}/api/documents-browser/aws/process-fi', {
+        const awsResponse = await this.http.post<any>(`${environment.apiUrl}/api/documents-browser/aws/process-fi`, {
           projectIds: awsProjectIds,
           reportTypes: selectedReportTypes,
           customers: customers, // Send customer objects instead of just emails
@@ -3020,7 +3020,7 @@ export class DocumentsBrowserComponent implements OnInit {
           .filter(project => this.selectedLocalProjects.has(project.projectId))
           .map(project => project.path);
 
-        const localResponse = await this.http.post<any>('${environment.apiUrl}/api/documents-browser/local/process-fi', {
+        const localResponse = await this.http.post<any>(`${environment.apiUrl}/api/documents-browser/local/process-fi`, {
           projectPaths: localProjectPaths,
           reportTypes: selectedReportTypes,
           customers: customers, // Send customer objects instead of just emails

@@ -1205,7 +1205,7 @@ export class CustomerListComponent implements OnInit {
     private http: HttpClient
   ) {}
 
-  private baseUrl = '${environment.apiUrl}/api/reports'; // Backend API URL
+  private baseUrl = `${environment.apiUrl}/api/reports`; // Backend API URL
 
   ngOnInit() {
     this.loadCustomers();
