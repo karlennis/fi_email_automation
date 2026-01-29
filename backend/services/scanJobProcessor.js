@@ -251,6 +251,12 @@ class ScanJobProcessor {
             const document = documents[i];
             
             try {
+                // Yield control to event loop every 10 documents to prevent health check timeouts
+                // This allows /health endpoint to respond even during heavy processing
+                if (totalProcessed > 0 && totalProcessed % 10 === 0) {
+                    await new Promise(resolve => setImmediate(resolve));
+                }
+                
                 // Only process PDF and DOCX files
                 const fileName = document.fileName ? document.fileName.toLowerCase() : '';
                 if (!fileName.endsWith('.pdf') && !fileName.endsWith('.docx')) {
@@ -309,9 +315,9 @@ class ScanJobProcessor {
                     const rssInMB = memUsage.rss / 1024 / 1024;
                     logger.info(`💾 Memory: ${(memUsage.heapUsed / 1024 / 1024).toFixed(2)}MB / ${(memUsage.heapTotal / 1024 / 1024).toFixed(2)}MB (RSS: ${rssInMB.toFixed(2)}MB)`);
                     
-                    // Circuit breaker: Stop if memory exceeds 450MB (88% of 512MB Render limit)
-                    if (rssInMB > 450) {
-                        logger.error(`🚨 MEMORY LIMIT APPROACHING: ${rssInMB.toFixed(2)}MB / 512MB - Stopping scan to prevent crash`);
+                    // Circuit breaker: Stop if memory exceeds 1800MB (90% of 2GB Render limit)
+                    if (rssInMB > 1800) {
+                        logger.error(`🚨 MEMORY LIMIT APPROACHING: ${rssInMB.toFixed(2)}MB / 2048MB - Stopping scan to prevent crash`);
                         job.checkpoint.isResuming = true;
                         job.status = 'PAUSED';
                         await job.save();

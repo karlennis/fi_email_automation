@@ -247,9 +247,9 @@ app.listen(PORT, () => {
       const mem = process.memoryUsage();
       logger.info(`📊 Memory: Heap ${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB / ${(mem.heapTotal / 1024 / 1024).toFixed(2)}MB, RSS ${(mem.rss / 1024 / 1024).toFixed(2)}MB`);
       
-      // Warn if memory exceeds 400MB (80% of Render's 512MB limit)
-      if (mem.rss > 400 * 1024 * 1024) {
-        logger.warn(`⚠️ HIGH MEMORY USAGE: ${(mem.rss / 1024 / 1024).toFixed(2)}MB / 512MB limit`);
+      // Warn if memory exceeds 1600MB (80% of Render's 2GB limit)
+      if (mem.rss > 1600 * 1024 * 1024) {
+        logger.warn(`⚠️ HIGH MEMORY USAGE: ${(mem.rss / 1024 / 1024).toFixed(2)}MB / 2048MB limit`);
       }
     }, 5 * 60 * 1000);
   }
