@@ -341,6 +341,7 @@ class ScanJobProcessor {
                             logger.info(`📧 Sending match emails for ${matches.length} matches found so far...`);
                             await this.sendMatchEmails(matches, job);
                             logger.info(`✅ Match emails sent for checkpoint at ${totalProcessed} documents`);
+                            matches = []; // Clear matches after sending to avoid duplicates
                         }
 
                         // Send progress email to all job customers
