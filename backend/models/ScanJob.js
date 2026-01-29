@@ -17,7 +17,7 @@ const ScanJobSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['ACTIVE', 'PAUSED', 'STOPPED'],
+    enum: ['ACTIVE', 'PAUSED', 'STOPPED', 'RUNNING'],
     default: 'PAUSED'
   },
   config: {
