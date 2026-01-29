@@ -99,17 +99,37 @@ const limiter = rateLimit({
 // Middleware
 app.use(helmet());
 app.use(limiter);
-app.use(cors({
-  origin: [
-    process.env.FRONTEND_URL || 'http://localhost:4200',
-    'http://localhost:4200',
-    'http://127.0.0.1:4200',
-    'https://fi-email-automation-frontend.onrender.com'
-  ],
+
+// CORS configuration - must handle OPTIONS preflight
+const corsOptions = {
+  origin: function (origin, callback) {
+    const allowedOrigins = [
+      process.env.FRONTEND_URL || 'http://localhost:4200',
+      'http://localhost:4200',
+      'http://127.0.0.1:4200',
+      'https://fi-email-automation-frontend.onrender.com'
+    ];
+    
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
-}));
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  maxAge: 600, // Cache preflight for 10 minutes
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+};
+
+app.use(cors(corsOptions));
+
+// Explicitly handle OPTIONS requests
+app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -220,6 +240,19 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/fi-email-
 // Start server
 app.listen(PORT, () => {
   logger.info(`Server running on port ${PORT} in ${process.env.NODE_ENV} mode`);
+  
+  // Log memory usage every 5 minutes in production
+  if (process.env.NODE_ENV === 'production') {
+    setInterval(() => {
+      const mem = process.memoryUsage();
+      logger.info(`📊 Memory: Heap ${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB / ${(mem.heapTotal / 1024 / 1024).toFixed(2)}MB, RSS ${(mem.rss / 1024 / 1024).toFixed(2)}MB`);
+      
+      // Warn if memory exceeds 400MB (80% of Render's 512MB limit)
+      if (mem.rss > 400 * 1024 * 1024) {
+        logger.warn(`⚠️ HIGH MEMORY USAGE: ${(mem.rss / 1024 / 1024).toFixed(2)}MB / 512MB limit`);
+      }
+    }, 5 * 60 * 1000);
+  }
 });
 
 // Global error handlers for uncaught exceptions/rejections
@@ -228,15 +261,16 @@ process.on('uncaughtException', async (error) => {
   logger.error('❌ UNCAUGHT EXCEPTION - Process will terminate:', error);
 
   try {
-    // Try to save checkpoint for any active scan jobs
+    // Try to save checkpoint for any active or running scan jobs
     const ScanJob = require('./models/ScanJob');
-    const activeScanJobs = await ScanJob.find({ status: 'active' });
+    const activeScanJobs = await ScanJob.find({ status: { $in: ['ACTIVE', 'RUNNING'] } });
 
     for (const job of activeScanJobs) {
-      if (job.checkpoint && !job.checkpoint.isResuming) {
+      // If job has a checkpoint with progress, mark for resume
+      if (job.checkpoint && job.checkpoint.processedCount > 0 && !job.checkpoint.isResuming) {
         job.checkpoint.isResuming = true;
         await job.save();
-        logger.info(`💾 Emergency checkpoint saved for job ${job.jobId}`);
+        logger.info(`💾 Emergency checkpoint saved for job ${job.jobId} at ${job.checkpoint.processedCount} documents`);
       }
     }
   } catch (saveError) {

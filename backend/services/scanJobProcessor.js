@@ -76,8 +76,18 @@ class ScanJobProcessor {
                     // Check if this job needs to resume from a crash
                     const needsResume = job.checkpoint && job.checkpoint.isResuming;
                     
-                    if (needsResume) {
-                        logger.info(`🔄 Job ${job.jobId} needs to resume from checkpoint...`);
+                    // Also check for interrupted scans (status=RUNNING on startup means crashed mid-scan)
+                    const wasInterrupted = job.status === 'RUNNING' && job.checkpoint && job.checkpoint.processedCount > 0;
+                    
+                    if (needsResume || wasInterrupted) {
+                        if (wasInterrupted) {
+                            logger.info(`🔄 Job ${job.jobId} was interrupted mid-scan (found RUNNING status), resuming from ${job.checkpoint.processedCount} documents...`);
+                            job.checkpoint.isResuming = true;
+                            job.status = 'ACTIVE';
+                            await job.save();
+                        } else {
+                            logger.info(`🔄 Job ${job.jobId} needs to resume from checkpoint at ${job.checkpoint.processedCount} documents...`);
+                        }
                         await this.processJob(job);
                         continue;
                     }
@@ -246,6 +256,16 @@ class ScanJobProcessor {
                 logger.info(`🔍 [${totalProcessed}/${documents.length - skippedNonPdf}] Scanning: ${document.projectId}/${document.fileName}`);
 
                 const result = await this.processDocument(document, job);
+                
+                // Clear large objects from memory immediately after processing
+                if (result && result.extractedText) {
+                    delete result.extractedText; // Free extracted text from memory
+                }
+                
+                // Null out document buffer if it exists
+                if (document.buffer) {
+                    document.buffer = null;
+                }
 
                 if (result.isMatch) {
                     logger.info(`✅ MATCH FOUND: ${document.fileName} (confidence: ${(result.confidence * 100).toFixed(1)}%)`);
@@ -276,6 +296,17 @@ class ScanJobProcessor {
                 
                 if (shouldSave) {
                     job.checkpoint.lastCheckpointTime = new Date();
+                    
+                    // Log memory usage at checkpoints
+                    const memUsage = process.memoryUsage();
+                    logger.info(`💾 Memory: ${(memUsage.heapUsed / 1024 / 1024).toFixed(2)}MB / ${(memUsage.heapTotal / 1024 / 1024).toFixed(2)}MB (RSS: ${(memUsage.rss / 1024 / 1024).toFixed(2)}MB)`);
+                    
+                    // Force garbage collection if available (run with --expose-gc flag)
+                    if (global.gc && totalProcessed % 1000 === 0) {
+                        global.gc();
+                        logger.info('🗑️ Forced garbage collection');
+                    }
+                    
                     await job.save();
                     
                     // Only send progress email at CHECKPOINT_INTERVAL milestones
