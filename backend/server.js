@@ -212,4 +212,36 @@ app.listen(PORT, () => {
   logger.info(`Server running on port ${PORT} in ${process.env.NODE_ENV} mode`);
 });
 
+// Global error handlers for uncaught exceptions/rejections
+// This helps save checkpoint state before crashes
+process.on('uncaughtException', async (error) => {
+  logger.error('❌ UNCAUGHT EXCEPTION - Process will terminate:', error);
+  
+  try {
+    // Try to save checkpoint for any active scan jobs
+    const ScanJob = require('./models/ScanJob');
+    const activeScanJobs = await ScanJob.find({ status: 'active' });
+    
+    for (const job of activeScanJobs) {
+      if (job.checkpoint && !job.checkpoint.isResuming) {
+        job.checkpoint.isResuming = true;
+        await job.save();
+        logger.info(`💾 Emergency checkpoint saved for job ${job.jobId}`);
+      }
+    }
+  } catch (saveError) {
+    logger.error('Failed to save emergency checkpoint:', saveError);
+  }
+  
+  // Give it a second to flush logs, then exit
+  setTimeout(() => {
+    process.exit(1);
+  }, 1000);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('❌ UNHANDLED REJECTION:', reason);
+  // Don't exit on unhandled rejection - just log it
+});
+
 module.exports = app;

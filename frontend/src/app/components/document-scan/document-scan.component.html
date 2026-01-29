@@ -110,6 +110,10 @@
         <h4>Configuration</h4>
         <div class="config-grid">
           <div class="config-item">
+            <span class="config-label">Schedule:</span>
+            <span class="config-value">{{ job.schedule?.type || 'DAILY' }} ({{ job.schedule?.lookbackDays || 1 }} days lookback)</span>
+          </div>
+          <div class="config-item">
             <span class="config-label">Confidence Threshold:</span>
             <span class="config-value">{{ (job.config.confidenceThreshold * 100).toFixed(0) }}%</span>
           </div>
@@ -195,6 +199,37 @@
             </option>
           </select>
           <small class="form-hint" *ngIf="documentTypes.length === 0">Loading document types...</small>
+        </div>
+
+        <div class="form-group">
+          <label>Schedule Configuration</label>
+          <div class="config-inputs">
+            <div class="input-row">
+              <label>Scan Frequency</label>
+              <select [(ngModel)]="newJob.schedule.type" class="form-control">
+                <option value="DAILY">Daily</option>
+                <option value="WEEKLY">Weekly</option>
+                <option value="MONTHLY">Monthly</option>
+              </select>
+              <small class="form-hint">How often this job should run</small>
+            </div>
+            <div class="input-row">
+              <label>Lookback Period (days)</label>
+              <input
+                type="number"
+                [(ngModel)]="newJob.schedule.lookbackDays"
+                min="1"
+                max="365"
+                class="form-control"
+              />
+              <small class="form-hint">
+                How many days of documents to scan each time
+                <span *ngIf="newJob.schedule.type === 'DAILY'">(Recommended: 1)</span>
+                <span *ngIf="newJob.schedule.type === 'WEEKLY'">(Recommended: 7)</span>
+                <span *ngIf="newJob.schedule.type === 'MONTHLY'">(Recommended: 30)</span>
+              </small>
+            </div>
+          </div>
         </div>
 
         <div class="form-group">

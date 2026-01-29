@@ -17,6 +17,10 @@ interface ScanJob {
     autoProcess: boolean;
     enableVisionAPI: boolean;
   };
+  schedule?: {
+    type: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'CUSTOM';
+    lookbackDays: number;
+  };
   customers: {
     customerId: string;
     _id?: string; // MongoDB _id when populated
@@ -73,6 +77,10 @@ export class DocumentScanComponent implements OnInit {
       reviewThreshold: 0.5,
       autoProcess: true,
       enableVisionAPI: true
+    },
+    schedule: {
+      type: 'DAILY',
+      lookbackDays: 1
     }
   };
 
@@ -171,6 +179,10 @@ export class DocumentScanComponent implements OnInit {
         reviewThreshold: 0.5,
         autoProcess: true,
         enableVisionAPI: true
+      },
+      schedule: {
+        type: 'DAILY',
+        lookbackDays: 1
       }
     };
   }
@@ -223,7 +235,8 @@ export class DocumentScanComponent implements OnInit {
           email: c.email,
           company: c.company
         })),
-        config: this.newJob.config
+        config: this.newJob.config,
+        schedule: this.newJob.schedule
       };
 
       await this.http.post(`${this.apiUrl}/jobs`, jobData, { headers: this.authService.getAuthHeaders() }).toPromise();

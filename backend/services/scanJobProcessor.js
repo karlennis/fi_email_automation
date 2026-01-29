@@ -73,13 +73,21 @@ class ScanJobProcessor {
 
             for (const job of activeJobs) {
                 try {
-                    // Check if this job has already been processed today
-                    const lastScanDate = job.statistics.lastScanDate
-                        ? new Date(job.statistics.lastScanDate).toISOString().split('T')[0]
-                        : null;
-
-                    if (lastScanDate === today) {
-                        logger.info(`⏭️ Job ${job.jobId} already processed today, skipping...`);
+                    // Check if this job needs to resume from a crash
+                    const needsResume = job.checkpoint && job.checkpoint.isResuming;
+                    
+                    if (needsResume) {
+                        logger.info(`🔄 Job ${job.jobId} needs to resume from checkpoint...`);
+                        await this.processJob(job);
+                        continue;
+                    }
+                    
+                    // Check if this job should run based on its schedule
+                    const shouldRun = this.shouldJobRun(job, today);
+                    
+                    if (!shouldRun) {
+                        const scheduleType = job.schedule?.type || 'DAILY';
+                        logger.info(`⏭️ Job ${job.jobId} not scheduled to run (${scheduleType} schedule)`);
                         continue;
                     }
 
@@ -111,39 +119,53 @@ class ScanJobProcessor {
 
         const startTime = Date.now();
 
-        let scanDate, nextDay;
+        let scanStartDate, scanEndDate;
 
         if (targetDate) {
-            // Use specified target date
-            scanDate = new Date(targetDate);
-            scanDate.setHours(0, 0, 0, 0);
-            nextDay = new Date(scanDate);
-            nextDay.setDate(nextDay.getDate() + 1);
+            // Use specified target date (single day scan for manual testing)
+            scanStartDate = new Date(targetDate);
+            scanStartDate.setHours(0, 0, 0, 0);
+            scanEndDate = new Date(scanStartDate);
+            scanEndDate.setDate(scanEndDate.getDate() + 1);
+            scanEndDate.setHours(23, 59, 59, 999);
             logger.info(`📅 Scanning document register for ${targetDate} (user-specified date)`);
         } else {
-            // Default: Get yesterday's document register (projects updated the day before)
-            scanDate = new Date();
-            scanDate.setDate(scanDate.getDate() - 1);
-            scanDate.setHours(0, 0, 0, 0);
-            nextDay = new Date(scanDate);
-            nextDay.setDate(nextDay.getDate() + 1);
-            logger.info(`📅 Scanning document register for ${scanDate.toISOString().split('T')[0]} (projects updated the day before)`);
+            // Use lookback period from job configuration
+            const lookbackDays = job.schedule?.lookbackDays || 1; // Default to 1 day if not specified
+            
+            // End date: yesterday (don't include today's partial data)
+            scanEndDate = new Date();
+            scanEndDate.setDate(scanEndDate.getDate() - 1);
+            scanEndDate.setHours(23, 59, 59, 999);
+            
+            // Start date: lookbackDays ago
+            scanStartDate = new Date(scanEndDate);
+            scanStartDate.setDate(scanStartDate.getDate() - lookbackDays + 1); // +1 because we include the end day
+            scanStartDate.setHours(0, 0, 0, 0);
+            
+            const startDateStr = scanStartDate.toISOString().split('T')[0];
+            const endDateStr = scanEndDate.toISOString().split('T')[0];
+            
+            if (lookbackDays === 1) {
+                logger.info(`📅 Scanning documents from ${endDateStr} (1 day lookback)`);
+            } else {
+                logger.info(`📅 Scanning documents from ${startDateStr} to ${endDateStr} (${lookbackDays} days lookback)`);
+            }
         }
 
         // Stream documents directly from S3 (memory safe, no register dependency)
         const documents = [];
-        const dayEnd = new Date(nextDay);
-        dayEnd.setHours(23, 59, 59, 999);
 
-        logger.info(`🔍 Streaming S3 documents for date range: ${scanDate.toISOString()} to ${dayEnd.toISOString()}`);
+        logger.info(`🔍 Streaming S3 documents for date range: ${scanStartDate.toISOString()} to ${scanEndDate.toISOString()}`);
 
         try {
             await fastS3Scanner.streamDocumentsSince(
-                scanDate,
-                dayEnd,
+                scanStartDate,
+                scanEndDate,
                 async (doc) => {
-                    // Only collect PDF files
-                    if (doc.fileName && doc.fileName.toLowerCase().endsWith('.pdf')) {
+                    // Only collect PDF and DOCX files
+                    const fileName = doc.fileName ? doc.fileName.toLowerCase() : '';
+                    if (fileName.endsWith('.pdf') || fileName.endsWith('.docx')) {
                         documents.push(doc);
                     }
                 },
@@ -155,12 +177,17 @@ class ScanJobProcessor {
         }
 
         if (documents.length === 0) {
-            logger.info(`📋 No documents in register for ${scanDate.toISOString().split('T')[0]} for job ${job.jobId}`);
+            const dateRangeStr = scanStartDate.toISOString().split('T')[0] === scanEndDate.toISOString().split('T')[0]
+                ? scanStartDate.toISOString().split('T')[0]
+                : `${scanStartDate.toISOString().split('T')[0]} to ${scanEndDate.toISOString().split('T')[0]}`;
+            logger.info(`📋 No documents found for date range: ${dateRangeStr}`);
             return;
         }
 
-        logger.info(`📄 Found ${documents.length} documents in register (updated ${scanDate.toISOString().split('T')[0]})`);
-
+        const dateRangeStr = scanStartDate.toISOString().split('T')[0] === scanEndDate.toISOString().split('T')[0]
+            ? scanStartDate.toISOString().split('T')[0]
+            : `${scanStartDate.toISOString().split('T')[0]} to ${scanEndDate.toISOString().split('T')[0]}`;
+        logger.info(`📄 Found ${documents.length} documents in date range: ${dateRangeStr}`);
         // Use all customers assigned to this job
         const jobCustomers = job.customers.filter(c => c.customerId).map(c => c.customerId);
 
@@ -171,18 +198,45 @@ class ScanJobProcessor {
             return;
         }
 
-        // Process ALL documents in the register
-        logger.info(`🔍 Scanning all ${documents.length} documents for ${job.documentType} reports`);
+        // Initialize or resume checkpoint
+        const CHECKPOINT_INTERVAL = 10000; // Send progress email every 10,000 documents
+        const SAVE_INTERVAL = 100; // Save checkpoint to DB every 100 docs (for crash recovery)
+        const isResuming = job.checkpoint && job.checkpoint.isResuming && job.checkpoint.lastProcessedIndex > 0;
+        const startIndex = isResuming ? job.checkpoint.lastProcessedIndex : 0;
+
+        if (isResuming) {
+            logger.info(`🔄 Resuming scan from document #${startIndex + 1} (${job.checkpoint.lastProcessedFile})`);
+        } else {
+            // Initialize checkpoint for new scan
+            job.checkpoint = {
+                lastProcessedIndex: 0,
+                lastProcessedFile: '',
+                totalDocuments: documents.length,
+                processedCount: 0,
+                matchesFound: 0,
+                scanStartTime: new Date(),
+                lastCheckpointTime: new Date(),
+                isResuming: false
+            };
+            await job.save();
+            logger.info(`💾 Checkpoint initialized for ${documents.length} documents`);
+        }
+
+        // Process ALL documents in the register (or resume from checkpoint)
+        logger.info(`🔍 Scanning ${documents.length - startIndex} documents for ${job.documentType} reports`);
 
         // Process each document through the 3-stage filter
         const matches = [];
-        let totalProcessed = 0;
+        let totalProcessed = isResuming ? job.checkpoint.processedCount : 0;
         let skippedNonPdf = 0;
 
-        for (const document of documents) {
+        for (let i = startIndex; i < documents.length; i++) {
+            const document = documents[i];
+            
             try {
-                // Only process PDF files
-                if (!document.fileName || !document.fileName.toLowerCase().endsWith('.pdf')) {
+                // Only process PDF and DOCX files
+                const fileName = document.fileName ? document.fileName.toLowerCase() : '';
+                if (!fileName.endsWith('.pdf') && !fileName.endsWith('.docx')) {
                     skippedNonPdf++;
                     continue;
                 }
@@ -200,20 +254,92 @@ class ScanJobProcessor {
                         result,
                         customers: job.customers // Send to all assigned customers
                     });
+                    
+                    // Update matches count in checkpoint
+                    job.checkpoint.matchesFound = (job.checkpoint.matchesFound || 0) + 1;
                 } else {
                     logger.info(`❌ No match: ${document.fileName} (stage: ${result.stage})`);
                 }
 
+                // Update checkpoint after each document
+                job.checkpoint.lastProcessedIndex = i;
+                job.checkpoint.lastProcessedFile = document.fileName;
+                job.checkpoint.processedCount = totalProcessed;
+
+                // Save checkpoint more frequently: 
+                // - EVERY document for first 100 (critical crash recovery period)
+                // - Every 100 documents after that
+                // - Every 10,000 documents for progress emails
+                const shouldSave = totalProcessed <= 100 || 
+                                 totalProcessed % SAVE_INTERVAL === 0 || 
+                                 totalProcessed % CHECKPOINT_INTERVAL === 0;
+                
+                if (shouldSave) {
+                    job.checkpoint.lastCheckpointTime = new Date();
+                    await job.save();
+                    
+                    // Only send progress email at CHECKPOINT_INTERVAL milestones
+                    if (totalProcessed % CHECKPOINT_INTERVAL === 0) {
+                        logger.info(`💾 Checkpoint saved at ${totalProcessed} documents`);
+
+                        // Send match emails for all matches found in this batch
+                        if (matches.length > 0 && job.config.autoProcess) {
+                            logger.info(`📧 Sending match emails for ${matches.length} matches found so far...`);
+                            await this.sendMatchEmails(matches, job);
+                            logger.info(`✅ Match emails sent for checkpoint at ${totalProcessed} documents`);
+                        }
+
+                        // Send progress email to all job customers
+                        const customerEmails = job.customers
+                            .filter(c => c.email)
+                            .map(c => c.email);
+
+                        if (customerEmails.length > 0) {
+                            await emailService.sendScanProgressEmail(customerEmails, {
+                                jobName: job.name,
+                                documentType: job.documentType,
+                                startTime: job.checkpoint.scanStartTime,
+                                processedCount: totalProcessed,
+                                totalDocuments: documents.length,
+                                matchesFound: job.checkpoint.matchesFound,
+                                lastProcessedFile: document.fileName,
+                                isCheckpoint: true
+                            });
+                        }
+                    } else if (totalProcessed <= 100) {
+                        // Silent checkpoint save for first 100 docs (critical period)
+                        logger.debug(`💾 Checkpoint saved at ${totalProcessed} documents (early crash protection)`);
+                    } else {
+                        // Silent checkpoint save (no email)
+                        logger.debug(`💾 Checkpoint saved at ${totalProcessed} documents (silent)`);
+                    }
+                }
+
             } catch (error) {
                 logger.error(`❌ Error processing document ${document.fileName}:`, error);
+                
+                // Save checkpoint even on error to allow resume
+                job.checkpoint.lastProcessedIndex = i;
+                job.checkpoint.lastProcessedFile = document.fileName;
+                job.checkpoint.processedCount = totalProcessed;
+                job.checkpoint.isResuming = true; // Mark for resume
+                await job.save();
+                
+                // Re-throw error to trigger scan interruption
+                throw error;
             }
         }
 
+        // Final checkpoint save on completion
+        job.checkpoint.processedCount = totalProcessed;
+        job.checkpoint.isResuming = false; // Clear resume flag
+        await job.save();
+
         if (skippedNonPdf > 0) {
-            logger.info(`⏭️  Skipped ${skippedNonPdf} non-PDF files`);
+            logger.info(`⏭️  Skipped ${skippedNonPdf} unsupported files`);
         }
 
-        logger.info(`✅ Job ${job.jobId} complete: ${matches.length} matches found from ${totalProcessed} PDF documents`);
+        logger.info(`✅ Job ${job.jobId} complete: ${matches.length} matches found from ${totalProcessed} documents`);
 
         // Print validation quotes for sanity check
         if (matches.length > 0) {
@@ -271,10 +397,75 @@ class ScanJobProcessor {
                 const s3Response = await s3.getObject(params).promise();
                 const fileBuffer = s3Response.Body;
 
-                // Extract text from PDF buffer
-                const pdf = require('pdf-parse');
-                const pdfData = await pdf(fileBuffer);
-                documentText = pdfData.text;
+                // Extract text based on file type
+                const isDocx = fileName.toLowerCase().endsWith('.docx');
+                
+                if (isDocx) {
+                    // Extract text from DOCX buffer with error handling
+                    const mammoth = require('mammoth');
+                    
+                    try {
+                        const result = await mammoth.extractRawText({ buffer: fileBuffer });
+                        documentText = result.value;
+                    } catch (docxError) {
+                        // Handle corrupted/malformed DOCX files
+                        logger.error(`❌ DOCX parsing failed for ${fileName}: ${docxError.message}`);
+                        return {
+                            isMatch: false,
+                            stage: 'docx-parse-error',
+                            confidence: 0,
+                            reasoning: 'DOCX is corrupted or malformed',
+                            error: docxError.message
+                        };
+                    }
+                } else {
+                    // Extract text from PDF buffer using pdfjs-dist (more robust than pdf-parse)
+                    const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+                    
+                    try {
+                        // Convert Buffer to Uint8Array (required by pdfjs-dist)
+                        const uint8Array = new Uint8Array(fileBuffer);
+                        
+                        // Load PDF document
+                        const loadingTask = pdfjsLib.getDocument({
+                            data: uint8Array,
+                            useSystemFonts: true,
+                            standardFontDataUrl: null
+                        });
+                        
+                        const pdfDocument = await loadingTask.promise;
+                        const numPages = pdfDocument.numPages;
+                        
+                        // Extract text from all pages
+                        const textPromises = [];
+                        for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+                            textPromises.push(
+                                pdfDocument.getPage(pageNum).then(page => {
+                                    return page.getTextContent().then(textContent => {
+                                        return textContent.items.map(item => item.str).join(' ');
+                                    });
+                                })
+                            );
+                        }
+                        
+                        const pageTexts = await Promise.all(textPromises);
+                        documentText = pageTexts.join('\n');
+                        
+                        // Clean up
+                        await pdfDocument.destroy();
+                        
+                    } catch (pdfError) {
+                        // Handle corrupted/malformed PDFs gracefully
+                        logger.error(`❌ PDF parsing failed for ${fileName}: ${pdfError.message}`);
+                        return {
+                            isMatch: false,
+                            stage: 'pdf-parse-error',
+                            confidence: 0,
+                            reasoning: 'PDF is corrupted or malformed',
+                            error: pdfError.message
+                        };
+                    }
+                }
 
                 if (!documentText || documentText.length < 100) {
                     logger.warn(`⚠️ Insufficient text extracted from ${fileName} (${documentText.length} chars)`);
@@ -303,7 +494,79 @@ class ScanJobProcessor {
                 };
             }
 
-            // Use FI detection service to check if it requests this report type
+            // LAYER 1: Fast structural rejection (no AI cost)
+            const filenameLower = fileName.toLowerCase();
+            
+            // 1a. Filename rejection - responses/submissions
+            const fiResponseIndicators = [
+                'fi_received', 
+                'f.i._received', 
+                'fi received',
+                'response to fi',
+                'fi response',
+                'submitted',
+                'final grant',
+                'decision notification',
+                'grant permission'
+            ];
+            
+            if (fiResponseIndicators.some(indicator => filenameLower.includes(indicator))) {
+                return {
+                    isMatch: false,
+                    stage: 'filename-reject',
+                    confidence: 0,
+                    reasoning: 'Filename indicates response/decision document, not FI request'
+                };
+            }
+
+            // 1b. Document length rejection - reports are typically >100 pages
+            // FI request letters are usually 2-5 pages
+            const estimatedPages = Math.ceil(documentText.length / 2500); // ~2500 chars per page
+            if (estimatedPages > 100) {
+                logger.info(`Rejecting long document: ${estimatedPages} estimated pages (>100)`);
+                return {
+                    isMatch: false,
+                    stage: 'length-reject',
+                    confidence: 0,
+                    reasoning: `Document too long (${estimatedPages} pages) - likely a report, not FI request letter`
+                };
+            }
+
+            // 1c. Report structure markers - consultant reports have specific formatting
+            const reportStructureMarkers = [
+                /table of contents/i,
+                /executive summary/i,
+                /\d+\.\d+\s+(introduction|background|methodology)/i,
+                /this report (?:was|has been) prepared by/i,
+                /prepared on behalf of/i
+            ];
+            
+            const hasReportStructure = reportStructureMarkers.some(pattern => pattern.test(documentText));
+            if (hasReportStructure) {
+                logger.info('Rejecting document with report structure markers');
+                return {
+                    isMatch: false,
+                    stage: 'structure-reject',
+                    confidence: 0,
+                    reasoning: 'Document has consultant report structure (TOC, exec summary, etc.)'
+                };
+            }
+
+            // LAYER 2: Cheap AI pre-filter (uses only first 5k chars)
+            const shouldProcessFully = await fiDetectionService.cheapFIFilter(documentText);
+            if (!shouldProcessFully) {
+                return {
+                    isMatch: false,
+                    stage: 'cheap-ai-reject',
+                    confidence: 0,
+                    reasoning: 'Document unlikely to be FI request (cheap AI filter)'
+                };
+            }
+
+            // 🔍 LOG: Document passed Layer 2 - will process with full AI
+            logger.info(`✅ Layer 2 PASS: ${fileName} - Processing with full AI (${documentText.length} chars)`);
+
+            // LAYER 3: Full AI detection - only for promising candidates
             try {
                 const isFIRequest = await fiDetectionService.detectFIRequest(documentText);
 
@@ -484,6 +747,46 @@ class ScanJobProcessor {
         if (this.scheduledJob) {
             this.scheduledJob.cancel();
             logger.info('🛑 Scan Job Processor stopped');
+        }
+    }
+
+    /**
+     * Check if a job should run based on its schedule frequency
+     */
+    shouldJobRun(job, today) {
+        const scheduleType = job.schedule?.type || 'DAILY';
+        const lastScanDate = job.statistics.lastScanDate
+            ? new Date(job.statistics.lastScanDate)
+            : null;
+
+        if (!lastScanDate) {
+            // Never run before, should run now
+            return true;
+        }
+
+        const lastScanDateStr = lastScanDate.toISOString().split('T')[0];
+        const daysSinceLastScan = Math.floor((new Date(today) - lastScanDate) / (1000 * 60 * 60 * 24));
+
+        switch (scheduleType) {
+            case 'DAILY':
+                // Run if not already run today
+                return lastScanDateStr !== today;
+
+            case 'WEEKLY':
+                // Run if it's been 7+ days since last scan
+                return daysSinceLastScan >= 7;
+
+            case 'MONTHLY':
+                // Run if it's been 30+ days since last scan
+                return daysSinceLastScan >= 30;
+
+            case 'CUSTOM':
+                // For custom schedules, check if already run today
+                return lastScanDateStr !== today;
+
+            default:
+                // Default to daily
+                return lastScanDateStr !== today;
         }
     }
 

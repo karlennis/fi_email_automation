@@ -98,8 +98,9 @@ class DailyRunService {
                 if (lastModified >= dayStart && lastModified < dayEnd) {
                   const key = obj.Key;
                   
-                  // Skip non-PDF files and folders
-                  if (!key.toLowerCase().endsWith('.pdf')) {
+                  // Skip non-PDF/DOCX files and folders
+                  const keyLower = key.toLowerCase();
+                  if (!keyLower.endsWith('.pdf') && !keyLower.endsWith('.docx')) {
                     continue;
                   }
 

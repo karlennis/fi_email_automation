@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px 8px 0 0;
+            margin: -30px -30px 20px -30px;
+        }
+        h1 {
+            margin: 0;
+            font-size: 24px;
+        }
+        .progress-section {
+            background-color: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .stat {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .stat:last-child {
+            border-bottom: none;
+        }
+        .stat-label {
+            font-weight: 600;
+            color: #495057;
+        }
+        .stat-value {
+            color: #212529;
+            font-weight: 500;
+        }
+        .matches {
+            color: #28a745;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background-color: #e9ecef;
+            border-radius: 15px;
+            overflow: hidden;
+            margin: 15px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 14px;
+            transition: width 0.3s ease;
+        }
+        .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #e9ecef;
+            color: #6c757d;
+            font-size: 12px;
+        }
+        .checkpoint-info {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 12px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .checkpoint-info strong {
+            color: #856404;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 Scan Progress Update</h1>
+        </div>
+        
+        <p>Hello,</p>
+        
+        <p>This is an automated progress update for the ongoing document scan:</p>
+        
+        <div class="progress-section">
+            <h3 style="margin-top: 0;">📊 Scan Details</h3>
+            <div class="stat">
+                <span class="stat-label">Job Name:</span>
+                <span class="stat-value">{{jobName}}</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Document Type:</span>
+                <span class="stat-value">{{documentType}}</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Started:</span>
+                <span class="stat-value">{{startTime}}</span>
+            </div>
+        </div>
+
+        <div class="progress-bar">
+            <div class="progress-fill" style="width: {{progressPercentage}}%;">
+                {{progressPercentage}}%
+            </div>
+        </div>
+
+        <div class="progress-section">
+            <h3 style="margin-top: 0;">📈 Progress Statistics</h3>
+            <div class="stat">
+                <span class="stat-label">Documents Processed:</span>
+                <span class="stat-value">{{processedCount}} / {{totalDocuments}}</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Remaining:</span>
+                <span class="stat-value">{{remainingCount}}</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Matches Found:</span>
+                <span class="stat-value matches">{{matchesFound}}</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Last Processed File:</span>
+                <span class="stat-value" style="font-size: 11px;">{{lastProcessedFile}}</span>
+            </div>
+        </div>
+
+        {{#if isCheckpoint}}
+        <div class="checkpoint-info">
+            <strong>💾 Checkpoint Saved</strong><br>
+            Progress has been saved. If the scan is interrupted, it will automatically resume from document #{{processedCount}}.
+        </div>
+        {{/if}}
+
+        <p style="margin-top: 20px;">
+            The scan is still in progress. You will receive another update when the next checkpoint is reached or when the scan completes.
+        </p>
+
+        <div class="footer">
+            <p>
+                <strong>FI Email Automation System</strong><br>
+                This is an automated message. Please do not reply to this email.
+            </p>
+        </div>
+    </div>
+</body>
+</html>

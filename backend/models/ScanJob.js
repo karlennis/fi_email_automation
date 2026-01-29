@@ -43,6 +43,31 @@ const ScanJobSchema = new mongoose.Schema({
     },
     checkpointTimestamp: Date
   },
+  checkpoint: {
+    lastProcessedIndex: {
+      type: Number,
+      default: 0
+    },
+    lastProcessedFile: String,
+    totalDocuments: {
+      type: Number,
+      default: 0
+    },
+    processedCount: {
+      type: Number,
+      default: 0
+    },
+    matchesFound: {
+      type: Number,
+      default: 0
+    },
+    scanStartTime: Date,
+    lastCheckpointTime: Date,
+    isResuming: {
+      type: Boolean,
+      default: false
+    }
+  },
   customers: [{
     customerId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -54,14 +79,21 @@ const ScanJobSchema = new mongoose.Schema({
   schedule: {
     type: {
       type: String,
-      enum: ['DAILY', 'WEEKLY', 'CUSTOM'],
+      enum: ['DAILY', 'WEEKLY', 'MONTHLY', 'CUSTOM'],
       default: 'DAILY'
     },
     timeOfDay: {
       type: String,
       default: '09:00'
     },
-    daysOfWeek: [Number]
+    daysOfWeek: [Number],
+    // How many days to look back when scanning
+    lookbackDays: {
+      type: Number,
+      default: 1, // Default: scan documents from yesterday
+      min: 1,
+      max: 365
+    }
   },
   statistics: {
     totalScans: {

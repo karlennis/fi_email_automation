@@ -99,7 +99,10 @@ class S3Service {
         const response = await this.s3.listObjectsV2(params).promise();
 
         const documents = response.Contents
-          .filter(obj => obj.Key.toLowerCase().endsWith('.pdf'))
+          .filter(obj => {
+            const key = obj.Key.toLowerCase();
+            return key.endsWith('.pdf') || key.endsWith('.docx');
+          })
           .map(obj => ({
             key: obj.Key,
             fileName: path.basename(obj.Key),
@@ -473,7 +476,10 @@ class S3Service {
               const response = await this.s3.listObjectsV2(params).promise();
 
               const documents = response.Contents
-                .filter(obj => obj.Key.toLowerCase().endsWith('.pdf'))
+                .filter(obj => {
+                  const key = obj.Key.toLowerCase();
+                  return key.endsWith('.pdf') || key.endsWith('.docx');
+                })
                 .map(obj => ({
                   key: obj.Key,
                   fileName: path.basename(obj.Key),
@@ -539,7 +545,10 @@ class S3Service {
       const response = await this.s3.listObjectsV2(params).promise();
 
       const documents = response.Contents
-        .filter(obj => obj.Key.toLowerCase().endsWith('.pdf'))
+        .filter(obj => {
+          const key = obj.Key.toLowerCase();
+          return key.endsWith('.pdf') || key.endsWith('.docx');
+        })
         .map(obj => ({
           key: obj.Key,
           fileName: path.basename(obj.Key),

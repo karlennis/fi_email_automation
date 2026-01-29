@@ -613,10 +613,76 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
   }
 
   /**
-   * Detect if document is an FI request
+   * LAYER 2: Cheap AI pre-filter
+   * Uses first 10k chars (~4 pages) + last 5k chars with simple yes/no prompt
+   * Cost: ~75% cheaper than full analysis
+   * Purpose: Fast rejection of unrelated documents (invoices, photos, general correspondence)
+   * Checks both beginning (standalone FI letters) and end (FI recommendations in reports)
+   */
+  async cheapFIFilter(documentText) {
+    try {
+      // Check beginning (first 10k) and end (last 5k) to catch both:
+      // - Standalone FI request letters (start at beginning)
+      // - FI recommendations at end of planning reports
+      let sampleText;
+      if (documentText.length <= 10000) {
+        sampleText = documentText;
+      } else if (documentText.length <= 15000) {
+        sampleText = documentText.substring(0, 10000);
+      } else {
+        // Take first 10k + last 5k
+        const beginning = documentText.substring(0, 10000);
+        const ending = documentText.substring(documentText.length - 5000);
+        sampleText = beginning + "\n\n[...document middle omitted...]\n\n" + ending;
+      }
+      
+      const prompt = `Does this document REQUEST further information about a planning application?
+
+Answer YES only if:
+- A planning authority is REQUESTING information from an applicant/agent
+- It uses language like "you are requested to submit", "please provide", "further information is required"
+
+Answer NO if:
+- It's responding TO a request ("in response to your request")
+- It's a technical report or study
+- It's a decision letter (granting/refusing permission)
+- It's unrelated to planning (invoice, photo, general correspondence)
+
+Document sample:
+${sampleText}
+
+Answer with just YES or NO.`;
+
+      const result = await this.client.chat.completions.create({
+        model: this.MODEL,
+        messages: [
+          { role: "system", content: "You are a document classifier. Answer only YES or NO." },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0,
+        max_tokens: 10
+      });
+
+      const answer = result.choices[0].message.content.trim().toUpperCase();
+      const passes = answer.includes('YES');
+      
+      logger.info(`Cheap AI filter: ${passes ? 'PASS' : 'REJECT'} (answer: ${answer})`);
+      return passes;
+    } catch (error) {
+      logger.error('Error in cheap AI filter:', error);
+      // On error, let it pass to full analysis (fail open)
+      return true;
+    }
+  }
+
+  /**
+   * LAYER 3: Full AI detection
+   * Detect if document is an FI request (no pre-screening, let AI decide)
    */
   async detectFIRequest(documentText) {
     try {
+      // No pre-screening here - Layer 1 (structural) and Layer 2 (cheap AI) already filtered
+      // Let full AI handle all nuanced detection
       const result = await this.runChat(
         [
           { role: "system", content: this.SYSTEM_FI_DETECT },
@@ -636,17 +702,47 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
   /**
    * Check if FI request matches target report type
    * Returns object with match result and validation quote
+   * NOTE: Quick filter bypassed - AI handles all detection to reduce false negatives
+   * BUT negative indicators are still checked to reject obvious responses
    */
   async matchFIRequestType(documentText, targetReportType) {
     try {
-      // Quick pre-filter - this sets _lastMatchingSentence
-      if (!this.quickKeywordFilter(documentText, targetReportType)) {
-        return { matches: false };
+      // GATE 1: Check for negative indicators (responses, not requests)
+      // CRITICAL: Only use phrases that are EXCLUSIVE to responses/reports
+      const negativeFIIndicators = [
+        "response to further information",
+        "in response to your request for further information",
+        "following your request for further information",
+        "the further information received",
+        "further information has been received",
+        "fi received",
+        "f.i. received",
+        "we have submitted the following",
+        "enclosed please find the requested",
+        "attached herewith the further information",
+        "permission is hereby granted",
+        "it is proposed to grant permission",
+        "decision to grant permission",
+        "it is proposed to refuse permission",
+        "decision to refuse permission",
+        // Consultant report indicators
+        "were engaged to undertake",
+        "were engaged by",
+        "commissioned to undertake",
+        "this report has been prepared by"
+      ];
+
+      const textLower = documentText.toLowerCase();
+      
+      // Reject if contains negative indicators
+      if (negativeFIIndicators.some(indicator => textLower.includes(indicator))) {
+        return {
+          matches: false,
+          validationQuote: 'Rejected: Document appears to be a response/decision, not a request'
+        };
       }
 
-      // Store the matching sentence from keyword filter
-      const matchingSentence = this._lastMatchingSentence || '';
-
+      // Send directly to AI without positive pre-filtering
       const result = await this.runChat(
         [
           { role: "system", content: this.SYSTEM_FI_MATCH },
@@ -656,14 +752,133 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
         "match_fi_request"
       );
 
+      // If it matches, extract a validation quote from the document
+      let validationQuote = 'No specific quote extracted';
+      if (result.requestsReportType) {
+        validationQuote = this.extractValidationQuote(documentText, targetReportType);
+        
+        // POST-AI VALIDATION: Verify the validation quote actually mentions the target report type
+        // This catches false positives where AI says "yes" but can't find actual request text
+        if (validationQuote && validationQuote !== 'No specific quote extracted') {
+          const reportTypeTerms = {
+            "acoustic": ["noise", "sound", "acoustic", "decibel", "db", "vibration"],
+            "transport": ["traffic", "vehicle", "highway", "road", "parking", "transport", "mobility"],
+            "ecological": ["ecology", "ecological", "habitat", "species", "biodiversity", "wildlife"],
+            "flood": ["flood", "drainage", "suds", "hydrology", "water", "surface water"],
+            "heritage": ["heritage", "archaeological", "historic", "conservation", "listed"],
+            "lighting": ["lighting", "light", "illumination", "luminaire", "lux"]
+          };
+          
+          const terms = reportTypeTerms[targetReportType.toLowerCase()] || [targetReportType];
+          const quoteContainsReportType = terms.some(term => 
+            validationQuote.toLowerCase().includes(term.toLowerCase())
+          );
+          
+          if (!quoteContainsReportType) {
+            logger.info(`Post-AI validation failed: Quote doesn't mention ${targetReportType}. Quote: "${validationQuote.substring(0, 100)}..."`);
+            return {
+              matches: false,
+              validationQuote: `Rejected: AI matched but validation quote doesn't mention ${targetReportType}`
+            };
+          }
+        } else {
+          // No validation quote found - reject
+          logger.info(`Post-AI validation failed: No validation quote found for ${targetReportType}`);
+          return {
+            matches: false,
+            validationQuote: 'Rejected: No validation quote containing request found'
+          };
+        }
+      }
+
       return {
         matches: result.requestsReportType,
-        validationQuote: matchingSentence
+        validationQuote: validationQuote
       };
     } catch (error) {
       logger.error('Error matching FI request type:', error);
       throw error;
     }
+  }
+
+  /**
+   * Extract a validation quote from document text
+   * Finds sentences containing both request verbs and report type keywords
+   */
+  extractValidationQuote(documentText, targetReportType) {
+    const requestVerbs = [
+      "submit", "provide", "prepare", "carry out", "undertake", "produce",
+      "supply", "required", "requested", "necessary", "should be submitted",
+      "must be provided", "needs to be", "please submit", "you are requested",
+      "the applicant is requested", "further information", "clarification"
+    ];
+
+    // Response document indicators - if we see these, it's NOT a request
+    const responseIndicators = [
+      "this report",
+      "this assessment",
+      "executive summary",
+      "table of contents",
+      "methodology",
+      "prepared by",
+      "report prepared",
+      "conclusions and recommendations",
+      "findings",
+      "survey results",
+      "results section"
+    ];
+
+    const reportTypeTerms = {
+      "acoustic": ["noise", "sound", "acoustic", "decibel", "db", "vibration", "noise assessment", "sound level"],
+      "transport": ["traffic", "vehicle", "highway", "road", "parking", "transport assessment", "car park", "mobility", "transport"],
+      "ecological": ["ecology", "wildlife", "habitat", "species", "biodiversity", "environment", "ecological", "nature", "flora", "fauna"],
+      "flood": ["drainage", "water", "sewage", "storm", "rainfall", "suds", "surface water", "attenuation", "flood"],
+      "heritage": ["archaeological", "historic", "conservation", "listed", "cultural", "monument", "archaeology", "heritage"],
+      "arboricultural": ["tree", "trees", "vegetation", "landscape", "planting", "hedge", "woodland", "green", "arboricultural"],
+      "waste": ["waste", "refuse", "recycling", "bin", "storage", "collection", "disposal"],
+      "lighting": ["lighting", "light", "illumination", "lumens", "lux", "lamp"]
+    };
+
+    const textLower = documentText.toLowerCase();
+    const sentences = this.splitIntoSentences(textLower);
+    const terms = reportTypeTerms[targetReportType.toLowerCase()] || [targetReportType.toLowerCase()];
+
+    // Find sentences with both request verbs and report type terms
+    // BUT reject if it contains response/report language
+    for (let i = 0; i < sentences.length; i++) {
+      const sentence = sentences[i];
+      const hasVerb = requestVerbs.some(v => sentence.includes(v));
+      const hasTerm = terms.some(t => sentence.includes(t));
+      const hasResponseIndicator = responseIndicators.some(r => sentence.includes(r));
+
+      if (hasVerb && hasTerm && !hasResponseIndicator) {
+        // Return first 200 chars of matching sentence
+        return sentence.substring(0, 200) + (sentence.length > 200 ? '...' : '');
+      }
+
+      // Check adjacent sentences
+      if (i + 1 < sentences.length) {
+        const combo = sentence + " " + sentences[i + 1];
+        const hasVerb2 = requestVerbs.some(v => combo.includes(v));
+        const hasTerm2 = terms.some(t => combo.includes(t));
+        const hasResponse2 = responseIndicators.some(r => combo.includes(r));
+        if (hasVerb2 && hasTerm2 && !hasResponse2) {
+          return combo.substring(0, 200) + (combo.length > 200 ? '...' : '');
+        }
+      }
+    }
+
+    // Fallback: return first mention of report type with context
+    for (const term of terms) {
+      const idx = textLower.indexOf(term);
+      if (idx !== -1) {
+        const start = Math.max(0, idx - 50);
+        const end = Math.min(textLower.length, idx + 150);
+        return '...' + documentText.substring(start, end) + '...';
+      }
+    }
+
+    return 'Match confirmed by AI but no specific quote extracted';
   }
 
   /**

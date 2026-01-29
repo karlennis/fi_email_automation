@@ -85,6 +85,10 @@ class EmailService {
       const fiBatchTemplateContent = await this.loadTemplate('fi-batch-notification');
       this.templates.set('fi-batch-notification', handlebars.compile(fiBatchTemplateContent));
 
+      // Load scan progress template
+      const scanProgressTemplateContent = await this.loadTemplate('scan-progress');
+      this.templates.set('scan-progress', handlebars.compile(scanProgressTemplateContent));
+
       // Load welcome email template
       const welcomeTemplateContent = await this.loadTemplate('welcome');
       this.templates.set('welcome', handlebars.compile(welcomeTemplateContent));
@@ -569,6 +573,58 @@ class EmailService {
       return { success: true, message: 'SMTP connection successful' };
     } catch (error) {
       logger.error('SMTP connection test failed:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Send scan progress notification email
+   */
+  async sendScanProgressEmail(toEmails, progressData) {
+    try {
+      if (!this.transporter) {
+        logger.warn('Email service not configured, skipping progress email');
+        return { success: false, reason: 'Email service not configured' };
+      }
+
+      const template = this.templates.get('scan-progress');
+      if (!template) {
+        logger.error('Scan progress template not found');
+        return { success: false, reason: 'Template not found' };
+      }
+
+      const htmlContent = template({
+        jobName: progressData.jobName,
+        documentType: progressData.documentType,
+        startTime: new Date(progressData.startTime).toLocaleString(),
+        processedCount: progressData.processedCount.toLocaleString(),
+        totalDocuments: progressData.totalDocuments.toLocaleString(),
+        remainingCount: (progressData.totalDocuments - progressData.processedCount).toLocaleString(),
+        matchesFound: progressData.matchesFound,
+        lastProcessedFile: progressData.lastProcessedFile,
+        progressPercentage: Math.round((progressData.processedCount / progressData.totalDocuments) * 100),
+        isCheckpoint: progressData.isCheckpoint
+      });
+
+      const mailOptions = {
+        from: process.env.SMTP_USER,
+        to: toEmails.join(', '),
+        subject: `Scan Progress: ${progressData.processedCount.toLocaleString()}/${progressData.totalDocuments.toLocaleString()} documents processed`,
+        html: htmlContent
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+
+      logger.info(`📧 Progress email sent to ${toEmails.length} recipients (${progressData.processedCount}/${progressData.totalDocuments} docs)`);
+
+      return {
+        success: true,
+        messageId: result.messageId,
+        recipients: toEmails.length
+      };
+
+    } catch (error) {
+      logger.error('Error sending progress email:', error);
       return { success: false, error: error.message };
     }
   }
