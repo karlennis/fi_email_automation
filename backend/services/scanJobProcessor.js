@@ -337,11 +337,17 @@ class ScanJobProcessor {
                         logger.info(`💾 Checkpoint saved at ${totalProcessed} documents`);
 
                         // Send match emails for all matches found in this batch
-                        if (matches.length > 0 && job.config.autoProcess) {
+                        // Default autoProcess to true if undefined (for backward compatibility with existing jobs)
+                        const autoProcess = job.config.autoProcess !== false; // true if undefined or true, false only if explicitly false
+                        logger.info(`🔍 Match email check: matches.length=${matches.length}, autoProcess=${autoProcess} (raw: ${job.config.autoProcess})`);
+                        
+                        if (matches.length > 0 && autoProcess) {
                             logger.info(`📧 Sending match emails for ${matches.length} matches found so far...`);
                             await this.sendMatchEmails(matches, job);
                             logger.info(`✅ Match emails sent for checkpoint at ${totalProcessed} documents`);
                             matches = []; // Clear matches after sending to avoid duplicates
+                        } else if (matches.length > 0 && !autoProcess) {
+                            logger.warn(`⚠️ Found ${matches.length} matches but autoProcess is disabled - skipping match emails`);
                         }
 
                         // Send progress email to all job customers
@@ -409,7 +415,9 @@ class ScanJobProcessor {
         }
 
         // Send emails for matches
-        if (matches.length > 0 && job.config.autoProcess) {
+        // Default autoProcess to true if undefined (for backward compatibility with existing jobs)
+        const autoProcess = job.config.autoProcess !== false;
+        if (matches.length > 0 && autoProcess) {
             await this.sendMatchEmails(matches, job);
         }
 
