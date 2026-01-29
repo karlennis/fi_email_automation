@@ -23,7 +23,26 @@ const logger = winston.createLogger({
 class ScheduledJobManager {
   constructor() {
     this.activeSchedules = new Map(); // jobId -> node-schedule job
-    this.initializeScheduledJobs();
+    this.initialized = false;
+    // Don't initialize immediately - wait for explicit call after DB connection
+  }
+
+  /**
+   * Initialize the scheduled job manager
+   * Should be called after MongoDB connection is established
+   */
+  async initialize() {
+    if (this.initialized) {
+      return;
+    }
+
+    try {
+      await this.initializeScheduledJobs();
+      this.initialized = true;
+    } catch (error) {
+      logger.error('Failed to initialize scheduled job manager:', error);
+      throw error;
+    }
   }
 
   /**

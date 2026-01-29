@@ -31,6 +31,7 @@ const documentRegisterScheduler = require('./services/documentRegisterScheduler'
 const scanJobProcessor = require('./services/scanJobProcessor');
 const dailyRunService = require('./services/dailyRunService');
 const dailyRunWorker = require('./services/dailyRunWorker');
+const scheduledJobManager = require('./services/scheduledJobManager');
 
 // Configure logger
 const logger = winston.createLogger({
@@ -54,6 +55,10 @@ const logger = winston.createLogger({
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Trust proxy - REQUIRED for Render.com and other cloud platforms
+// This allows Express to properly read X-Forwarded-For headers
+app.set('trust proxy', 1);
 
 // Health check endpoint - MUST be first, before any middleware
 // This prevents Render health checks from being rate-limited (429 errors)
@@ -167,6 +172,11 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/fi-email-
 .then(() => {
   logger.info('Connected to MongoDB');
 
+  // Initialize scheduled job manager after DB connection
+  scheduledJobManager.initialize()
+    .then(() => logger.info('Scheduled job manager initialized successfully'))
+    .catch(error => logger.error('Failed to initialize scheduled job manager:', error));
+
   // Initialize document register scheduler after DB connection
   try {
     documentRegisterScheduler.initialize();
@@ -216,12 +226,12 @@ app.listen(PORT, () => {
 // This helps save checkpoint state before crashes
 process.on('uncaughtException', async (error) => {
   logger.error('❌ UNCAUGHT EXCEPTION - Process will terminate:', error);
-  
+
   try {
     // Try to save checkpoint for any active scan jobs
     const ScanJob = require('./models/ScanJob');
     const activeScanJobs = await ScanJob.find({ status: 'active' });
-    
+
     for (const job of activeScanJobs) {
       if (job.checkpoint && !job.checkpoint.isResuming) {
         job.checkpoint.isResuming = true;
@@ -232,7 +242,7 @@ process.on('uncaughtException', async (error) => {
   } catch (saveError) {
     logger.error('Failed to save emergency checkpoint:', saveError);
   }
-  
+
   // Give it a second to flush logs, then exit
   setTimeout(() => {
     process.exit(1);
