@@ -233,6 +233,8 @@ router.post('/jobs/:jobId/run-now', authenticate, requireAdmin, async (req, res)
     // Update job status to RUNNING immediately
     job.status = 'RUNNING';
     await job.save();
+    
+    logger.info(`✅ Job status set to RUNNING: ${jobId}`);
 
     // Send immediate response - don't wait for scan to complete
     res.json({
@@ -244,7 +246,16 @@ router.post('/jobs/:jobId/run-now', authenticate, requireAdmin, async (req, res)
     // Process job asynchronously in background (don't await)
     setImmediate(async () => {
       try {
-        await scanJobProcessor.processJob(job, targetDate);
+        // Reload job to ensure we have latest state
+        const activeJob = await ScanJob.findOne({ jobId })
+          .populate('customers.customerId', 'email company name projectId');
+        
+        if (!activeJob) {
+          logger.error(`Job ${jobId} not found when starting background process`);
+          return;
+        }
+        
+        await scanJobProcessor.processJob(activeJob, targetDate);
         logger.info(`✅ Manual run completed for job: ${jobId}`);
       } catch (error) {
         logger.error(`❌ Manual run failed for job ${jobId}:`, error);
@@ -253,7 +264,9 @@ router.post('/jobs/:jobId/run-now', authenticate, requireAdmin, async (req, res)
           const failedJob = await ScanJob.findOne({ jobId });
           if (failedJob) {
             failedJob.status = 'ACTIVE';
+            failedJob.checkpoint.isResuming = true; // Mark for resume
             await failedJob.save();
+            logger.info(`Job ${jobId} marked for resume after error`);
           }
         } catch (saveError) {
           logger.error('Failed to update job status after error:', saveError);

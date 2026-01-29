@@ -60,12 +60,19 @@ class ScanJobProcessor {
         this.isRunning = true;
 
         try {
-            // Get all active jobs
-            const activeJobs = await ScanJob.find({ status: 'ACTIVE' })
+            // Get all active and running jobs
+            const activeJobs = await ScanJob.find({ status: { $in: ['ACTIVE', 'RUNNING'] } })
                 .populate('customers.customerId', 'email company name projectId');
 
+            // Log all jobs for debugging
+            const allJobs = await ScanJob.find({});
+            logger.info(`📊 Total jobs in database: ${allJobs.length}`);
+            for (const job of allJobs) {
+                logger.info(`  - ${job.jobId}: status=${job.status}, checkpoint=${job.checkpoint?.processedCount || 0}/${job.checkpoint?.totalDocuments || 0}, isResuming=${job.checkpoint?.isResuming || false}`);
+            }
+
             if (activeJobs.length === 0) {
-                logger.info('📋 No active scan jobs to process');
+                logger.info('📋 No active/running scan jobs to process');
                 return;
             }
 
@@ -299,7 +306,17 @@ class ScanJobProcessor {
                     
                     // Log memory usage at checkpoints
                     const memUsage = process.memoryUsage();
-                    logger.info(`💾 Memory: ${(memUsage.heapUsed / 1024 / 1024).toFixed(2)}MB / ${(memUsage.heapTotal / 1024 / 1024).toFixed(2)}MB (RSS: ${(memUsage.rss / 1024 / 1024).toFixed(2)}MB)`);
+                    const rssInMB = memUsage.rss / 1024 / 1024;
+                    logger.info(`💾 Memory: ${(memUsage.heapUsed / 1024 / 1024).toFixed(2)}MB / ${(memUsage.heapTotal / 1024 / 1024).toFixed(2)}MB (RSS: ${rssInMB.toFixed(2)}MB)`);
+                    
+                    // Circuit breaker: Stop if memory exceeds 450MB (88% of 512MB Render limit)
+                    if (rssInMB > 450) {
+                        logger.error(`🚨 MEMORY LIMIT APPROACHING: ${rssInMB.toFixed(2)}MB / 512MB - Stopping scan to prevent crash`);
+                        job.checkpoint.isResuming = true;
+                        job.status = 'PAUSED';
+                        await job.save();
+                        throw new Error(`Memory limit reached at ${rssInMB.toFixed(2)}MB - scan paused for safety`);
+                    }
                     
                     // Force garbage collection if available (run with --expose-gc flag)
                     if (global.gc && totalProcessed % 1000 === 0) {
