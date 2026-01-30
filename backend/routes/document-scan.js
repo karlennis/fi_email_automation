@@ -3,7 +3,9 @@ const router = express.Router();
 const ScanJob = require('../models/ScanJob');
 const Customer = require('../models/Customer');
 const { authenticate, requireAdmin } = require('../middleware/auth');
+
 const logger = require('../utils/logger');
+const { enqueueScanJob } = require('../services/scanJobQueue');
 
 /**
  * GET /api/document-scan/jobs
