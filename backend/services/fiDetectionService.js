@@ -401,6 +401,9 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
     try {
       logger.info(`Extracting text from: ${filePath}`);
 
+      // Yield to event loop before heavy PDF parsing
+      await new Promise(resolve => setImmediate(resolve));
+
       const pdfParse = require('pdf-parse');
       const fs = require('fs');
 
@@ -621,6 +624,9 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
    */
   async cheapFIFilter(documentText) {
     try {
+      // Yield to event loop before AI call to prevent health check timeouts
+      await new Promise(resolve => setImmediate(resolve));
+      
       // Check beginning (first 10k) and end (last 5k) to catch both:
       // - Standalone FI request letters (start at beginning)
       // - FI recommendations at end of planning reports
