@@ -82,10 +82,10 @@ class ScanJobProcessor {
                 try {
                     // Check if this job needs to resume from a crash
                     const needsResume = job.checkpoint && job.checkpoint.isResuming;
-                    
+
                     // Also check for interrupted scans (status=RUNNING on startup means crashed mid-scan)
                     const wasInterrupted = job.status === 'RUNNING' && job.checkpoint && job.checkpoint.processedCount > 0;
-                    
+
                     if (needsResume || wasInterrupted) {
                         if (wasInterrupted) {
                             logger.info(`🔄 Job ${job.jobId} was interrupted mid-scan (found RUNNING status), resuming from ${job.checkpoint.processedCount} documents...`);
@@ -98,10 +98,10 @@ class ScanJobProcessor {
                         await this.processJob(job);
                         continue;
                     }
-                    
+
                     // Check if this job should run based on its schedule
                     const shouldRun = this.shouldJobRun(job, today);
-                    
+
                     if (!shouldRun) {
                         const scheduleType = job.schedule?.type || 'DAILY';
                         logger.info(`⏭️ Job ${job.jobId} not scheduled to run (${scheduleType} schedule)`);
@@ -149,20 +149,20 @@ class ScanJobProcessor {
         } else {
             // Use lookback period from job configuration
             const lookbackDays = job.schedule?.lookbackDays || 1; // Default to 1 day if not specified
-            
+
             // End date: yesterday (don't include today's partial data)
             scanEndDate = new Date();
             scanEndDate.setDate(scanEndDate.getDate() - 1);
             scanEndDate.setHours(23, 59, 59, 999);
-            
+
             // Start date: lookbackDays ago
             scanStartDate = new Date(scanEndDate);
             scanStartDate.setDate(scanStartDate.getDate() - lookbackDays + 1); // +1 because we include the end day
             scanStartDate.setHours(0, 0, 0, 0);
-            
+
             const startDateStr = scanStartDate.toISOString().split('T')[0];
             const endDateStr = scanEndDate.toISOString().split('T')[0];
-            
+
             if (lookbackDays === 1) {
                 logger.info(`📅 Scanning documents from ${endDateStr} (1 day lookback)`);
             } else {
@@ -243,20 +243,20 @@ class ScanJobProcessor {
         logger.info(`🔍 Scanning ${documents.length - startIndex} documents for ${job.documentType} reports`);
 
         // Process each document through the 3-stage filter
-        const matches = [];
+        let matches = []; // Use let instead of const so we can clear after sending
         let totalProcessed = isResuming ? job.checkpoint.processedCount : 0;
         let skippedNonPdf = 0;
 
         for (let i = startIndex; i < documents.length; i++) {
             const document = documents[i];
-            
+
             try {
                 // Yield control to event loop every 10 documents to prevent health check timeouts
                 // This allows /health endpoint to respond even during heavy processing
                 if (totalProcessed > 0 && totalProcessed % 10 === 0) {
                     await new Promise(resolve => setImmediate(resolve));
                 }
-                
+
                 // Only process PDF and DOCX files
                 const fileName = document.fileName ? document.fileName.toLowerCase() : '';
                 if (!fileName.endsWith('.pdf') && !fileName.endsWith('.docx')) {
@@ -269,12 +269,12 @@ class ScanJobProcessor {
                 logger.info(`🔍 [${totalProcessed}/${documents.length - skippedNonPdf}] Scanning: ${document.projectId}/${document.fileName}`);
 
                 const result = await this.processDocument(document, job);
-                
+
                 // Clear large objects from memory immediately after processing
                 if (result && result.extractedText) {
                     delete result.extractedText; // Free extracted text from memory
                 }
-                
+
                 // Null out document buffer if it exists
                 if (document.buffer) {
                     document.buffer = null;
@@ -287,7 +287,7 @@ class ScanJobProcessor {
                         result,
                         customers: job.customers // Send to all assigned customers
                     });
-                    
+
                     // Update matches count in checkpoint
                     job.checkpoint.matchesFound = (job.checkpoint.matchesFound || 0) + 1;
                 } else {
@@ -299,22 +299,22 @@ class ScanJobProcessor {
                 job.checkpoint.lastProcessedFile = document.fileName;
                 job.checkpoint.processedCount = totalProcessed;
 
-                // Save checkpoint more frequently: 
+                // Save checkpoint more frequently:
                 // - EVERY document for first 100 (critical crash recovery period)
                 // - Every 100 documents after that
                 // - Every 10,000 documents for progress emails
-                const shouldSave = totalProcessed <= 100 || 
-                                 totalProcessed % SAVE_INTERVAL === 0 || 
+                const shouldSave = totalProcessed <= 100 ||
+                                 totalProcessed % SAVE_INTERVAL === 0 ||
                                  totalProcessed % CHECKPOINT_INTERVAL === 0;
-                
+
                 if (shouldSave) {
                     job.checkpoint.lastCheckpointTime = new Date();
-                    
+
                     // Log memory usage at checkpoints
                     const memUsage = process.memoryUsage();
                     const rssInMB = memUsage.rss / 1024 / 1024;
                     logger.info(`💾 Memory: ${(memUsage.heapUsed / 1024 / 1024).toFixed(2)}MB / ${(memUsage.heapTotal / 1024 / 1024).toFixed(2)}MB (RSS: ${rssInMB.toFixed(2)}MB)`);
-                    
+
                     // Circuit breaker: Stop if memory exceeds 1800MB (90% of 2GB Render limit)
                     if (rssInMB > 1800) {
                         logger.error(`🚨 MEMORY LIMIT APPROACHING: ${rssInMB.toFixed(2)}MB / 2048MB - Stopping scan to prevent crash`);
@@ -323,15 +323,15 @@ class ScanJobProcessor {
                         await job.save();
                         throw new Error(`Memory limit reached at ${rssInMB.toFixed(2)}MB - scan paused for safety`);
                     }
-                    
+
                     // Force garbage collection if available (run with --expose-gc flag)
                     if (global.gc && totalProcessed % 1000 === 0) {
                         global.gc();
                         logger.info('🗑️ Forced garbage collection');
                     }
-                    
+
                     await job.save();
-                    
+
                     // Only send progress email at CHECKPOINT_INTERVAL milestones
                     if (totalProcessed % CHECKPOINT_INTERVAL === 0) {
                         logger.info(`💾 Checkpoint saved at ${totalProcessed} documents`);
@@ -340,7 +340,7 @@ class ScanJobProcessor {
                         // Default autoProcess to true if undefined (for backward compatibility with existing jobs)
                         const autoProcess = job.config.autoProcess !== false; // true if undefined or true, false only if explicitly false
                         logger.info(`🔍 Match email check: matches.length=${matches.length}, autoProcess=${autoProcess} (raw: ${job.config.autoProcess})`);
-                        
+
                         if (matches.length > 0 && autoProcess) {
                             logger.info(`📧 Sending match emails for ${matches.length} matches found so far...`);
                             await this.sendMatchEmails(matches, job);
@@ -378,14 +378,14 @@ class ScanJobProcessor {
 
             } catch (error) {
                 logger.error(`❌ Error processing document ${document.fileName}:`, error);
-                
+
                 // Save checkpoint even on error to allow resume
                 job.checkpoint.lastProcessedIndex = i;
                 job.checkpoint.lastProcessedFile = document.fileName;
                 job.checkpoint.processedCount = totalProcessed;
                 job.checkpoint.isResuming = true; // Mark for resume
                 await job.save();
-                
+
                 // Re-throw error to trigger scan interruption
                 throw error;
             }
@@ -462,11 +462,11 @@ class ScanJobProcessor {
 
                 // Extract text based on file type
                 const isDocx = fileName.toLowerCase().endsWith('.docx');
-                
+
                 if (isDocx) {
                     // Extract text from DOCX buffer with error handling
                     const mammoth = require('mammoth');
-                    
+
                     try {
                         const result = await mammoth.extractRawText({ buffer: fileBuffer });
                         documentText = result.value;
@@ -484,21 +484,21 @@ class ScanJobProcessor {
                 } else {
                     // Extract text from PDF buffer using pdfjs-dist (more robust than pdf-parse)
                     const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
-                    
+
                     try {
                         // Convert Buffer to Uint8Array (required by pdfjs-dist)
                         const uint8Array = new Uint8Array(fileBuffer);
-                        
+
                         // Load PDF document
                         const loadingTask = pdfjsLib.getDocument({
                             data: uint8Array,
                             useSystemFonts: true,
                             standardFontDataUrl: null
                         });
-                        
+
                         const pdfDocument = await loadingTask.promise;
                         const numPages = pdfDocument.numPages;
-                        
+
                         // Extract text from all pages
                         const textPromises = [];
                         for (let pageNum = 1; pageNum <= numPages; pageNum++) {
@@ -510,13 +510,13 @@ class ScanJobProcessor {
                                 })
                             );
                         }
-                        
+
                         const pageTexts = await Promise.all(textPromises);
                         documentText = pageTexts.join('\n');
-                        
+
                         // Clean up
                         await pdfDocument.destroy();
-                        
+
                     } catch (pdfError) {
                         // Handle corrupted/malformed PDFs gracefully
                         logger.error(`❌ PDF parsing failed for ${fileName}: ${pdfError.message}`);
@@ -559,11 +559,11 @@ class ScanJobProcessor {
 
             // LAYER 1: Fast structural rejection (no AI cost)
             const filenameLower = fileName.toLowerCase();
-            
+
             // 1a. Filename rejection - responses/submissions
             const fiResponseIndicators = [
-                'fi_received', 
-                'f.i._received', 
+                'fi_received',
+                'f.i._received',
                 'fi received',
                 'response to fi',
                 'fi response',
@@ -572,7 +572,7 @@ class ScanJobProcessor {
                 'decision notification',
                 'grant permission'
             ];
-            
+
             if (fiResponseIndicators.some(indicator => filenameLower.includes(indicator))) {
                 return {
                     isMatch: false,
@@ -603,7 +603,7 @@ class ScanJobProcessor {
                 /this report (?:was|has been) prepared by/i,
                 /prepared on behalf of/i
             ];
-            
+
             const hasReportStructure = reportStructureMarkers.some(pattern => pattern.test(documentText));
             if (hasReportStructure) {
                 logger.info('Rejecting document with report structure markers');
