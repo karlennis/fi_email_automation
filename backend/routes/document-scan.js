@@ -210,8 +210,25 @@ router.post('/jobs/:jobId/run-now', authenticate, requireAdmin, async (req, res)
     if (job.status !== 'ACTIVE' && !force) {
       return res.status(400).json({
         success: false,
-        error: 'Scan job must be ACTIVE to run. Set force=true to override.'
+        error: `Scan job must be ACTIVE to run (current status: ${job.status}). Set force=true to override.`
       });
+    }
+
+    // If job is PAUSED, automatically resume it (don't require force flag)
+    const shouldResumeCheckpoint = job.status === 'PAUSED' && job.checkpoint?.isResuming;
+    if (shouldResumeCheckpoint && !force) {
+      logger.info(`📋 Job is PAUSED with checkpoint - automatically resuming from last position`);
+    } else if (job.status !== 'ACTIVE' && force) {
+      logger.info(`⚠️ Force flag set - overriding job status ${job.status} to run fresh`);
+      // Reset checkpoint if forcing a fresh run
+      job.checkpoint = {
+        lastProcessedIndex: 0,
+        lastProcessedFile: '',
+        lastProcessedPath: '',
+        processedCount: 0,
+        matchesFound: 0,
+        isResuming: false
+      };
     }
 
     // Temporarily clear lastProcessedDate if force=true
@@ -233,8 +250,22 @@ router.post('/jobs/:jobId/run-now', authenticate, requireAdmin, async (req, res)
     job.status = 'RUNNING';
     await job.save();
 
+    logger.info(`📝 Job status updated to RUNNING, now enqueueing...`);
+
     // Enqueue for worker processing (non-blocking)
-    await enqueueScanJob(job.jobId, { targetDate: targetDate || null, force: !!force });
+    try {
+      await enqueueScanJob(job.jobId, { targetDate: targetDate || null, force: !!force });
+      logger.info(`✅ Job successfully enqueued`);
+    } catch (enqueueError) {
+      logger.error(`❌ Failed to enqueue job:`, enqueueError);
+      // Reset status back to previous state if enqueue fails
+      job.status = 'PAUSED';
+      await job.save();
+      return res.status(500).json({
+        success: false,
+        error: `Failed to enqueue job: ${enqueueError.message}`
+      });
+    }
 
     res.json({
       success: true,
