@@ -297,7 +297,7 @@ class ScanJobProcessor {
                         await new Promise(resolve => setImmediate(resolve));
 
                         totalProcessed++;
-                        logger.info(`🔍 [${totalProcessed}/${totalDocuments}] Scanning: ${document.projectId}/${document.fileName}`);
+                        logger.info(`🔍 [${totalProcessed}/${totalDocuments}] Processing: ${document.fileName}`);
 
                         // Additional yield before heavy processing
                         await new Promise(resolve => setImmediate(resolve));
@@ -438,7 +438,7 @@ class ScanJobProcessor {
                         throw error;
                     }
                 },
-                { maxObjects: null, timeoutSeconds: 600 }
+                { maxObjects: null, timeoutSeconds: null } // No timeout - allows continuous scanning of large projects
             );
         } catch (scanError) {
             logger.error(`❌ Error streaming S3 documents:`, scanError);

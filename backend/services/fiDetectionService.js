@@ -27,7 +27,7 @@ class FIDetectionService {
     this.client = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
       timeout: 60000,
-      maxRetries: 0
+      maxRetries: 3
     });
 
     // Configuration matching rag_pipeline
@@ -659,24 +659,42 @@ ${sampleText}
 
 Answer with just YES or NO.`;
 
-      const result = await this.client.chat.completions.create({
-        model: this.MODEL,
-        messages: [
-          { role: "system", content: "You are a document classifier. Answer only YES or NO." },
-          { role: "user", content: prompt }
-        ],
-        temperature: 0,
-        max_tokens: 10
-      });
+      // Retry logic for OpenAI API calls
+      let lastError;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const result = await this.client.chat.completions.create({
+            model: this.MODEL,
+            messages: [
+              { role: "system", content: "You are a document classifier. Answer only YES or NO." },
+              { role: "user", content: prompt }
+            ],
+            temperature: 0,
+            max_tokens: 10,
+            timeout: 30000 // 30 second timeout
+          });
 
-      const answer = result.choices[0].message.content.trim().toUpperCase();
-      const passes = answer.includes('YES');
+          const answer = result.choices[0].message.content.trim().toUpperCase();
+          const passes = answer.includes('YES');
 
-      logger.info(`Cheap AI filter: ${passes ? 'PASS' : 'REJECT'} (answer: ${answer})`);
-      return passes;
-    } catch (error) {
-      logger.error('Error in cheap AI filter:', error);
+          logger.info(`Cheap AI filter: ${passes ? 'PASS' : 'REJECT'} (answer: ${answer})`);
+          return passes;
+        } catch (attemptError) {
+          lastError = attemptError;
+          if (attempt < 2) {
+            // Exponential backoff: 1s, 3s
+            const delayMs = Math.pow(3, attempt) * 1000;
+            logger.warn(`Cheap AI filter attempt ${attempt + 1} failed, retrying in ${delayMs}ms...`, attemptError.message);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+          }
+        }
+      }
+      
+      logger.error('Error in cheap AI filter after 3 retries:', lastError);
       // On error, let it pass to full analysis (fail open)
+      return true;
+    } catch (error) {
+      logger.error('Error in cheapFIFilter outer handler:', error);
       return true;
     }
   }

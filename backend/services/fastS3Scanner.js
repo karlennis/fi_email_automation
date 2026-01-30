@@ -27,7 +27,8 @@ class FastS3Scanner {
      * @returns {Promise<Object>} Stats only: { totalScanned, totalMatched, duration }
      */
     async streamDocumentsSince(sinceDate, endDate = null, onDocument, options = {}) {
-        const { maxObjects = 50000, timeoutSeconds = 300 } = options; // 5 min max
+        // Default: no timeout (null = infinite). Override with env var if needed for testing
+        const { maxObjects = null, timeoutSeconds = null } = options;
         const startTime = Date.now();
         
         logger.info(`📅 STREAMING scan: ${sinceDate.toISOString()} to ${endDate ? endDate.toISOString() : 'now'}`);
@@ -97,9 +98,9 @@ class FastS3Scanner {
                 continuationToken = response.NextContinuationToken;
                 hasMore = hasMore && !!continuationToken;
 
-                // Timeout protection
+                // Timeout protection (only if timeoutSeconds is set)
                 const elapsed = (Date.now() - startTime) / 1000;
-                if (elapsed > timeoutSeconds) {
+                if (timeoutSeconds !== null && elapsed > timeoutSeconds) {
                     logger.warn(`⏱️ Stopping scan after ${timeoutSeconds}s timeout (scanned ${totalScanned} objects)`);
                     break;
                 }
