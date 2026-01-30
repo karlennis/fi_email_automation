@@ -5,6 +5,11 @@ let scanQueue;
 
 function getRedisConfig() {
   if (process.env.REDIS_URL) {
+    // Log Redis connection info (without exposing full credentials)
+    const redisHost = process.env.REDIS_URL.includes('@')
+      ? process.env.REDIS_URL.split('@')[1].split(':')[0]
+      : 'localhost';
+    logger.info(`[scanJobQueue] Using Redis host: ${redisHost}`);
     return process.env.REDIS_URL;
   }
 
