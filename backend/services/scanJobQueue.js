@@ -28,9 +28,30 @@ function getScanQueue() {
   if (!scanQueue) {
     const redisUrl = getRedisConfig();
     
-    // Bull requires redis config in options object, not as 2nd parameter
+    // Log Redis connection info (without exposing full credentials)
+    const redisHost = redisUrl.includes('@') 
+      ? redisUrl.split('@')[1].split(':')[0] 
+      : 'localhost';
+    logger.info(`[scanJobQueue] Using Redis host: ${redisHost}`);
+    
+    // Parse URL and build config for Upstash compatibility
+    let redisConfig;
+    if (redisUrl.startsWith('redis://') || redisUrl.startsWith('rediss://')) {
+      const url = new URL(redisUrl);
+      redisConfig = {
+        host: url.hostname,
+        port: parseInt(url.port || '6379', 10),
+        password: url.password || undefined,
+        tls: url.protocol === 'rediss:' ? {} : undefined
+      };
+    } else {
+      // Fallback to URL string (ioredis will parse it)
+      redisConfig = redisUrl;
+    }
+    
+    // Bull requires redis config in options object
     scanQueue = new Bull('scan-jobs', {
-      redis: redisUrl,
+      redis: redisConfig,
       defaultJobOptions: {
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },
