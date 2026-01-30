@@ -670,8 +670,7 @@ Answer with just YES or NO.`;
               { role: "user", content: prompt }
             ],
             temperature: 0,
-            max_tokens: 10,
-            timeout: 30000 // 30 second timeout
+            max_tokens: 10
           });
 
           const answer = result.choices[0].message.content.trim().toUpperCase();
