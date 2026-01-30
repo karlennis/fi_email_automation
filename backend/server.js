@@ -107,7 +107,6 @@ const corsOptions = {
       process.env.FRONTEND_URL || 'http://localhost:4200',
       'http://localhost:4200',
       'http://127.0.0.1:4200',
-      'https://fi-email-automation-frontend.onrender.com',
       'https://fi-email-automation-frontend-xvqm.onrender.com' // Current Render frontend URL
     ];
 
@@ -115,6 +114,7 @@ const corsOptions = {
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
+      logger.warn(`CORS blocked request from origin: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
   },

@@ -59,12 +59,12 @@ function getScanQueue() {
         removeOnFail: 100
       },
       settings: {
-        // Optimize for low Redis request usage
-        stalledInterval: 60000,  // Check for stalled jobs every 60s (default: 30s)
-        maxStalledCount: 2,      // Max times a job can be recovered (default: 1)
-        guardInterval: 10000,    // Renew lock every 10s (default: 5s)
-        lockDuration: 30000,     // Lock duration 30s (default: 30s)
-        drainDelay: 5            // Delay between BRPOPLPUSH calls: 5ms (default: 5)
+        // Optimize for low Redis request usage (Upstash 500k/month limit)
+        stalledInterval: 300000,  // Check for stalled jobs every 5 minutes (was 60s)
+        maxStalledCount: 2,       // Max times a job can be recovered
+        guardInterval: 30000,     // Renew lock every 30s (was 10s)
+        lockDuration: 90000,      // Lock duration 90s (was 30s)
+        drainDelay: 1000          // 1s delay between checks (was 5ms) - CRITICAL for reducing EVALSHA
       }
     });
 
