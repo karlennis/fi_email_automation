@@ -1,0 +1,137 @@
+version: '3.8'
+
+services:
+  # MongoDB (optional - recommended to use MongoDB Atlas instead)
+  # mongodb:
+  #   image: mongo:6-alpine
+  #   container_name: fi-email-mongodb
+  #   restart: unless-stopped
+  #   environment:
+  #     MONGO_INITDB_ROOT_USERNAME: mongodb
+  #     MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD}
+  #   ports:
+  #     - "27017:27017"
+  #   volumes:
+  #     - mongodb_data:/data/db
+  #   networks:
+  #     - fi-email-net
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: fi-email-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - fi-email-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend API & Worker
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fi-email-backend
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      # mongodb:
+      #   condition: service_started
+    environment:
+      NODE_ENV: production
+      REDIS_URL: redis://redis:6379
+      MONGODB_URI: ${MONGODB_URI}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION:-eu-north-1}
+      S3_BUCKET: ${S3_BUCKET}
+      S3_REGION: ${S3_REGION:-eu-north-1}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_SECURE: ${SMTP_SECURE}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      BUILDING_INFO_API_BASE_URL: ${BUILDING_INFO_API_BASE_URL}
+      BUILDING_INFO_API_KEY: ${BUILDING_INFO_API_KEY}
+      BUILDING_INFO_API_UKEY: ${BUILDING_INFO_API_UKEY}
+      PORT: 3000
+      FRONTEND_URL: ${FRONTEND_URL}
+      API_URL: ${API_URL}
+      SCAN_SCHEDULER_ENABLED: ${SCAN_SCHEDULER_ENABLED:-true}
+      SCAN_INTERVAL_MINUTES: ${SCAN_INTERVAL_MINUTES:-60}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend/logs:/app/backend/logs
+      - /var/log/fi_email:/var/log/fi_email
+    networks:
+      - fi-email-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Frontend
+  frontend:
+    image: node:20-alpine
+    container_name: fi-email-frontend
+    restart: unless-stopped
+    working_dir: /app
+    command: npx serve -s frontend/dist/frontend/browser -l 4000
+    volumes:
+      - ./frontend/dist:/app/frontend/dist
+      - ./frontend/package.json:/app/frontend/package.json
+    ports:
+      - "4000:4000"
+    networks:
+      - fi-email-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: fi-email-nginx
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - /var/www/certbot:/var/www/certbot:ro
+    networks:
+      - fi-email-net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  redis_data:
+  # mongodb_data:
+
+networks:
+  fi-email-net:
+    driver: bridge

@@ -8,6 +8,7 @@ const emailService = require('./emailService');
 const buildingInfoService = require('./buildingInfoService');
 const logger = require('../utils/logger');
 const { enqueueScanJob } = require('./scanJobQueue');
+const optimizedPdfExtractor = require('./optimizedPdfExtractor');
 
 class ScanJobProcessor {
     constructor() {
@@ -564,124 +565,31 @@ class ScanJobProcessor {
                 // Yield after S3 download
                 await new Promise(resolve => setImmediate(resolve));
 
-                // Extract text based on file type
+                // Extract text using optimized zero-copy extractor
                 const isDocx = fileName.toLowerCase().endsWith('.docx');
+                let extractionResult;
 
                 if (isDocx) {
-                    // Extract text from DOCX buffer with error handling
-                    const mammoth = require('mammoth');
-
-                    try {
-                        const result = await mammoth.extractRawText({ buffer: fileBuffer });
-                        documentText = result.value;
-                    } catch (docxError) {
-                        // Handle corrupted/malformed DOCX files
-                        logger.error(`❌ DOCX parsing failed for ${fileName}: ${docxError.message}`);
-                        return {
-                            isMatch: false,
-                            stage: 'docx-parse-error',
-                            confidence: 0,
-                            reasoning: 'DOCX is corrupted or malformed',
-                            error: docxError.message
-                        };
-                    }
+                    extractionResult = await optimizedPdfExtractor.extractDocxOptimized(fileBuffer, fileName);
                 } else {
-                    // Extract text from PDF buffer using pdfjs-dist (more robust than pdf-parse)
-                    const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
-
-                    try {
-                        // LOG MEMORY BEFORE PDF PROCESSING
-                        const memBefore = process.memoryUsage();
-                        logger.info(`📄 PDF Processing Start: ${fileName} - Memory: ${(memBefore.rss / 1024 / 1024).toFixed(0)}MB RSS, ${(memBefore.heapUsed / 1024 / 1024).toFixed(0)}MB Heap`);
-
-                        // Yield before heavy PDF processing
-                        await new Promise(resolve => setImmediate(resolve));
-
-                        // Convert Buffer to Uint8Array (required by pdfjs-dist)
-                        let uint8Array = new Uint8Array(fileBuffer);
-
-                        // Load PDF document
-                        const loadingTask = pdfjsLib.getDocument({
-                            data: uint8Array,
-                            useSystemFonts: true,
-                            standardFontDataUrl: null
-                        });
-
-                        const pdfDocument = await loadingTask.promise;
-                        const numPages = pdfDocument.numPages;
-
-                        // LOG MEMORY DURING PDF LOAD
-                        const memDuring = process.memoryUsage();
-                        logger.info(`📄 PDF Loaded: ${fileName} (${numPages} pages) - Memory: ${(memDuring.rss / 1024 / 1024).toFixed(0)}MB RSS, ${(memDuring.heapUsed / 1024 / 1024).toFixed(0)}MB Heap`);
-
-                        // Yield after PDF load
-                        await new Promise(resolve => setImmediate(resolve));
-
-                        // Extract text from all pages with yields between chunks
-                        const textPromises = [];
-                        for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-                            textPromises.push(
-                                pdfDocument.getPage(pageNum).then(async page => {
-                                    // Yield before page processing
-                                    await new Promise(resolve => setImmediate(resolve));
-                                    return page.getTextContent().then(textContent => {
-                                        return textContent.items.map(item => item.str).join(' ');
-                                    });
-                                })
-                            );
-
-                            // Yield every 5 pages to prevent blocking
-                            if (pageNum % 5 === 0) {
-                                await new Promise(resolve => setImmediate(resolve));
-                            }
-                        }
-
-                        const pageTexts = await Promise.all(textPromises);
-                        documentText = pageTexts.join('\n');
-
-                        // LOG MEMORY AFTER TEXT EXTRACTION
-                        const memAfterText = process.memoryUsage();
-                        logger.info(`📄 PDF Text Extracted: ${fileName} (${documentText.length} chars) - Memory: ${(memAfterText.rss / 1024 / 1024).toFixed(0)}MB RSS, ${(memAfterText.heapUsed / 1024 / 1024).toFixed(0)}MB Heap`);
-
-                        // Yield after text extraction
-                        await new Promise(resolve => setImmediate(resolve));
-
-                        // Aggressive PDF cleanup
-                        await pdfDocument.destroy();
-
-                        // Force cleanup of PDF-related objects
-                        if (uint8Array) {
-                            uint8Array = null;
-                        }
-                        if (fileBuffer) {
-                            fileBuffer = null;
-                        }
-
-                        // CRITICAL: Force garbage collection after PDF processing
-                        if (global.gc) {
-                            global.gc();
-                            logger.debug(`🗑️ Forced GC after PDF processing: ${fileName}`);
-                        }
-
-                        // LOG MEMORY AFTER CLEANUP
-                        const memAfterCleanup = process.memoryUsage();
-                        logger.info(`📄 PDF Cleanup Complete: ${fileName} - Memory: ${(memAfterCleanup.rss / 1024 / 1024).toFixed(0)}MB RSS, ${(memAfterCleanup.heapUsed / 1024 / 1024).toFixed(0)}MB Heap`);
-
-                        // Yield for garbage collection
-                        await new Promise(resolve => setImmediate(resolve));
-
-                    } catch (pdfError) {
-                        // Handle corrupted/malformed PDFs gracefully
-                        logger.error(`❌ PDF parsing failed for ${fileName}: ${pdfError.message}`);
-                        return {
-                            isMatch: false,
-                            stage: 'pdf-parse-error',
-                            confidence: 0,
-                            reasoning: 'PDF is corrupted or malformed',
-                            error: pdfError.message
-                        };
-                    }
+                    extractionResult = await optimizedPdfExtractor.extractTextOptimized(fileBuffer, fileName);
                 }
+
+                // Null out buffer immediately after extraction
+                fileBuffer = null;
+
+                if (!extractionResult.success) {
+                    logger.error(`❌ Text extraction failed for ${fileName}: ${extractionResult.error}`);
+                    return {
+                        isMatch: false,
+                        stage: isDocx ? 'docx-parse-error' : 'pdf-parse-error',
+                        confidence: 0,
+                        reasoning: isDocx ? 'DOCX is corrupted or malformed' : 'PDF is corrupted or malformed',
+                        error: extractionResult.error
+                    };
+                }
+
+                documentText = extractionResult.text;
 
                 if (!documentText || documentText.length < 100) {
                     logger.warn(`⚠️ Insufficient text extracted from ${fileName} (${documentText.length} chars)`);
@@ -691,11 +599,6 @@ class ScanJobProcessor {
                         confidence: 0,
                         reasoning: 'Could not extract sufficient text from document'
                     };
-                }
-
-                // Truncate to max size for AI (32000 chars - matches fiDetectionService.MAX_MSG_CHARS)
-                if (documentText.length > 32000) {
-                    documentText = documentText.substring(0, 32000);
                 }
 
                 logger.info(`✅ Extracted ${documentText.length} chars from ${fileName}`);
