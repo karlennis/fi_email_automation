@@ -7,6 +7,7 @@ const s3Service = require('./s3Service');
 const emailService = require('./emailService');
 const buildingInfoService = require('./buildingInfoService');
 const logger = require('../utils/logger');
+const { enqueueScanJob } = require('./scanJobQueue');
 
 class ScanJobProcessor {
     constructor() {
@@ -21,6 +22,10 @@ class ScanJobProcessor {
     async initialize() {
         try {
             logger.info('🤖 Initializing Scan Job Processor...');
+                if (process.env.SCAN_SCHEDULER_ENABLED === 'false') {
+                    logger.info('⏭️ Scan scheduler disabled (SCAN_SCHEDULER_ENABLED=false)');
+                    return;
+                }
 
             // Schedule to run once daily at 12:10 AM (5 minutes after document register generation)
             this.scheduledJob = schedule.scheduleJob('10 0 * * *', async () => {
@@ -108,7 +113,7 @@ class ScanJobProcessor {
                         await this.processJob(job);
                         continue;
                     }
-
+                                await enqueueScanJob(job.jobId, { targetDate: job.schedule?.targetDate || null });
                     // Check if this job should run based on its schedule
                     const shouldRun = this.shouldJobRun(job, today);
 
@@ -118,7 +123,7 @@ class ScanJobProcessor {
                         continue;
                     }
 
-                    await this.processJob(job);
+                            await enqueueScanJob(job.jobId, { targetDate: job.schedule?.targetDate || null });
                 } catch (error) {
                     logger.error(`❌ Error processing job ${job.jobId}:`, error);
                 }

@@ -49,6 +49,7 @@ const ScanJobSchema = new mongoose.Schema({
       default: 0
     },
     lastProcessedFile: String,
+    lastProcessedPath: String,
     totalDocuments: {
       type: Number,
       default: 0

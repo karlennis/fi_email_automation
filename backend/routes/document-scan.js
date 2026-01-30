@@ -212,9 +212,6 @@ router.post('/jobs/:jobId/run-now', authenticate, requireAdmin, async (req, res)
       });
     }
 
-    // Import scan job processor
-    const scanJobProcessor = require('../services/scanJobProcessor');
-
     // Temporarily clear lastProcessedDate if force=true
     if (force) {
       const today = new Date().toISOString().split('T')[0];
@@ -233,45 +230,14 @@ router.post('/jobs/:jobId/run-now', authenticate, requireAdmin, async (req, res)
     // Update job status to RUNNING immediately
     job.status = 'RUNNING';
     await job.save();
-    
-    logger.info(`✅ Job status set to RUNNING: ${jobId}`);
 
-    // Send immediate response - don't wait for scan to complete
+    // Enqueue for worker processing (non-blocking)
+    await enqueueScanJob(job.jobId, { targetDate: targetDate || null, force: !!force });
+
     res.json({
       success: true,
       data: job,
-      message: `Scan job "${job.name}" started. Check status for progress.`
-    });
-
-    // Process job asynchronously in background (don't await)
-    setImmediate(async () => {
-      try {
-        // Reload job to ensure we have latest state
-        const activeJob = await ScanJob.findOne({ jobId })
-          .populate('customers.customerId', 'email company name projectId');
-        
-        if (!activeJob) {
-          logger.error(`Job ${jobId} not found when starting background process`);
-          return;
-        }
-        
-        await scanJobProcessor.processJob(activeJob, targetDate);
-        logger.info(`✅ Manual run completed for job: ${jobId}`);
-      } catch (error) {
-        logger.error(`❌ Manual run failed for job ${jobId}:`, error);
-        // Update job status to ACTIVE on error
-        try {
-          const failedJob = await ScanJob.findOne({ jobId });
-          if (failedJob) {
-            failedJob.status = 'ACTIVE';
-            failedJob.checkpoint.isResuming = true; // Mark for resume
-            await failedJob.save();
-            logger.info(`Job ${jobId} marked for resume after error`);
-          }
-        } catch (saveError) {
-          logger.error('Failed to update job status after error:', saveError);
-        }
-      }
+      message: `Scan job "${job.name}" queued. Check status for progress.`
     });
 
   } catch (error) {
