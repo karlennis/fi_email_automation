@@ -109,7 +109,7 @@ const corsOptions = {
       'http://127.0.0.1:4200',
       'https://fi-email-automation-frontend.onrender.com'
     ];
-    
+
     // Allow requests with no origin (mobile apps, Postman, etc.)
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
@@ -235,13 +235,13 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/fi-email-
 // Start server
 app.listen(PORT, () => {
   logger.info(`Server running on port ${PORT} in ${process.env.NODE_ENV} mode`);
-  
+
   // Log memory usage every 5 minutes in production
   if (process.env.NODE_ENV === 'production') {
     setInterval(() => {
       const mem = process.memoryUsage();
       logger.info(`📊 Memory: Heap ${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB / ${(mem.heapTotal / 1024 / 1024).toFixed(2)}MB, RSS ${(mem.rss / 1024 / 1024).toFixed(2)}MB`);
-      
+
       // Warn if memory exceeds 1200MB (60% of Render's 2GB limit) - LOWERED
       if (mem.rss > 1200 * 1024 * 1024) {
         logger.warn(`⚠️ HIGH MEMORY USAGE: ${(mem.rss / 1024 / 1024).toFixed(2)}MB / 2048MB limit`);

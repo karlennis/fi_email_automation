@@ -27,7 +27,10 @@ function getRedisConfig() {
 function getScanQueue() {
   if (!scanQueue) {
     const redisUrl = getRedisConfig();
-    scanQueue = new Bull('scan-jobs', redisUrl, {
+    
+    // Bull requires redis config in options object, not as 2nd parameter
+    scanQueue = new Bull('scan-jobs', {
+      redis: redisUrl,
       defaultJobOptions: {
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },
