@@ -82,8 +82,23 @@ async function enqueueScanJob(jobId, options = {}) {
 
   const existing = await queue.getJob(jobKey);
   if (existing) {
-    logger.info(`⏭️ Scan job already queued: ${jobId}`);
-    return existing;
+    // Check the state of the existing job
+    const state = await existing.getState();
+    const progress = await existing.progress();
+    
+    logger.info(`📋 Job already exists: ${jobId} (state: ${state}, progress: ${progress})`);
+
+    // If job is waiting or active, don't re-queue
+    if (state === 'waiting' || state === 'active') {
+      logger.info(`⏭️ Job ${jobId} is already in queue with state: ${state}`);
+      return existing;
+    }
+
+    // If job is completed/failed, remove it and re-queue
+    if (state === 'completed' || state === 'failed') {
+      logger.info(`🔄 Job ${jobId} is ${state}, removing and re-queueing...`);
+      await existing.remove();
+    }
   }
 
   logger.info(`📥 Enqueuing scan job: ${jobId}`);

@@ -40,6 +40,33 @@ async function startScanWorker() {
 
   logger.info(`🧵 Starting scan worker (concurrency: ${concurrency})`);
   queue.process('scan-job', concurrency, processScanJob);
+
+  // Add event listeners for debugging
+  queue.on('waiting', (jobId) => {
+    logger.debug(`⏳ Job ${jobId} is waiting to be processed`);
+  });
+
+  queue.on('active', (job) => {
+    logger.info(`🚀 Job ${job.id} is now active (data: ${JSON.stringify(job.data)})`);
+  });
+
+  queue.on('progress', (job, progress) => {
+    logger.debug(`📊 Job ${job.id} progress: ${progress}%`);
+  });
+
+  queue.on('completed', (job) => {
+    logger.info(`✅ Job ${job.id} completed successfully`);
+  });
+
+  queue.on('failed', (job, err) => {
+    logger.error(`❌ Job ${job.id} failed:`, err.message);
+  });
+
+  queue.on('error', (err) => {
+    logger.error(`❌ Queue error:`, err);
+  });
+
+  logger.info(`✅ Scan worker started with event listeners`);
 }
 
 module.exports = {
