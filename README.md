@@ -191,14 +191,119 @@ npm test
 
 ## 🚀 Deployment
 
-For production deployment:
+### Quick Deploy Options
 
-1. Set up MongoDB Atlas or dedicated MongoDB instance
-2. Configure production SMTP server
-3. Set production environment variables
-4. Build frontend: `npm run build`
-5. Deploy backend to your preferred hosting service
-6. Serve frontend build files through web server
+#### **Option 1: AWS EC2 (Recommended - $28/month)**
+Best for cost-conscious deployments with full control.
+
+```bash
+# Automated setup
+bash setup-aws-infrastructure.sh
+
+# Then SSH and run:
+bash deploy-ec2.sh
+```
+📚 **Full Guide**: [EC2_DEPLOYMENT.md](EC2_DEPLOYMENT.md)  
+📋 **Quick Start**: [EC2_QUICKSTART.md](EC2_QUICKSTART.md)  
+📊 **Monitoring**: [EC2_MONITORING.md](EC2_MONITORING.md)
+
+**Cost**: ~$28/month (EC2 t4g.medium + EBS)
+
+#### **Option 2: Docker Compose**
+Self-contained deployment with all services.
+
+```bash
+docker-compose up -d
+```
+Includes: Backend, Worker, Frontend, Redis, Nginx
+
+#### **Option 3: Render (Current)**
+Managed platform with automatic scaling.
+
+- Backend: `backend/server.js` (Node.js 18)
+- Worker: `backend/worker.js` (background tasks)
+- Frontend: `frontend` (Angular 17)
+
+Deployed at: https://fi-email-automation-backend-xvqm.onrender.com
+
+**Cost**: $85/month (Pro plan)
+
+### Production Setup Checklist
+
+- [ ] MongoDB Atlas cluster configured (or self-hosted)
+- [ ] Redis running (docker/local/Redis Labs)
+- [ ] OpenAI API key obtained
+- [ ] SMTP credentials configured
+- [ ] S3 bucket accessible (AWS credentials)
+- [ ] Building Info API configured
+- [ ] SSL certificate configured
+- [ ] Domain DNS updated
+- [ ] Environment variables set (see `.env.example`)
+- [ ] Backend deployed and running
+- [ ] Frontend built and deployed
+- [ ] Worker process running
+- [ ] Monitoring/alerts configured
+
+### Environment Variables Required
+
+```bash
+# Database
+MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/db
+
+# AWS S3
+AWS_ACCESS_KEY_ID=your_key
+AWS_SECRET_ACCESS_KEY=your_secret
+S3_BUCKET=planning-documents-2
+AWS_REGION=eu-north-1
+
+# OpenAI
+OPENAI_API_KEY=sk-...
+
+# Email (SMTP)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=app-password
+
+# Building Info API
+BUILDING_INFO_API_BASE_URL=https://api.example.com
+BUILDING_INFO_API_KEY=your_key
+BUILDING_INFO_API_UKEY=your_ukey
+
+# Application
+NODE_ENV=production
+PORT=3000
+FRONTEND_URL=https://your-domain.com
+API_URL=https://your-domain.com/api
+```
+
+### Performance Optimization
+
+Application includes memory-optimized document processing:
+
+- **Streaming PDF Extraction**: One-page-at-a-time processing
+- **Automatic Garbage Collection**: Global GC every 5 documents
+- **Buffer Cleanup**: Explicit memory nulling after processing
+- **Text Limiting**: 32KB max per document (prevents accumulation)
+
+See [MEMORY_OPTIMIZATION.md](MEMORY_OPTIMIZATION.md) for details.
+
+**Expected Memory Usage:**
+- Backend process: 200-300MB stable
+- Worker process: 200-300MB stable
+- Total with system: ~800-1000MB
+
+### Scaling
+
+**Single Instance Limits:**
+- Documents/hour: ~300 (depends on document size)
+- Concurrent API requests: ~50
+- Memory: Stable under 1GB
+
+**To Scale Up:**
+1. Upgrade to t4g.large (4 vCPU, 8GB RAM) - same code
+2. Or add second t4g.medium behind load balancer
+3. Or increase GC frequency in optimizedPdfExtractor.js
 
 ## 🤝 Contributing
 
