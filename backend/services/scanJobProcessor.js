@@ -611,7 +611,7 @@ class ScanJobProcessor {
                         await new Promise(resolve => setImmediate(resolve));
 
                         // Convert Buffer to Uint8Array (required by pdfjs-dist)
-                        const uint8Array = new Uint8Array(fileBuffer);
+                        let uint8Array = new Uint8Array(fileBuffer);
 
                         // Load PDF document
                         const loadingTask = pdfjsLib.getDocument({
