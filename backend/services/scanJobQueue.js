@@ -27,13 +27,13 @@ function getRedisConfig() {
 function getScanQueue() {
   if (!scanQueue) {
     const redisUrl = getRedisConfig();
-    
+
     // Log Redis connection info (without exposing full credentials)
-    const redisHost = redisUrl.includes('@') 
-      ? redisUrl.split('@')[1].split(':')[0] 
+    const redisHost = redisUrl.includes('@')
+      ? redisUrl.split('@')[1].split(':')[0]
       : 'localhost';
     logger.info(`[scanJobQueue] Using Redis host: ${redisHost}`);
-    
+
     // Parse URL and build config for Upstash compatibility
     let redisConfig;
     if (redisUrl.startsWith('redis://') || redisUrl.startsWith('rediss://')) {
@@ -48,7 +48,7 @@ function getScanQueue() {
       // Fallback to URL string (ioredis will parse it)
       redisConfig = redisUrl;
     }
-    
+
     // Bull requires redis config in options object
     scanQueue = new Bull('scan-jobs', {
       redis: redisConfig,
@@ -57,6 +57,14 @@ function getScanQueue() {
         backoff: { type: 'exponential', delay: 5000 },
         removeOnComplete: 50,
         removeOnFail: 100
+      },
+      settings: {
+        // Optimize for low Redis request usage
+        stalledInterval: 60000,  // Check for stalled jobs every 60s (default: 30s)
+        maxStalledCount: 2,      // Max times a job can be recovered (default: 1)
+        guardInterval: 10000,    // Renew lock every 10s (default: 5s)
+        lockDuration: 30000,     // Lock duration 30s (default: 30s)
+        drainDelay: 5            // Delay between BRPOPLPUSH calls: 5ms (default: 5)
       }
     });
 

@@ -66,16 +66,16 @@ testQueue.client.on('close', () => {
 // Wait for queue to be ready
 testQueue.isReady().then(async () => {
   console.log('✅ Bull queue ready! Connection successful.');
-  
+
   // Try adding a test job
   try {
     const job = await testQueue.add('test-job', { message: 'Hello Redis!' });
     console.log('✅ Test job added:', job.id);
-    
+
     // Check job count
     const waiting = await testQueue.getWaitingCount();
     console.log('✅ Jobs waiting:', waiting);
-    
+
     // Clean up
     await testQueue.close();
     console.log('✅ Connection closed cleanly');
