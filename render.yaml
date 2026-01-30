@@ -8,8 +8,6 @@ services:
     buildCommand: cd backend && npm install
     startCommand: cd backend && node --expose-gc --max-old-space-size=1536 server.js
     healthCheckPath: /health
-    healthCheckTimeoutMS: 30000  # Increase from 5s to 30s
-    healthCheckIntervalMS: 10000 # Check every 10s instead of default
     envVars:
       - key: NODE_ENV
         value: production
