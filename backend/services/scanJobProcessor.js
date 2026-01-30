@@ -220,44 +220,11 @@ class ScanJobProcessor {
             }
         }
 
-        // Stream documents directly from S3 (memory safe, no register dependency)
-        const documents = [];
-
+        // Stream documents directly from S3 and process inline (no array accumulation)
         logger.info(`🔍 Streaming S3 documents for date range: ${scanStartDate.toISOString()} to ${scanEndDate.toISOString()}`);
 
-        try {
-            await fastS3Scanner.streamDocumentsSince(
-                scanStartDate,
-                scanEndDate,
-                async (doc) => {
-                    // Only collect PDF and DOCX files
-                    const fileName = doc.fileName ? doc.fileName.toLowerCase() : '';
-                    if (fileName.endsWith('.pdf') || fileName.endsWith('.docx')) {
-                        documents.push(doc);
-                    }
-                },
-                { maxObjects: null, timeoutSeconds: 600 } // No limit, 10 min timeout for full scan
-            );
-        } catch (scanError) {
-            logger.error(`❌ Error streaming S3 documents:`, scanError);
-            throw scanError;
-        }
-
-        if (documents.length === 0) {
-            const dateRangeStr = scanStartDate.toISOString().split('T')[0] === scanEndDate.toISOString().split('T')[0]
-                ? scanStartDate.toISOString().split('T')[0]
-                : `${scanStartDate.toISOString().split('T')[0]} to ${scanEndDate.toISOString().split('T')[0]}`;
-            logger.info(`📋 No documents found for date range: ${dateRangeStr}`);
-            return;
-        }
-
-        const dateRangeStr = scanStartDate.toISOString().split('T')[0] === scanEndDate.toISOString().split('T')[0]
-            ? scanStartDate.toISOString().split('T')[0]
-            : `${scanStartDate.toISOString().split('T')[0]} to ${scanEndDate.toISOString().split('T')[0]}`;
-        logger.info(`📄 Found ${documents.length} documents in date range: ${dateRangeStr}`);
         // Use all customers assigned to this job
         const jobCustomers = job.customers.filter(c => c.customerId).map(c => c.customerId);
-
         logger.info(`👥 Job has ${jobCustomers.length} customers assigned`);
 
         if (jobCustomers.length === 0) {
@@ -268,18 +235,17 @@ class ScanJobProcessor {
         // Initialize or resume checkpoint
         const CHECKPOINT_INTERVAL = 10000; // Send progress email every 10,000 documents
         const SAVE_INTERVAL = 100; // Save checkpoint to DB every 100 docs (for crash recovery)
-        const startIndex = isResuming ? job.checkpoint.lastProcessedIndex : 0;
 
         if (isResuming) {
-            logger.info(`🔄 Resuming scan from document #${startIndex + 1} (${job.checkpoint.lastProcessedFile})`);
+            logger.info(`🔄 Resuming scan after ${job.checkpoint.lastProcessedFile || 'unknown file'}`);
         } else {
-            // Initialize checkpoint for new scan
             job.checkpoint = {
                 lastProcessedIndex: 0,
                 lastProcessedFile: '',
+                lastProcessedPath: '',
                 scanStartDate: scanStartDate.toISOString(),
                 scanEndDate: scanEndDate.toISOString(),
-                totalDocuments: documents.length,
+                totalDocuments: 0,
                 processedCount: 0,
                 matchesFound: 0,
                 scanStartTime: new Date(),
@@ -287,96 +253,101 @@ class ScanJobProcessor {
                 isResuming: false
             };
             await job.save();
-            logger.info(`💾 Checkpoint initialized for ${documents.length} documents`);
+            logger.info(`💾 Checkpoint initialized for streaming scan`);
         }
 
-        // Process ALL documents in the register (or resume from checkpoint)
-        logger.info(`🔍 Scanning ${documents.length - startIndex} documents for ${job.documentType} reports`);
-
-        // Process each document through the 3-stage filter
         let matches = []; // Use let instead of const so we can clear after sending
         let totalProcessed = isResuming ? job.checkpoint.processedCount : 0;
+        let totalDocuments = isResuming ? (job.checkpoint.totalDocuments || 0) : 0;
         let skippedNonPdf = 0;
+        let skipping = isResuming && (job.checkpoint.lastProcessedPath || job.checkpoint.lastProcessedFile);
+        const resumePath = job.checkpoint.lastProcessedPath;
+        const resumeFile = job.checkpoint.lastProcessedFile;
 
-        for (let i = startIndex; i < documents.length; i++) {
-            const document = documents[i];
+        let streamStats;
+        try {
+            streamStats = await fastS3Scanner.streamDocumentsSince(
+                scanStartDate,
+                scanEndDate,
+                async (document) => {
+                    try {
+                        // Only process PDF and DOCX files
+                        const fileName = document.fileName ? document.fileName.toLowerCase() : '';
+                        if (!fileName.endsWith('.pdf') && !fileName.endsWith('.docx')) {
+                            skippedNonPdf++;
+                            return;
+                        }
 
-            try {
-                // Yield control to event loop EVERY document to prevent health check timeouts
-                // This allows /health endpoint to respond even during heavy PDF processing
-                await new Promise(resolve => setImmediate(resolve));
+                        totalDocuments++;
 
-                // Only process PDF and DOCX files
-                const fileName = document.fileName ? document.fileName.toLowerCase() : '';
-                if (!fileName.endsWith('.pdf') && !fileName.endsWith('.docx')) {
-                    skippedNonPdf++;
-                    continue;
-                }
+                        if (skipping) {
+                            const currentKey = document.filePath || document.fileName;
+                            if ((resumePath && currentKey === resumePath) || (resumeFile && document.fileName === resumeFile)) {
+                                skipping = false; // Skip the last processed doc and continue
+                            }
+                            return;
+                        }
 
-                totalProcessed++;
+                        // Yield control to event loop EVERY document to prevent health check timeouts
+                        await new Promise(resolve => setImmediate(resolve));
 
-                logger.info(`🔍 [${totalProcessed}/${documents.length - skippedNonPdf}] Scanning: ${document.projectId}/${document.fileName}`);
+                        totalProcessed++;
+                        logger.info(`🔍 [${totalProcessed}/${totalDocuments}] Scanning: ${document.projectId}/${document.fileName}`);
 
-                // Additional yield before heavy processing
-                await new Promise(resolve => setImmediate(resolve));
+                        // Additional yield before heavy processing
+                        await new Promise(resolve => setImmediate(resolve));
 
-                const result = await this.processDocument(document, job);
+                        const result = await this.processDocument(document, job);
 
-                // Yield after processing each document
-                await new Promise(resolve => setImmediate(resolve));
+                        // Yield after processing each document
+                        await new Promise(resolve => setImmediate(resolve));
 
-                // AGGRESSIVE memory cleanup after each document
-                if (result && result.extractedText) {
-                    delete result.extractedText; // Free extracted text from memory
-                }
+                        // AGGRESSIVE memory cleanup after each document
+                        if (result && result.extractedText) {
+                            delete result.extractedText;
+                        }
 
-                // Null out document buffer if it exists
-                if (document.buffer) {
-                    document.buffer = null;
-                }
+                        if (document.buffer) {
+                            document.buffer = null;
+                        }
 
-                // Force garbage collection every 10 documents
-                if (totalProcessed % 10 === 0) {
-                    if (global.gc) {
-                        global.gc();
-                        logger.debug(`🗑️ Forced GC at document ${totalProcessed}`);
-                    }
-                }
+                        // Force garbage collection every 10 documents
+                        if (totalProcessed % 10 === 0 && global.gc) {
+                            global.gc();
+                            logger.debug(`🗑️ Forced GC at document ${totalProcessed}`);
+                        }
 
-                // Check memory usage and pause if approaching limit
-                const memUsage = process.memoryUsage();
-                if (memUsage.heapUsed > 1500 * 1024 * 1024) { // 1500MB threshold to catch PDF spikes
-                    logger.warn(`🚨 High memory usage: ${(memUsage.heapUsed / 1024 / 1024).toFixed(0)}MB - pausing briefly`);
-                    await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second pause
-                    if (global.gc) global.gc(); // Force cleanup
-                }
+                        // Check memory usage and pause if approaching limit
+                        const memUsage = process.memoryUsage();
+                        if (memUsage.heapUsed > 1500 * 1024 * 1024) {
+                            logger.warn(`🚨 High memory usage: ${(memUsage.heapUsed / 1024 / 1024).toFixed(0)}MB - pausing briefly`);
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            if (global.gc) global.gc();
+                        }
 
-                if (result.isMatch) {
-                    logger.info(`✅ MATCH FOUND: ${document.fileName} (confidence: ${(result.confidence * 100).toFixed(1)}%)`);
-                    matches.push({
-                        document,
-                        result,
-                        customers: job.customers // Send to all assigned customers
-                    });
+                        if (result.isMatch) {
+                            logger.info(`✅ MATCH FOUND: ${document.fileName} (confidence: ${(result.confidence * 100).toFixed(1)}%)`);
+                            matches.push({
+                                document,
+                                result,
+                                customers: job.customers
+                            });
 
-                    // Update matches count in checkpoint
-                    job.checkpoint.matchesFound = (job.checkpoint.matchesFound || 0) + 1;
-                } else {
-                    logger.info(`❌ No match: ${document.fileName} (stage: ${result.stage})`);
-                }
+                            job.checkpoint.matchesFound = (job.checkpoint.matchesFound || 0) + 1;
+                        } else {
+                            logger.info(`❌ No match: ${document.fileName} (stage: ${result.stage})`);
+                        }
 
-                // Update checkpoint after each document
-                job.checkpoint.lastProcessedIndex = i;
-                job.checkpoint.lastProcessedFile = document.fileName;
-                job.checkpoint.processedCount = totalProcessed;
+                        // Update checkpoint after each document
+                        job.checkpoint.lastProcessedIndex = totalProcessed - 1;
+                        job.checkpoint.lastProcessedFile = document.fileName;
+                        job.checkpoint.lastProcessedPath = document.filePath;
+                        job.checkpoint.processedCount = totalProcessed;
+                        job.checkpoint.totalDocuments = totalDocuments;
 
-                // Save checkpoint more frequently:
-                // - EVERY document for first 100 (critical crash recovery period)
-                // - Every 100 documents after that
-                // - Every 10,000 documents for progress emails
-                const shouldSave = totalProcessed <= 100 ||
-                                 totalProcessed % SAVE_INTERVAL === 0 ||
-                                 totalProcessed % CHECKPOINT_INTERVAL === 0;
+                        const shouldSave = totalProcessed <= 100 ||
+                                         totalProcessed % SAVE_INTERVAL === 0 ||
+                                         totalProcessed % CHECKPOINT_INTERVAL === 0;
 
                 if (shouldSave) {
                     job.checkpoint.lastCheckpointTime = new Date();
@@ -432,7 +403,7 @@ class ScanJobProcessor {
                                 documentType: job.documentType,
                                 startTime: job.checkpoint.scanStartTime,
                                 processedCount: totalProcessed,
-                                totalDocuments: documents.length,
+                                totalDocuments: totalDocuments,
                                 matchesFound: job.checkpoint.matchesFound,
                                 lastProcessedFile: document.fileName,
                                 isCheckpoint: true
@@ -447,19 +418,26 @@ class ScanJobProcessor {
                     }
                 }
 
-            } catch (error) {
-                logger.error(`❌ Error processing document ${document.fileName}:`, error);
+                    } catch (error) {
+                        logger.error(`❌ Error processing document ${document.fileName}:`, error);
 
-                // Save checkpoint even on error to allow resume
-                job.checkpoint.lastProcessedIndex = i;
-                job.checkpoint.lastProcessedFile = document.fileName;
-                job.checkpoint.processedCount = totalProcessed;
-                job.checkpoint.isResuming = true; // Mark for resume
-                await job.save();
+                        // Save checkpoint even on error to allow resume
+                        job.checkpoint.lastProcessedIndex = totalProcessed - 1;
+                        job.checkpoint.lastProcessedFile = document.fileName;
+                        job.checkpoint.lastProcessedPath = document.filePath;
+                        job.checkpoint.processedCount = totalProcessed;
+                        job.checkpoint.totalDocuments = totalDocuments;
+                        job.checkpoint.isResuming = true;
+                        await job.save();
 
-                // Re-throw error to trigger scan interruption
-                throw error;
-            }
+                        throw error;
+                    }
+                },
+                { maxObjects: null, timeoutSeconds: 600 }
+            );
+        } catch (scanError) {
+            logger.error(`❌ Error streaming S3 documents:`, scanError);
+            throw scanError;
         }
 
         // Final checkpoint save on completion
@@ -469,6 +447,10 @@ class ScanJobProcessor {
 
         if (skippedNonPdf > 0) {
             logger.info(`⏭️  Skipped ${skippedNonPdf} unsupported files`);
+        }
+
+        if (streamStats && streamStats.totalMatched !== undefined) {
+            job.checkpoint.totalDocuments = totalDocuments;
         }
 
         logger.info(`✅ Job ${job.jobId} complete: ${matches.length} matches found from ${totalProcessed} documents`);
