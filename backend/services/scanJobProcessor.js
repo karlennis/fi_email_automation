@@ -147,8 +147,14 @@ class ScanJobProcessor {
         const startTime = Date.now();
 
         let scanStartDate, scanEndDate;
-
-        if (targetDate) {
+        
+        // Check if resuming - use stored dates from checkpoint
+        const isResuming = job.checkpoint && job.checkpoint.isResuming && job.checkpoint.lastProcessedIndex > 0;
+        if (isResuming && job.checkpoint.scanStartDate && job.checkpoint.scanEndDate) {
+            scanStartDate = new Date(job.checkpoint.scanStartDate);
+            scanEndDate = new Date(job.checkpoint.scanEndDate);
+            logger.info(`🔄 Resuming with original scan dates: ${scanStartDate.toISOString().split('T')[0]} to ${scanEndDate.toISOString().split('T')[0]}`);
+        } else if (targetDate) {
             // Use specified target date (single day scan for manual testing)
             scanStartDate = new Date(targetDate);
             scanStartDate.setHours(0, 0, 0, 0);
@@ -228,7 +234,6 @@ class ScanJobProcessor {
         // Initialize or resume checkpoint
         const CHECKPOINT_INTERVAL = 10000; // Send progress email every 10,000 documents
         const SAVE_INTERVAL = 100; // Save checkpoint to DB every 100 docs (for crash recovery)
-        const isResuming = job.checkpoint && job.checkpoint.isResuming && job.checkpoint.lastProcessedIndex > 0;
         const startIndex = isResuming ? job.checkpoint.lastProcessedIndex : 0;
 
         if (isResuming) {
@@ -238,6 +243,8 @@ class ScanJobProcessor {
             job.checkpoint = {
                 lastProcessedIndex: 0,
                 lastProcessedFile: '',
+                scanStartDate: scanStartDate.toISOString(),
+                scanEndDate: scanEndDate.toISOString(),
                 totalDocuments: documents.length,
                 processedCount: 0,
                 matchesFound: 0,
