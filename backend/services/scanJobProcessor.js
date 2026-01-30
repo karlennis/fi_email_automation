@@ -82,15 +82,25 @@ class ScanJobProcessor {
                 try {
                     // Check if this job needs to resume from a crash
                     const needsResume = job.checkpoint && job.checkpoint.isResuming;
-
+                    
                     // Also check for interrupted scans (status=RUNNING on startup means crashed mid-scan)
                     const wasInterrupted = job.status === 'RUNNING' && job.checkpoint && job.checkpoint.processedCount > 0;
-
-                    if (needsResume || wasInterrupted) {
+                    
+                    // Also check for incomplete scans (has checkpoint but didn't finish all documents)
+                    const isIncomplete = job.checkpoint && 
+                                       job.checkpoint.processedCount > 0 && 
+                                       job.checkpoint.totalDocuments > 0 &&
+                                       job.checkpoint.processedCount < job.checkpoint.totalDocuments;
+                    
+                    if (needsResume || wasInterrupted || isIncomplete) {
                         if (wasInterrupted) {
                             logger.info(`🔄 Job ${job.jobId} was interrupted mid-scan (found RUNNING status), resuming from ${job.checkpoint.processedCount} documents...`);
                             job.checkpoint.isResuming = true;
                             job.status = 'ACTIVE';
+                            await job.save();
+                        } else if (isIncomplete) {
+                            logger.info(`🔄 Job ${job.jobId} has incomplete scan (${job.checkpoint.processedCount}/${job.checkpoint.totalDocuments}), resuming...`);
+                            job.checkpoint.isResuming = true;
                             await job.save();
                         } else {
                             logger.info(`🔄 Job ${job.jobId} needs to resume from checkpoint at ${job.checkpoint.processedCount} documents...`);
@@ -98,10 +108,10 @@ class ScanJobProcessor {
                         await this.processJob(job);
                         continue;
                     }
-
+                    
                     // Check if this job should run based on its schedule
                     const shouldRun = this.shouldJobRun(job, today);
-
+                    
                     if (!shouldRun) {
                         const scheduleType = job.schedule?.type || 'DAILY';
                         logger.info(`⏭️ Job ${job.jobId} not scheduled to run (${scheduleType} schedule)`);
