@@ -176,14 +176,28 @@ class ScanJobProcessor {
             scanEndDate.setDate(scanEndDate.getDate() + 1);
             scanEndDate.setHours(23, 59, 59, 999);
             logger.info(`📅 Scanning document register for ${targetDate} (user-specified date)`);
-            
+
             // Store this targetDate in job for future resume
             job.schedule = job.schedule || {};
             job.schedule.targetDate = targetDate;
             await job.save();
             logger.info(`💾 Stored target date ${targetDate} in job schedule for future resume`);
         } else {
-            // 4. Use lookback period from job configuration (scheduled jobs)
+            // 4. LEGACY DETECTION: Check if this looks like a manual job that needs target date
+            // Indicators: has checkpoint but no schedule.targetDate (pre-fix manual jobs)
+            if (job.checkpoint && job.checkpoint.processedCount > 0 && (!job.schedule || !job.schedule.targetDate)) {
+                // This looks like a legacy manual job - prompt for target date or use a reasonable default
+                logger.warn(`⚠️ Legacy manual job detected without stored target date: ${job.jobId}`);
+                logger.warn(`⚠️ Job has checkpoint (${job.checkpoint.processedCount} processed) but no targetDate`);
+                logger.warn(`⚠️ This appears to be a manual job created before target date storage was implemented`);
+                
+                // For now, ask user to specify the target date
+                logger.error(`❌ Cannot determine target date for legacy manual job ${job.jobId}`);
+                logger.error(`❌ Please update job.schedule.targetDate manually or restart with targetDate parameter`);
+                throw new Error(`Legacy manual job ${job.jobId} missing target date. Please specify the original scan date.`);
+            }
+            
+            // 5. Use lookback period from job configuration (scheduled jobs)
             const lookbackDays = job.schedule?.lookbackDays || 1; // Default to 1 day if not specified
 
             // End date: yesterday (don't include today's partial data)

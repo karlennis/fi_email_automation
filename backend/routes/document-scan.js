@@ -332,6 +332,69 @@ router.post('/jobs/:jobId/stop', authenticate, requireAdmin, async (req, res) =>
 });
 
 /**
+ * POST /api/document-scan/jobs/:jobId/set-target-date
+ * Set target date for manual scan jobs (useful for legacy jobs missing target date)
+ */
+router.post('/jobs/:jobId/set-target-date', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const { targetDate } = req.body; // Expected format: YYYY-MM-DD
+
+    logger.info(`📅 Setting target date for scan job: ${jobId}`, {
+      targetDate,
+      user: req.user.email
+    });
+
+    // Validate date format
+    if (!targetDate || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+      return res.status(400).json({
+        success: false,
+        error: 'targetDate must be in YYYY-MM-DD format'
+      });
+    }
+
+    const job = await ScanJob.findOne({ jobId });
+
+    if (!job) {
+      return res.status(404).json({
+        success: false,
+        error: 'Scan job not found'
+      });
+    }
+
+    // Initialize schedule if it doesn't exist
+    if (!job.schedule) {
+      job.schedule = {};
+    }
+
+    job.schedule.targetDate = targetDate;
+    job.lastModifiedBy = {
+      userId: req.user._id,
+      email: req.user.email,
+      name: req.user.name,
+      timestamp: new Date()
+    };
+
+    await job.save();
+
+    logger.info(`✅ Target date set for job ${jobId}: ${targetDate}`);
+
+    res.json({
+      success: true,
+      data: job,
+      message: `Target date set to ${targetDate} for scan job "${job.name}"`
+    });
+
+  } catch (error) {
+    logger.error('Failed to set target date:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
  * DELETE /api/document-scan/jobs/:jobId
  * Delete a scan job
  */

@@ -626,7 +626,7 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
     try {
       // Yield to event loop before AI call to prevent health check timeouts
       await new Promise(resolve => setImmediate(resolve));
-      
+
       // Check beginning (first 10k) and end (last 5k) to catch both:
       // - Standalone FI request letters (start at beginning)
       // - FI recommendations at end of planning reports
@@ -641,7 +641,7 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
         const ending = documentText.substring(documentText.length - 5000);
         sampleText = beginning + "\n\n[...document middle omitted...]\n\n" + ending;
       }
-      
+
       const prompt = `Does this document REQUEST further information about a planning application?
 
 Answer YES only if:
@@ -671,7 +671,7 @@ Answer with just YES or NO.`;
 
       const answer = result.choices[0].message.content.trim().toUpperCase();
       const passes = answer.includes('YES');
-      
+
       logger.info(`Cheap AI filter: ${passes ? 'PASS' : 'REJECT'} (answer: ${answer})`);
       return passes;
     } catch (error) {
@@ -739,7 +739,7 @@ Answer with just YES or NO.`;
       ];
 
       const textLower = documentText.toLowerCase();
-      
+
       // Reject if contains negative indicators
       if (negativeFIIndicators.some(indicator => textLower.includes(indicator))) {
         return {
@@ -762,7 +762,7 @@ Answer with just YES or NO.`;
       let validationQuote = 'No specific quote extracted';
       if (result.requestsReportType) {
         validationQuote = this.extractValidationQuote(documentText, targetReportType);
-        
+
         // POST-AI VALIDATION: Verify the validation quote actually mentions the target report type
         // This catches false positives where AI says "yes" but can't find actual request text
         if (validationQuote && validationQuote !== 'No specific quote extracted') {
@@ -774,12 +774,12 @@ Answer with just YES or NO.`;
             "heritage": ["heritage", "archaeological", "historic", "conservation", "listed"],
             "lighting": ["lighting", "light", "illumination", "luminaire", "lux"]
           };
-          
+
           const terms = reportTypeTerms[targetReportType.toLowerCase()] || [targetReportType];
-          const quoteContainsReportType = terms.some(term => 
+          const quoteContainsReportType = terms.some(term =>
             validationQuote.toLowerCase().includes(term.toLowerCase())
           );
-          
+
           if (!quoteContainsReportType) {
             logger.info(`Post-AI validation failed: Quote doesn't mention ${targetReportType}. Quote: "${validationQuote.substring(0, 100)}..."`);
             return {
