@@ -305,6 +305,7 @@ class ScanJobProcessor {
                 // Yield control to event loop EVERY document to prevent health check timeouts
                 // This allows /health endpoint to respond even during heavy PDF processing
                 await new Promise(resolve => setImmediate(resolve));
+                
                 // Only process PDF and DOCX files
                 const fileName = document.fileName ? document.fileName.toLowerCase() : '';
                 if (!fileName.endsWith('.pdf') && !fileName.endsWith('.docx')) {
@@ -316,9 +317,15 @@ class ScanJobProcessor {
 
                 logger.info(`🔍 [${totalProcessed}/${documents.length - skippedNonPdf}] Scanning: ${document.projectId}/${document.fileName}`);
 
+                // Additional yield before heavy processing
+                await new Promise(resolve => setImmediate(resolve));
+                
                 const result = await this.processDocument(document, job);
 
-                // Clear large objects from memory immediately after processing
+                // Yield after processing each document
+                await new Promise(resolve => setImmediate(resolve));
+
+                // AGGRESSIVE memory cleanup after each document
                 if (result && result.extractedText) {
                     delete result.extractedText; // Free extracted text from memory
                 }
@@ -326,6 +333,22 @@ class ScanJobProcessor {
                 // Null out document buffer if it exists
                 if (document.buffer) {
                     document.buffer = null;
+                }
+                
+                // Force garbage collection every 10 documents
+                if (totalProcessed % 10 === 0) {
+                    if (global.gc) {
+                        global.gc();
+                        logger.debug(`🗑️ Forced GC at document ${totalProcessed}`);
+                    }
+                }
+                
+                // Check memory usage and pause if approaching limit
+                const memUsage = process.memoryUsage();
+                if (memUsage.heapUsed > 1500 * 1024 * 1024) { // 1500MB threshold to catch PDF spikes
+                    logger.warn(`🚨 High memory usage: ${(memUsage.heapUsed / 1024 / 1024).toFixed(0)}MB - pausing briefly`);
+                    await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second pause
+                    if (global.gc) global.gc(); // Force cleanup
                 }
 
                 if (result.isMatch) {
@@ -363,8 +386,8 @@ class ScanJobProcessor {
                     const rssInMB = memUsage.rss / 1024 / 1024;
                     logger.info(`💾 Memory: ${(memUsage.heapUsed / 1024 / 1024).toFixed(2)}MB / ${(memUsage.heapTotal / 1024 / 1024).toFixed(2)}MB (RSS: ${rssInMB.toFixed(2)}MB)`);
 
-                    // Circuit breaker: Stop if memory exceeds 1800MB (90% of 2GB Render limit)
-                    if (rssInMB > 1800) {
+                    // Circuit breaker: Stop if memory exceeds 1700MB (85% of 2GB Render limit)
+                    if (rssInMB > 1700) {
                         logger.error(`🚨 MEMORY LIMIT APPROACHING: ${rssInMB.toFixed(2)}MB / 2048MB - Stopping scan to prevent crash`);
                         job.checkpoint.isResuming = true;
                         job.status = 'PAUSED';
@@ -373,7 +396,7 @@ class ScanJobProcessor {
                     }
 
                     // Force garbage collection if available (run with --expose-gc flag)
-                    if (global.gc && totalProcessed % 1000 === 0) {
+                    if (global.gc && totalProcessed % 100 === 0) {
                         global.gc();
                         logger.info('🗑️ Forced garbage collection');
                     }
@@ -491,11 +514,51 @@ class ScanJobProcessor {
 
             logger.info(`📄 Processing: ${fileName}`);
 
+            // Add processing timeout to prevent health check timeouts
+            const PROCESSING_TIMEOUT = 25000; // 25 seconds (less than 30s health check timeout)
+            
+            const processWithTimeout = new Promise(async (resolve, reject) => {
+                const timeout = setTimeout(() => {
+                    reject(new Error(`Processing timeout: ${fileName} took longer than ${PROCESSING_TIMEOUT/1000}s`));
+                }, PROCESSING_TIMEOUT);
+
+                try {
+                    const result = await this.processDocumentInternal(document, job, fileName, documentType);
+                    clearTimeout(timeout);
+                    resolve(result);
+                } catch (error) {
+                    clearTimeout(timeout);
+                    reject(error);
+                }
+            });
+
+            return await processWithTimeout;
+
+        } catch (error) {
+            if (error.message.includes('Processing timeout')) {
+                logger.warn(`⏱️ ${error.message} - Skipping to prevent health check timeout`);
+                return {
+                    isMatch: false,
+                    stage: 'processing-timeout',
+                    confidence: 0,
+                    reasoning: 'Document processing timed out to prevent server health check failure',
+                    error: error.message
+                };
+            }
+            throw error;
+        }
+    }
+
+    async processDocumentInternal(document, job, fileName, documentType) {
+
             // Download and extract text from the document
             const s3Key = document.filePath;
             let documentText = '';
 
             try {
+                // Yield before heavy S3 download
+                await new Promise(resolve => setImmediate(resolve));
+                
                 // Download from S3 using AWS SDK
                 const AWS = require('aws-sdk');
                 const s3 = new AWS.S3();
@@ -506,7 +569,13 @@ class ScanJobProcessor {
                 };
 
                 const s3Response = await s3.getObject(params).promise();
-                const fileBuffer = s3Response.Body;
+                let fileBuffer = s3Response.Body;
+                
+                // Clean up S3 response object
+                s3Response.Body = null;
+                
+                // Yield after S3 download
+                await new Promise(resolve => setImmediate(resolve));
 
                 // Extract text based on file type
                 const isDocx = fileName.toLowerCase().endsWith('.docx');
@@ -534,6 +603,13 @@ class ScanJobProcessor {
                     const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 
                     try {
+                        // LOG MEMORY BEFORE PDF PROCESSING
+                        const memBefore = process.memoryUsage();
+                        logger.info(`📄 PDF Processing Start: ${fileName} - Memory: ${(memBefore.rss / 1024 / 1024).toFixed(0)}MB RSS, ${(memBefore.heapUsed / 1024 / 1024).toFixed(0)}MB Heap`);
+                        
+                        // Yield before heavy PDF processing
+                        await new Promise(resolve => setImmediate(resolve));
+                        
                         // Convert Buffer to Uint8Array (required by pdfjs-dist)
                         const uint8Array = new Uint8Array(fileBuffer);
 
@@ -546,24 +622,66 @@ class ScanJobProcessor {
 
                         const pdfDocument = await loadingTask.promise;
                         const numPages = pdfDocument.numPages;
+                        
+                        // LOG MEMORY DURING PDF LOAD
+                        const memDuring = process.memoryUsage();
+                        logger.info(`📄 PDF Loaded: ${fileName} (${numPages} pages) - Memory: ${(memDuring.rss / 1024 / 1024).toFixed(0)}MB RSS, ${(memDuring.heapUsed / 1024 / 1024).toFixed(0)}MB Heap`);
+                        
+                        // Yield after PDF load
+                        await new Promise(resolve => setImmediate(resolve));
 
-                        // Extract text from all pages
+                        // Extract text from all pages with yields between chunks
                         const textPromises = [];
                         for (let pageNum = 1; pageNum <= numPages; pageNum++) {
                             textPromises.push(
-                                pdfDocument.getPage(pageNum).then(page => {
+                                pdfDocument.getPage(pageNum).then(async page => {
+                                    // Yield before page processing
+                                    await new Promise(resolve => setImmediate(resolve));
                                     return page.getTextContent().then(textContent => {
                                         return textContent.items.map(item => item.str).join(' ');
                                     });
                                 })
                             );
+                            
+                            // Yield every 5 pages to prevent blocking
+                            if (pageNum % 5 === 0) {
+                                await new Promise(resolve => setImmediate(resolve));
+                            }
                         }
 
                         const pageTexts = await Promise.all(textPromises);
                         documentText = pageTexts.join('\n');
+                        
+                        // LOG MEMORY AFTER TEXT EXTRACTION
+                        const memAfterText = process.memoryUsage();
+                        logger.info(`📄 PDF Text Extracted: ${fileName} (${documentText.length} chars) - Memory: ${(memAfterText.rss / 1024 / 1024).toFixed(0)}MB RSS, ${(memAfterText.heapUsed / 1024 / 1024).toFixed(0)}MB Heap`);
+                        
+                        // Yield after text extraction
+                        await new Promise(resolve => setImmediate(resolve));
 
-                        // Clean up
+                        // Aggressive PDF cleanup
                         await pdfDocument.destroy();
+                        
+                        // Force cleanup of PDF-related objects
+                        if (uint8Array) {
+                            uint8Array = null;
+                        }
+                        if (fileBuffer) {
+                            fileBuffer = null;
+                        }
+                        
+                        // CRITICAL: Force garbage collection after PDF processing
+                        if (global.gc) {
+                            global.gc();
+                            logger.debug(`🗑️ Forced GC after PDF processing: ${fileName}`);
+                        }
+                        
+                        // LOG MEMORY AFTER CLEANUP
+                        const memAfterCleanup = process.memoryUsage();
+                        logger.info(`📄 PDF Cleanup Complete: ${fileName} - Memory: ${(memAfterCleanup.rss / 1024 / 1024).toFixed(0)}MB RSS, ${(memAfterCleanup.heapUsed / 1024 / 1024).toFixed(0)}MB Heap`);
+                        
+                        // Yield for garbage collection
+                        await new Promise(resolve => setImmediate(resolve));
 
                     } catch (pdfError) {
                         // Handle corrupted/malformed PDFs gracefully
@@ -664,6 +782,9 @@ class ScanJobProcessor {
             }
 
             // LAYER 2: Cheap AI pre-filter (uses only first 5k chars)
+            // Yield before AI processing
+            await new Promise(resolve => setImmediate(resolve));
+            
             const shouldProcessFully = await fiDetectionService.cheapFIFilter(documentText);
             if (!shouldProcessFully) {
                 return {
@@ -679,6 +800,9 @@ class ScanJobProcessor {
 
             // LAYER 3: Full AI detection - only for promising candidates
             try {
+                // Yield before expensive AI call
+                await new Promise(resolve => setImmediate(resolve));
+                
                 const isFIRequest = await fiDetectionService.detectFIRequest(documentText);
 
                 if (!isFIRequest) {
@@ -689,6 +813,9 @@ class ScanJobProcessor {
                         reasoning: 'Document is not an FI request'
                     };
                 }
+
+                // Yield before final AI call
+                await new Promise(resolve => setImmediate(resolve));
 
                 // Check if it specifically requests the target report type (e.g., acoustic)
                 const matchResult = await fiDetectionService.matchFIRequestType(documentText, documentType);
