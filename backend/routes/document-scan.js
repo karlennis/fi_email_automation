@@ -246,21 +246,27 @@ router.post('/jobs/:jobId/run-now', authenticate, requireAdmin, async (req, res)
       }
     }
 
-    // Update job status to RUNNING immediately
-    job.status = 'RUNNING';
-    await job.save();
-
-    logger.info(`📝 Job status updated to RUNNING, now enqueueing...`);
-
     // Enqueue for worker processing (non-blocking)
+    // IMPORTANT: Check queue status BEFORE updating MongoDB to avoid race conditions
     try {
-      await enqueueScanJob(job.jobId, { targetDate: targetDate || null, force: !!force });
-      logger.info(`✅ Job successfully enqueued`);
+      logger.info(`📝 Checking queue status before enqueueing...`);
+      const enqueuedJob = await enqueueScanJob(job.jobId, { targetDate: targetDate || null, force: !!force });
+      
+      // Check if this was a fresh enqueue (not already in queue)
+      const jobState = await enqueuedJob.getState();
+      
+      if (jobState === 'waiting') {
+        // Fresh enqueue - update MongoDB status
+        logger.info(`✅ Job successfully enqueued (state: waiting) - updating MongoDB status to RUNNING`);
+        job.status = 'RUNNING';
+        await job.save();
+      } else {
+        // Job was already in queue - don't touch MongoDB status
+        logger.info(`ℹ️ Job already in queue with state: ${jobState} - skipping MongoDB status update`);
+      }
+      
     } catch (enqueueError) {
       logger.error(`❌ Failed to enqueue job:`, enqueueError);
-      // Reset status back to previous state if enqueue fails
-      job.status = 'PAUSED';
-      await job.save();
       return res.status(500).json({
         success: false,
         error: `Failed to enqueue job: ${enqueueError.message}`
