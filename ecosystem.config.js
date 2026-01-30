@@ -33,7 +33,7 @@ module.exports = {
       out_file: '/var/log/fi_email/worker-out.log',
       log_file: '/var/log/fi_email/worker-combined.log',
       time_format: 'YYYY-MM-DD HH:mm:ss Z',
-      max_memory_restart: '1.2G',
+      max_memory_restart: '1200M',
       autorestart: true,
       max_restarts: 10,
       min_uptime: '30s',
