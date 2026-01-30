@@ -107,7 +107,8 @@ const corsOptions = {
       process.env.FRONTEND_URL || 'http://localhost:4200',
       'http://localhost:4200',
       'http://127.0.0.1:4200',
-      'https://fi-email-automation-frontend.onrender.com'
+      'https://fi-email-automation-frontend.onrender.com',
+      'https://fi-email-automation-frontend-xvqm.onrender.com' // Current Render frontend URL
     ];
 
     // Allow requests with no origin (mobile apps, Postman, etc.)
@@ -191,6 +192,12 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/fi-email-
 })
 .then(() => {
   logger.info('Connected to MongoDB');
+
+  // Ensure primary admin exists (idempotent - safe to run on every startup)
+  const User = require('./models/User');
+  User.ensurePrimaryAdmin()
+    .then(() => logger.info('Primary admin account verified'))
+    .catch(error => logger.error('Failed to ensure primary admin:', error));
 
   // Initialize scheduled job manager after DB connection
   scheduledJobManager.initialize()
