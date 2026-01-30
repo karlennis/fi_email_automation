@@ -60,7 +60,7 @@ function getScanQueue() {
       },
       settings: {
         // Optimize for low Redis request usage (Upstash 500k/month limit)
-        stalledInterval: 300000,  // Check for stalled jobs every 5 minutes (was 60s)
+        stalledInterval: 600000,  // Check for stalled jobs every 10 minutes (was 60s)
         maxStalledCount: 2,       // Max times a job can be recovered
         guardInterval: 30000,     // Renew lock every 30s (was 10s)
         lockDuration: 90000,      // Lock duration 90s (was 30s)

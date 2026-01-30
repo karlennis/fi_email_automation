@@ -48,7 +48,7 @@ services:
       - key: S3_REGION
         value: eu-north-1
       - key: FRONTEND_URL
-        value: https://fi-email-automation-frontend.onrender.com
+        value: https://fi-email-automation-frontend-xvqm.onrender.com
       - key: RATE_LIMIT_WINDOW_MS
         value: 900000
       - key: RATE_LIMIT_MAX_REQUESTS
@@ -119,5 +119,5 @@ services:
       - key: PORT
         value: 4000
       - key: API_URL
-        value: https://fi-email-automation-backend.onrender.com
+        value: https://fi-email-automation-backend-xvqm.onrender.com
     autoDeploy: true
