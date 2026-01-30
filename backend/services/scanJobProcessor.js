@@ -148,22 +148,42 @@ class ScanJobProcessor {
 
         let scanStartDate, scanEndDate;
 
-        // Check if resuming - use stored dates from checkpoint
+        // Priority order for determining scan dates:
+        // 1. Stored dates from checkpoint (resuming mid-scan)
+        // 2. Stored targetDate in job schedule (manual jobs)
+        // 3. Parameter targetDate (new manual job)
+        // 4. Lookback calculation (scheduled jobs)
+
         const isResuming = job.checkpoint && job.checkpoint.isResuming && job.checkpoint.lastProcessedIndex > 0;
         if (isResuming && job.checkpoint.scanStartDate && job.checkpoint.scanEndDate) {
+            // 1. Use stored dates from checkpoint (resuming mid-scan)
             scanStartDate = new Date(job.checkpoint.scanStartDate);
             scanEndDate = new Date(job.checkpoint.scanEndDate);
             logger.info(`🔄 Resuming with original scan dates: ${scanStartDate.toISOString().split('T')[0]} to ${scanEndDate.toISOString().split('T')[0]}`);
+        } else if (job.schedule?.targetDate) {
+            // 2. Use stored targetDate from job schedule (manual jobs)
+            scanStartDate = new Date(job.schedule.targetDate);
+            scanStartDate.setHours(0, 0, 0, 0);
+            scanEndDate = new Date(scanStartDate);
+            scanEndDate.setDate(scanEndDate.getDate() + 1);
+            scanEndDate.setHours(23, 59, 59, 999);
+            logger.info(`📅 Scanning documents for ${job.schedule.targetDate} (stored target date)`);
         } else if (targetDate) {
-            // Use specified target date (single day scan for manual testing)
+            // 3. Use specified target date (new manual job)
             scanStartDate = new Date(targetDate);
             scanStartDate.setHours(0, 0, 0, 0);
             scanEndDate = new Date(scanStartDate);
             scanEndDate.setDate(scanEndDate.getDate() + 1);
             scanEndDate.setHours(23, 59, 59, 999);
             logger.info(`📅 Scanning document register for ${targetDate} (user-specified date)`);
+            
+            // Store this targetDate in job for future resume
+            job.schedule = job.schedule || {};
+            job.schedule.targetDate = targetDate;
+            await job.save();
+            logger.info(`💾 Stored target date ${targetDate} in job schedule for future resume`);
         } else {
-            // Use lookback period from job configuration
+            // 4. Use lookback period from job configuration (scheduled jobs)
             const lookbackDays = job.schedule?.lookbackDays || 1; // Default to 1 day if not specified
 
             // End date: yesterday (don't include today's partial data)
