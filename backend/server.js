@@ -107,6 +107,7 @@ const corsOptions = {
       process.env.FRONTEND_URL || 'http://localhost:4200',
       'http://localhost:4200',
       'http://127.0.0.1:4200',
+      'http://13.61.136.57', // EC2 instance IP
       'https://fi-email-automation-frontend-xvqm.onrender.com' // Current Render frontend URL
     ];
 
