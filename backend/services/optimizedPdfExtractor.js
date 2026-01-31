@@ -49,7 +49,7 @@ class OptimizedPDFExtractor {
       await new Promise(resolve => setImmediate(resolve));
 
       // Create Uint8Array from buffer (required by pdfjs)
-      const uint8Array = new Uint8Array(fileBuffer);
+      let uint8Array = new Uint8Array(fileBuffer);
       
       // Load PDF
       const loadingTask = pdfjsLib.getDocument({
