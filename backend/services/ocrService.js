@@ -47,12 +47,25 @@ class OCRService {
      */
     async extractTextViaOCR(pdfPath, maxPages = 10) {
         try {
+            // SAFETY CHECK: Skip OCR if low on memory
+            const memUsage = process.memoryUsage();
+            const rssMemMB = memUsage.rss / 1024 / 1024;
+            const heapUsedMB = memUsage.heapUsed / 1024 / 1024;
+            const minFreeMemMB = 512; // Require 512MB free for OCR safety
+            const totalMemMB = 4096; // System total (adjust if needed)
+            const estimatedFreeMB = totalMemMB - rssMemMB;
+
+            if (estimatedFreeMB < minFreeMemMB) {
+                logger.warn(`📸 Skipping OCR: Low memory (${rssMemMB.toFixed(0)}MB RSS, only ${estimatedFreeMB.toFixed(0)}MB free)`);
+                return '';
+            }
+
             if (!fs.existsSync(pdfPath)) {
                 throw new Error(`PDF file not found: ${pdfPath}`);
             }
 
             const fileName = path.basename(pdfPath);
-            logger.info(`📸 Running Tesseract OCR on ${fileName} (max ${maxPages} pages)`);
+            logger.info(`📸 Running Tesseract OCR on ${fileName} (${estimatedFreeMB.toFixed(0)}MB free, max ${maxPages} pages)`);
 
             // Tesseract command: convert PDF to text
             // Using input directly without page range (Tesseract handles multi-page PDFs)
