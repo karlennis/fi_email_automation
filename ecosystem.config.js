@@ -43,7 +43,8 @@ module.exports = {
     {
       name: 'fi-email-frontend',
       script: 'npx',
-      args: 'serve -s frontend/dist/frontend/browser -l 4000',
+      args: 'serve -s dist/frontend/browser -l 4000',
+      cwd: './frontend',
       instances: 1,
       exec_mode: 'fork',
       env: {
