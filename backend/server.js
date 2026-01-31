@@ -7,8 +7,8 @@ const mongoose = require('mongoose');
 const winston = require('winston');
 const path = require('path');
 
-// Load environment variables
-dotenv.config();
+// Load environment variables from backend directory
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 // Import routes
 const authRoutes = require('./routes/auth');

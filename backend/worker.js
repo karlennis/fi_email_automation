@@ -1,10 +1,11 @@
 const dotenv = require('dotenv');
+const path = require('path');
 const mongoose = require('mongoose');
 const logger = require('./utils/logger');
 const { startScanWorker } = require('./services/scanJobWorker');
 
-// Load environment variables
-dotenv.config();
+// Load environment variables from backend directory
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 const MONGODB_URI = process.env.MONGODB_URI;
 
