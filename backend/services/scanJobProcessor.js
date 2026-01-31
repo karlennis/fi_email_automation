@@ -624,12 +624,14 @@ class ScanJobProcessor {
                     await new Promise(resolve => setImmediate(resolve));
 
                     // Extract text using optimized zero-copy extractor
+                    // Pass file path for OCR fallback if available
                     let extractionResult;
 
                     if (isDocx) {
                         extractionResult = await optimizedPdfExtractor.extractDocxOptimized(fileBuffer, fileName);
                     } else {
-                        extractionResult = await optimizedPdfExtractor.extractTextOptimized(fileBuffer, fileName);
+                        const tempFilePath = tempDir ? require('path').join(tempDir, fileName) : null;
+                        extractionResult = await optimizedPdfExtractor.extractTextOptimized(fileBuffer, fileName, tempFilePath);
                     }
 
                     // Null out buffer immediately after extraction

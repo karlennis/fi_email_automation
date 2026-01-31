@@ -1,5 +1,6 @@
 const winston = require('winston');
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+const ocrService = require('./ocrService');
 
 const logger = winston.createLogger({
   level: 'info',
@@ -17,6 +18,7 @@ const logger = winston.createLogger({
  * Keeps only one page in memory at a time
  * Explicitly nulls out buffers after use
  * Forces GC periodically
+ * Falls back to OCR if text extraction is insufficient
  */
 class OptimizedPDFExtractor {
   constructor() {
@@ -25,13 +27,13 @@ class OptimizedPDFExtractor {
   }
 
   /**
-   * Extract text from PDF - STREAMING approach
+   * Extract text from PDF - STREAMING approach with OCR fallback
    * - Loads PDF metadata only first
    * - Processes one page at a time
    * - Releases each page immediately after processing
-   * - Returns combined text but controlled in size
+   * - Falls back to OCR if text extraction is insufficient
    */
-  async extractTextOptimized(fileBuffer, fileName) {
+  async extractTextOptimized(fileBuffer, fileName, filePath = null) {
     let pdfDocument = null;
     const pageTexts = [];
     let totalExtractedChars = 0;
@@ -119,6 +121,21 @@ class OptimizedPDFExtractor {
       // Enforce max size
       if (documentText.length > MAX_TEXT_CHARS) {
         documentText = documentText.substring(0, MAX_TEXT_CHARS);
+      }
+
+      // OCR FALLBACK: If text extraction insufficient, try OCR
+      if (filePath && ocrService.shouldUseOCR(documentText)) {
+        logger.info(`📸 Text extraction insufficient (${documentText.length} chars), attempting OCR fallback...`);
+        try {
+          const ocrText = await ocrService.extractTextViaOCR(filePath);
+          if (ocrText && ocrText.length > documentText.length) {
+            logger.info(`📸 OCR recovered ${ocrText.length} chars (vs ${documentText.length} from PDF extraction)`);
+            documentText = ocrText;
+          }
+        } catch (ocrError) {
+          logger.debug(`📸 OCR fallback failed: ${ocrError.message}`);
+          // Continue with whatever text we have
+        }
       }
 
       const memAfterText = process.memoryUsage();

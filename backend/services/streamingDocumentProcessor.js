@@ -2,6 +2,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const winston = require('winston');
 const { Readable } = require('stream');
+const ocrService = require('./ocrService');
 
 const logger = winston.createLogger({
   level: 'info',
@@ -213,6 +214,23 @@ class StreamingDocumentProcessor {
 
       if (truncated) {
         logger.warn(`Text truncated to ${maxChars} chars for ${path.basename(pdfPath)}`);
+      }
+
+      // OCR FALLBACK: If text extraction insufficient, try OCR
+      if (ocrService.shouldUseOCR(fullText)) {
+        logger.info(`📸 Streaming extraction insufficient (${fullText.length} chars), attempting OCR fallback...`);
+        try {
+          const ocrText = await ocrService.extractTextViaOCR(pdfPath);
+          if (ocrText && ocrText.length > fullText.length) {
+            logger.info(`📸 OCR recovered ${ocrText.length} chars (vs ${fullText.length} from PDF streaming)`);
+            fullText = ocrText;
+            if (fullText.length > maxChars) {
+              fullText = fullText.substring(0, maxChars);
+            }
+          }
+        } catch (ocrError) {
+          logger.debug(`📸 OCR fallback failed: ${ocrError.message}`);
+        }
       }
 
       return {
