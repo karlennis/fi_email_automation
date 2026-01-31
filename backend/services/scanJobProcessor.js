@@ -9,6 +9,11 @@ const buildingInfoService = require('./buildingInfoService');
 const logger = require('../utils/logger');
 const { enqueueScanJob } = require('./scanJobQueue');
 const optimizedPdfExtractor = require('./optimizedPdfExtractor');
+const StreamingDocumentProcessor = require('./streamingDocumentProcessor');
+const fs = require('fs');
+const fsp = require('fs').promises;
+const path = require('path');
+const { pipeline } = require('stream/promises');
 
 class ScanJobProcessor {
     constructor() {
@@ -556,40 +561,92 @@ class ScanJobProcessor {
                     Key: s3Key
                 };
 
-                const s3Response = await s3.getObject(params).promise();
-                let fileBuffer = s3Response.Body;
+                const maxDocMb = parseInt(process.env.MAX_S3_OBJECT_MB || '25', 10);
+                const streamThresholdMb = parseInt(process.env.STREAMING_PDF_THRESHOLD_MB || '8', 10);
+                const maxBytes = maxDocMb * 1024 * 1024;
+                const streamThresholdBytes = streamThresholdMb * 1024 * 1024;
 
-                // Clean up S3 response object
-                s3Response.Body = null;
+                let sizeBytes = 0;
+                try {
+                    const head = await s3.headObject(params).promise();
+                    sizeBytes = head.ContentLength || 0;
+                    if (sizeBytes > maxBytes) {
+                        logger.warn(`⚠️ Skipping ${fileName} (${(sizeBytes / 1024 / 1024).toFixed(1)}MB) - exceeds ${maxDocMb}MB limit`);
+                        return {
+                            isMatch: false,
+                            stage: 'file-too-large',
+                            confidence: 0,
+                            reasoning: `File size ${(sizeBytes / 1024 / 1024).toFixed(1)}MB exceeds ${maxDocMb}MB limit`
+                        };
+                    }
+                } catch (headError) {
+                    logger.warn(`⚠️ Could not read size for ${fileName}: ${headError.message}`);
+                }
 
-                // Yield after S3 download
-                await new Promise(resolve => setImmediate(resolve));
-
-                // Extract text using optimized zero-copy extractor
                 const isDocx = fileName.toLowerCase().endsWith('.docx');
-                let extractionResult;
 
-                if (isDocx) {
-                    extractionResult = await optimizedPdfExtractor.extractDocxOptimized(fileBuffer, fileName);
+                if (!isDocx && sizeBytes > streamThresholdBytes) {
+                    const tempDir = path.join(__dirname, '..', 'temp');
+                    await fsp.mkdir(tempDir, { recursive: true });
+                    const tempPath = path.join(
+                        tempDir,
+                        `scan-${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`
+                    );
+
+                    const s3Stream = s3.getObject(params).createReadStream();
+                    await pipeline(s3Stream, fs.createWriteStream(tempPath));
+
+                    const streamingProcessor = new StreamingDocumentProcessor();
+                    const streamingResult = await streamingProcessor.extractTextWithStreamingAndLimits(tempPath);
+
+                    await fsp.unlink(tempPath).catch(() => null);
+
+                    if (!streamingResult?.text) {
+                        logger.error(`❌ Text extraction failed for ${fileName}: streaming extractor returned empty text`);
+                        return {
+                            isMatch: false,
+                            stage: 'pdf-stream-parse-error',
+                            confidence: 0,
+                            reasoning: 'PDF streaming extraction returned empty text'
+                        };
+                    }
+
+                    documentText = streamingResult.text;
                 } else {
-                    extractionResult = await optimizedPdfExtractor.extractTextOptimized(fileBuffer, fileName);
+                    const s3Response = await s3.getObject(params).promise();
+                    let fileBuffer = s3Response.Body;
+
+                    // Clean up S3 response object
+                    s3Response.Body = null;
+
+                    // Yield after S3 download
+                    await new Promise(resolve => setImmediate(resolve));
+
+                    // Extract text using optimized zero-copy extractor
+                    let extractionResult;
+
+                    if (isDocx) {
+                        extractionResult = await optimizedPdfExtractor.extractDocxOptimized(fileBuffer, fileName);
+                    } else {
+                        extractionResult = await optimizedPdfExtractor.extractTextOptimized(fileBuffer, fileName);
+                    }
+
+                    // Null out buffer immediately after extraction
+                    fileBuffer = null;
+
+                    if (!extractionResult.success) {
+                        logger.error(`❌ Text extraction failed for ${fileName}: ${extractionResult.error}`);
+                        return {
+                            isMatch: false,
+                            stage: isDocx ? 'docx-parse-error' : 'pdf-parse-error',
+                            confidence: 0,
+                            reasoning: isDocx ? 'DOCX is corrupted or malformed' : 'PDF is corrupted or malformed',
+                            error: extractionResult.error
+                        };
+                    }
+
+                    documentText = extractionResult.text;
                 }
-
-                // Null out buffer immediately after extraction
-                fileBuffer = null;
-
-                if (!extractionResult.success) {
-                    logger.error(`❌ Text extraction failed for ${fileName}: ${extractionResult.error}`);
-                    return {
-                        isMatch: false,
-                        stage: isDocx ? 'docx-parse-error' : 'pdf-parse-error',
-                        confidence: 0,
-                        reasoning: isDocx ? 'DOCX is corrupted or malformed' : 'PDF is corrupted or malformed',
-                        error: extractionResult.error
-                    };
-                }
-
-                documentText = extractionResult.text;
 
                 if (!documentText || documentText.length < 100) {
                     logger.warn(`⚠️ Insufficient text extracted from ${fileName} (${documentText.length} chars)`);
