@@ -250,13 +250,16 @@ class ScanJobProcessor {
         if (isResuming) {
             logger.info(`🔄 Resuming scan after ${job.checkpoint.lastProcessedFile || 'unknown file'}`);
         } else {
+            // COUNT TOTAL DOCUMENTS UPFRONT (once, not incrementally)
+            const totalDocumentCount = await fastS3Scanner.countDocumentsSince(scanStartDate, scanEndDate);
+            
             job.checkpoint = {
                 lastProcessedIndex: 0,
                 lastProcessedFile: '',
                 lastProcessedPath: '',
                 scanStartDate: scanStartDate.toISOString(),
                 scanEndDate: scanEndDate.toISOString(),
-                totalDocuments: 0,
+                totalDocuments: totalDocumentCount,
                 processedCount: 0,
                 matchesFound: 0,
                 scanStartTime: new Date(),
@@ -264,12 +267,12 @@ class ScanJobProcessor {
                 isResuming: false
             };
             await job.save();
-            logger.info(`💾 Checkpoint initialized for streaming scan`);
+            logger.info(`💾 Checkpoint initialized: ${totalDocumentCount} documents to process`);
         }
 
         let matches = []; // Use let instead of const so we can clear after sending
         let totalProcessed = isResuming ? job.checkpoint.processedCount : 0;
-        let totalDocuments = isResuming ? (job.checkpoint.totalDocuments || 0) : 0;
+        let totalDocuments = job.checkpoint.totalDocuments; // Use stored count, don't increment
         let skippedNonPdf = 0;
         let skipping = isResuming && (job.checkpoint.lastProcessedPath || job.checkpoint.lastProcessedFile);
         const resumePath = job.checkpoint.lastProcessedPath;
@@ -288,8 +291,6 @@ class ScanJobProcessor {
                             skippedNonPdf++;
                             return;
                         }
-
-                        totalDocuments++;
 
                         if (skipping) {
                             const currentKey = document.filePath || document.fileName;

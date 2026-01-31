@@ -229,6 +229,68 @@ class FastS3Scanner {
     }
 
     /**
+     * Count documents in a date range WITHOUT processing them
+     * Scans S3 for matching documents and returns only the count
+     * @param {Date} sinceDate - Get documents modified after this date
+     * @param {Date} endDate - Get documents modified before this date (optional)
+     * @returns {Promise<number>} Total matching document count
+     */
+    async countDocumentsSince(sinceDate, endDate = null) {
+        logger.info(`📊 Counting documents: ${sinceDate.toISOString()} to ${endDate ? endDate.toISOString() : 'now'}`);
+        
+        let totalCount = 0;
+        let continuationToken = null;
+        let hasMore = true;
+
+        try {
+            while (hasMore) {
+                const params = {
+                    Bucket: this.bucketName,
+                    Prefix: 'planning-docs/',
+                    MaxKeys: 1000,
+                    ContinuationToken: continuationToken
+                };
+
+                const command = new ListObjectsV2Command(params);
+                const response = await this.s3Client.send(command);
+
+                if (response.Contents) {
+                    for (const object of response.Contents) {
+                        // Filter by last modified date
+                        if (object.LastModified && object.LastModified >= sinceDate) {
+                            if (!endDate || object.LastModified <= endDate) {
+                                const pathParts = object.Key.split('/');
+                                if (pathParts.length >= 3) {
+                                    const fileName = pathParts[pathParts.length - 1];
+                                    
+                                    // Count PDF and DOCX files only
+                                    if (fileName &&
+                                        !fileName.startsWith('.') &&
+                                        fileName.includes('.') &&
+                                        fileName.toLowerCase() !== 'docfiles.txt' &&
+                                        (fileName.toLowerCase().endsWith('.pdf') || fileName.toLowerCase().endsWith('.docx'))) {
+                                        totalCount++;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    response.Contents = null;
+                }
+
+                continuationToken = response.NextContinuationToken;
+                hasMore = !!continuationToken;
+            }
+        } catch (error) {
+            logger.error(`❌ Error counting documents: ${error.message}`);
+            throw error;
+        }
+
+        logger.info(`📊 Total documents in date range: ${totalCount}`);
+        return totalCount;
+    }
+
+    /**
      * Get file type from filename
      */
     getFileType(fileName) {
