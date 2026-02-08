@@ -64,11 +64,13 @@ class FastS3Scanner {
                                     const projectId = pathParts[1];
                                     const fileName = pathParts[pathParts.length - 1];
 
-                                    // Skip folders, system files, and docfiles.txt
+                                    // Skip folders, system files, docfiles.txt, and non-PDF/DOCX files
+                                    // MUST match the filter in countDocumentsSince() to ensure accurate counts
                                     if (fileName &&
                                         !fileName.startsWith('.') &&
                                         fileName.includes('.') &&
-                                        fileName.toLowerCase() !== 'docfiles.txt') {
+                                        fileName.toLowerCase() !== 'docfiles.txt' &&
+                                        (fileName.toLowerCase().endsWith('.pdf') || fileName.toLowerCase().endsWith('.docx'))) {
                                         
                                         // Stream document immediately - NO MEMORY RETENTION
                                         const doc = {

@@ -641,14 +641,26 @@ class ScanJobProcessor {
                     await new Promise(resolve => setImmediate(resolve));
 
                     // Extract text using optimized zero-copy extractor
-                    // Pass file path for OCR fallback if available
+                    // For PDFs, write to disk for OCR fallback support
                     let extractionResult;
+                    let tempFilePath = null;
 
                     if (isDocx) {
                         extractionResult = await optimizedPdfExtractor.extractDocxOptimized(fileBuffer, fileName);
                     } else {
-                        const tempFilePath = tempDir ? require('path').join(tempDir, fileName) : null;
+                        // Write PDF to temp directory for OCR fallback
+                        await fsp.mkdir(tempDir, { recursive: true });
+                        tempFilePath = path.join(tempDir, fileName);
+                        await fsp.writeFile(tempFilePath, fileBuffer);
+                        
                         extractionResult = await optimizedPdfExtractor.extractTextOptimized(fileBuffer, fileName, tempFilePath);
+                        
+                        // Clean up temp file after extraction
+                        try {
+                            await fsp.unlink(tempFilePath);
+                        } catch (unlinkError) {
+                            logger.debug(`Could not delete temp file ${tempFilePath}: ${unlinkError.message}`);
+                        }
                     }
 
                     // Null out buffer immediately after extraction
