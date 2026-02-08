@@ -582,6 +582,9 @@ class ScanJobProcessor {
                 const maxBytes = maxDocMb * 1024 * 1024;
                 const streamThresholdBytes = streamThresholdMb * 1024 * 1024;
 
+                // Define tempDir at function scope for OCR fallback
+                const tempDir = path.join(__dirname, '..', 'temp');
+
                 let sizeBytes = 0;
                 try {
                     const head = await s3.headObject(params).promise();
@@ -602,7 +605,6 @@ class ScanJobProcessor {
                 const isDocx = fileName.toLowerCase().endsWith('.docx');
 
                 if (!isDocx && sizeBytes > streamThresholdBytes) {
-                    const tempDir = path.join(__dirname, '..', 'temp');
                     await fsp.mkdir(tempDir, { recursive: true });
                     const tempPath = path.join(
                         tempDir,
