@@ -492,10 +492,25 @@ class ScanJobProcessor {
         job.statistics.totalMatches = (job.statistics.totalMatches || 0) + matches.length;
         job.statistics.lastScanDate = new Date();
 
+        // Reset job status back to ACTIVE after completion (don't leave it as RUNNING)
+        // This prevents the processor from thinking the job crashed if it was manually triggered
+        job.status = 'ACTIVE';
+        
+        // Clear checkpoint after successful completion
+        job.checkpoint = {
+            lastProcessedIndex: 0,
+            lastProcessedFile: '',
+            lastProcessedPath: '',
+            processedCount: 0,
+            matchesFound: 0,
+            isResuming: false,
+            totalDocuments: 0
+        };
+
         await job.save();
 
         const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-        logger.info(`⏱️ Job ${job.jobId} completed in ${duration}s`);
+        logger.info(`⏱️ Job ${job.jobId} completed in ${duration}s - status reset to ACTIVE`);
     }
 
     /**
