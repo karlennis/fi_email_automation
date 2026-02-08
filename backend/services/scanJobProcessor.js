@@ -176,7 +176,7 @@ class ScanJobProcessor {
             scanStartDate = new Date(job.schedule.targetDate);
             scanStartDate.setHours(0, 0, 0, 0);
             scanEndDate = new Date(scanStartDate);
-            scanEndDate.setDate(scanEndDate.getDate() + 1);
+            // Don't add a day - just set to end of the same day
             scanEndDate.setHours(23, 59, 59, 999);
             logger.info(`📅 Scanning documents for ${job.schedule.targetDate} (stored target date)`);
         } else if (targetDate) {
@@ -184,7 +184,7 @@ class ScanJobProcessor {
             scanStartDate = new Date(targetDate);
             scanStartDate.setHours(0, 0, 0, 0);
             scanEndDate = new Date(scanStartDate);
-            scanEndDate.setDate(scanEndDate.getDate() + 1);
+            // Don't add a day - just set to end of the same day
             scanEndDate.setHours(23, 59, 59, 999);
             logger.info(`📅 Scanning document register for ${targetDate} (user-specified date)`);
 
