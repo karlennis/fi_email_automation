@@ -36,10 +36,11 @@ router.post('/create', authenticate, requirePermission('canManageJobs'), async (
       });
     }
 
-    if (!customerIds || customerIds.length === 0) {
+    // Customer validation - optional for FI_DETECTION jobs (they can be configured later)
+    if (jobType === 'EMAIL_BATCH' && (!customerIds || customerIds.length === 0)) {
       return res.status(400).json({
         success: false,
-        error: 'At least one customer must be specified'
+        error: 'At least one customer must be specified for EMAIL_BATCH jobs'
       });
     }
 

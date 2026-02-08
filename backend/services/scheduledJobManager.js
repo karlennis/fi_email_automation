@@ -126,10 +126,13 @@ class ScheduledJobManager {
         createdByUser = await this.getSystemUser();
       }
 
-      // Fetch customer details
-      const customers = await Customer.find({
-        _id: { $in: customerIds }
-      }).select('_id email name');
+      // Fetch customer details (optional - can be empty for FI_DETECTION jobs)
+      let customers = [];
+      if (customerIds && customerIds.length > 0) {
+        customers = await Customer.find({
+          _id: { $in: customerIds }
+        }).select('_id email name');
+      }
 
       const job = new ScheduledJob({
         jobType,
