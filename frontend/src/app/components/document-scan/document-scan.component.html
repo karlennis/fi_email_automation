@@ -150,6 +150,17 @@
         </p>
       </div>
 
+      <!-- Running job progress -->
+      <div class="job-progress" *ngIf="isJobRunning(job)">
+        <div class="progress-info">
+          <span class="progress-icon">⚙️</span>
+          <strong>Processing:</strong> {{ getJobProgress(job) }}
+        </div>
+        <div class="progress-bar-container">
+          <div class="progress-bar" [style.width]="(job.checkpoint!.processedCount / job.checkpoint!.totalDocuments * 100) + '%'"></div>
+        </div>
+      </div>
+
       <div class="job-actions">
         <button class="btn btn-success" *ngIf="job.status !== 'ACTIVE'" (click)="startJob(job)">
           <span class="btn-icon">▶️</span>
@@ -159,7 +170,11 @@
           <span class="btn-icon">⏸️</span>
           Stop
         </button>
-        <button class="btn btn-info" (click)="openRunNowModal(job)" [disabled]="loading" title="Run this job now for testing">
+        <button class="btn btn-danger" *ngIf="isJobRunning(job)" (click)="cancelJob(job)" [disabled]="loading" title="Cancel the current running job">
+          <span class="btn-icon">🛑</span>
+          Cancel Run
+        </button>
+        <button class="btn btn-info" (click)="openRunNowModal(job)" [disabled]="loading || isJobRunning(job)" title="Run this job now for testing">
           <span class="btn-icon">🚀</span>
           Run Now
         </button>

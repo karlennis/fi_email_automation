@@ -234,7 +234,7 @@ router.post('/jobs/:jobId/run-now', authenticate, requireAdmin, async (req, res)
       isResuming: false,
       totalDocuments: 0
     };
-    
+
     // Clear any stored targetDate from previous manual runs
     if (job.schedule?.targetDate) {
       delete job.schedule.targetDate;
@@ -338,6 +338,105 @@ router.post('/jobs/:jobId/stop', authenticate, requireAdmin, async (req, res) =>
 
   } catch (error) {
     logger.error('Failed to stop scan job:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/document-scan/jobs/:jobId/cancel
+ * Cancel a currently running scan job
+ */
+router.post('/jobs/:jobId/cancel', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const { jobId } = req.params;
+
+    logger.info(`🚫 Canceling scan job: ${jobId}`, {
+      user: req.user.email
+    });
+
+    const job = await ScanJob.findOne({ jobId });
+
+    if (!job) {
+      return res.status(404).json({
+        success: false,
+        error: 'Scan job not found'
+      });
+    }
+
+    // Set a cancellation flag that the processor will check
+    job.status = 'CANCELLING'; // Special status to signal cancellation
+    job.lastModifiedBy = {
+      userId: req.user._id,
+      email: req.user.email,
+      name: req.user.name,
+      timestamp: new Date()
+    };
+    await job.save();
+
+    logger.info(`✅ Cancellation signal sent to job: ${jobId}`);
+
+    // Try to remove from queue (for waiting jobs)
+    const { getScanQueue } = require('../services/scanJobQueue');
+    const queue = getScanQueue();
+    const jobKey = `scan:${jobId}`;
+
+    try {
+      const queueJob = await queue.getJob(jobKey);
+      if (queueJob) {
+        const state = await queueJob.getState();
+        logger.info(`🔍 Found job in queue with state: ${state}`);
+
+        if (state === 'waiting') {
+          // Job hasn't started - remove it immediately
+          await queueJob.remove();
+          logger.info(`✅ Removed waiting job from queue: ${jobId}`);
+
+          // Job was waiting, reset immediately
+          job.status = 'ACTIVE';
+          job.checkpoint = {
+            lastProcessedIndex: 0,
+            lastProcessedFile: '',
+            lastProcessedPath: '',
+            processedCount: 0,
+            matchesFound: 0,
+            isResuming: false,
+            totalDocuments: 0
+          };
+          await job.save();
+        } else if (state === 'active') {
+          // Job is running - the processor will check status and abort
+          logger.info(`🔄 Job is active - processor will abort on next status check`);
+        }
+      } else {
+        logger.info(`ℹ️ Job not found in queue: ${jobId}`);
+        // Reset status if not in queue
+        job.status = 'ACTIVE';
+        job.checkpoint = {
+          lastProcessedIndex: 0,
+          lastProcessedFile: '',
+          lastProcessedPath: '',
+          processedCount: 0,
+          matchesFound: 0,
+          isResuming: false,
+          totalDocuments: 0
+        };
+        await job.save();
+      }
+    } catch (queueError) {
+      logger.warn(`⚠️ Error checking/removing job from queue: ${queueError.message}`);
+    }
+
+    res.json({
+      success: true,
+      data: job,
+      message: `Cancellation signal sent to job "${job.name}". If running, it will stop on next checkpoint.`
+    });
+
+  } catch (error) {
+    logger.error('Failed to cancel scan job:', error);
     res.status(500).json({
       success: false,
       error: error.message

@@ -10,7 +10,7 @@ interface ScanJob {
   jobId: string;
   name: string;
   documentType: string;
-  status: 'ACTIVE' | 'PAUSED' | 'STOPPED';
+  status: 'ACTIVE' | 'PAUSED' | 'STOPPED' | 'CANCELLING';
   config: {
     confidenceThreshold: number;
     reviewThreshold: number;
@@ -33,6 +33,12 @@ interface ScanJob {
     totalMatches: number;
     totalEmailsSent: number;
     lastScanDate?: Date;
+  };
+  checkpoint?: {
+    processedCount: number;
+    totalDocuments: number;
+    isResuming: boolean;
+    lastProcessedFile?: string;
   };
   createdAt: Date;
   createdBy: {
@@ -351,6 +357,23 @@ export class DocumentScanComponent implements OnInit {
     }
   }
 
+  async cancelJob(job: ScanJob) {
+    if (confirm(`Cancel the current run for "${job.name}"? This will stop processing and reset the job.`)) {
+      this.loading = true;
+      try {
+        await this.http.post(`${this.apiUrl}/jobs/${job.jobId}/cancel`, {}, { headers: this.authService.getAuthHeaders() }).toPromise();
+        this.successMessage = `Job "${job.name}" cancelled and reset`;
+        await this.loadJobs();
+        setTimeout(() => this.successMessage = null, 3000);
+      } catch (err: any) {
+        this.error = err.error?.error || 'Failed to cancel job';
+        console.error('Error cancelling job:', err);
+      } finally {
+        this.loading = false;
+      }
+    }
+  }
+
   async deleteJob(job: ScanJob) {
     if (confirm(`Delete job "${job.name}"? This action cannot be undone.`)) {
       try {
@@ -445,6 +468,7 @@ export class DocumentScanComponent implements OnInit {
       case 'ACTIVE': return 'status-active';
       case 'PAUSED': return 'status-paused';
       case 'STOPPED': return 'status-stopped';
+      case 'CANCELLING': return 'status-cancelling';
       default: return '';
     }
   }
@@ -493,5 +517,20 @@ export class DocumentScanComponent implements OnInit {
     } finally {
       this.generatingRegister = false;
     }
+  }
+
+  isJobRunning(job: ScanJob): boolean {
+    // Job is running if it has a checkpoint with documents being processed
+    return !!(job.checkpoint &&
+              job.checkpoint.totalDocuments > 0 &&
+              job.checkpoint.processedCount < job.checkpoint.totalDocuments);
+  }
+
+  getJobProgress(job: ScanJob): string {
+    if (!this.isJobRunning(job)) return '';
+    const processed = job.checkpoint?.processedCount || 0;
+    const total = job.checkpoint?.totalDocuments || 0;
+    const percentage = total > 0 ? Math.round((processed / total) * 100) : 0;
+    return `${processed.toLocaleString()} / ${total.toLocaleString()} (${percentage}%)`;
   }
 }

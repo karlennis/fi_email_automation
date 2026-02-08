@@ -252,7 +252,7 @@ class ScanJobProcessor {
         } else {
             // COUNT TOTAL DOCUMENTS UPFRONT (once, not incrementally)
             const totalDocumentCount = await fastS3Scanner.countDocumentsSince(scanStartDate, scanEndDate);
-            
+
             job.checkpoint = {
                 lastProcessedIndex: 0,
                 lastProcessedFile: '',
@@ -285,6 +285,28 @@ class ScanJobProcessor {
                 scanEndDate,
                 async (document) => {
                     try {
+                        // CHECK FOR CANCELLATION before processing each document
+                        const currentJob = await ScanJob.findOne({ jobId: job.jobId });
+                        if (currentJob && currentJob.status === 'CANCELLING') {
+                            logger.warn(`🚫 Job ${job.jobId} is being cancelled - aborting processing`);
+
+                            // Reset job status and checkpoint
+                            currentJob.status = 'ACTIVE';
+                            currentJob.checkpoint = {
+                                lastProcessedIndex: 0,
+                                lastProcessedFile: '',
+                                lastProcessedPath: '',
+                                processedCount: 0,
+                                matchesFound: 0,
+                                isResuming: false,
+                                totalDocuments: 0
+                            };
+                            await currentJob.save();
+
+                            // Throw error to break out of streaming loop
+                            throw new Error('JOB_CANCELLED_BY_USER');
+                        }
+
                         // Only process PDF and DOCX files
                         const fileName = document.fileName ? document.fileName.toLowerCase() : '';
                         if (!fileName.endsWith('.pdf') && !fileName.endsWith('.docx')) {
@@ -448,6 +470,12 @@ class ScanJobProcessor {
                 { maxObjects: null, timeoutSeconds: null } // No timeout - allows continuous scanning of large projects
             );
         } catch (scanError) {
+            // Handle user-initiated cancellation gracefully
+            if (scanError.message === 'JOB_CANCELLED_BY_USER') {
+                logger.info(`✅ Job ${job.jobId} cancelled cleanly by user`);
+                return; // Exit gracefully without throwing error
+            }
+
             logger.error(`❌ Error streaming S3 documents:`, scanError);
             throw scanError;
         }
@@ -495,7 +523,7 @@ class ScanJobProcessor {
         // Reset job status back to ACTIVE after completion (don't leave it as RUNNING)
         // This prevents the processor from thinking the job crashed if it was manually triggered
         job.status = 'ACTIVE';
-        
+
         // Clear checkpoint after successful completion
         job.checkpoint = {
             lastProcessedIndex: 0,
@@ -652,9 +680,9 @@ class ScanJobProcessor {
                         await fsp.mkdir(tempDir, { recursive: true });
                         tempFilePath = path.join(tempDir, fileName);
                         await fsp.writeFile(tempFilePath, fileBuffer);
-                        
+
                         extractionResult = await optimizedPdfExtractor.extractTextOptimized(fileBuffer, fileName, tempFilePath);
-                        
+
                         // Clean up temp file after extraction
                         try {
                             await fsp.unlink(tempFilePath);
