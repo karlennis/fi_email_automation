@@ -162,23 +162,23 @@
       </div>
 
       <div class="job-actions">
-        <button class="btn btn-success" *ngIf="job.status !== 'ACTIVE'" (click)="startJob(job)">
+        <button class="btn btn-success" *ngIf="job.status !== 'ACTIVE' && job.status !== 'RUNNING'" (click)="startJob(job)">
           <span class="btn-icon">▶️</span>
           Start
         </button>
-        <button class="btn btn-warning" *ngIf="job.status === 'ACTIVE'" (click)="stopJob(job)">
+        <button class="btn btn-warning" *ngIf="job.status === 'ACTIVE' || job.status === 'RUNNING'" (click)="stopJob(job)">
           <span class="btn-icon">⏸️</span>
           Stop
         </button>
-        <button class="btn btn-danger" *ngIf="isJobRunning(job)" (click)="cancelJob(job)" [disabled]="loading" title="Cancel the current running job">
+        <button class="btn btn-danger" *ngIf="job.status === 'RUNNING' || isJobRunning(job)" (click)="cancelJob(job)" [disabled]="loading" title="Cancel the current running job">
           <span class="btn-icon">🛑</span>
           Cancel Run
         </button>
-        <button class="btn btn-info" (click)="openRunNowModal(job)" [disabled]="loading || isJobRunning(job)" title="Run this job now for testing">
+        <button class="btn btn-info" (click)="openRunNowModal(job)" [disabled]="loading || job.status === 'RUNNING' || isJobRunning(job)" title="Run this job now for testing">
           <span class="btn-icon">🚀</span>
           Run Now
         </button>
-        <button class="btn btn-danger" (click)="deleteJob(job)">
+        <button class="btn btn-danger" (click)="deleteJob(job)" [disabled]="job.status === 'RUNNING'">
           <span class="btn-icon">🗑️</span>
           Delete
         </button>
