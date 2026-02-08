@@ -3,6 +3,7 @@ const router = express.Router();
 const ScanJob = require('../models/ScanJob');
 const Customer = require('../models/Customer');
 const { authenticate, requireAdmin } = require('../middleware/auth');
+const scheduledJobManager = require('../services/scheduledJobManager');
 
 const logger = require('../utils/logger');
 const { enqueueScanJob } = require('../services/scanJobQueue');
@@ -64,6 +65,14 @@ router.post('/jobs', authenticate, requireAdmin, async (req, res) => {
     await job.save();
 
     logger.info(`✅ Created scan job: ${job.jobId}`);
+
+    // If this is a recurring scan (Daily/Weekly/Monthly), set status to ACTIVE
+    // The scan job will be picked up by the daily scanner
+    if (schedule && schedule.type && ['DAILY', 'WEEKLY', 'MONTHLY'].includes(schedule.type)) {
+      job.status = 'ACTIVE';
+      await job.save();
+      logger.info(`✅ Scan job ${job.jobId} set to ACTIVE for ${schedule.type} execution`);
+    }
 
     res.json({
       success: true,
@@ -251,10 +260,10 @@ router.post('/jobs/:jobId/run-now', authenticate, requireAdmin, async (req, res)
     try {
       logger.info(`📝 Checking queue status before enqueueing...`);
       const enqueuedJob = await enqueueScanJob(job.jobId, { targetDate: targetDate || null, force: !!force });
-      
+
       // Check if this was a fresh enqueue (not already in queue)
       const jobState = await enqueuedJob.getState();
-      
+
       if (jobState === 'waiting') {
         // Fresh enqueue - update MongoDB status
         logger.info(`✅ Job successfully enqueued (state: waiting) - updating MongoDB status to RUNNING`);
@@ -264,7 +273,7 @@ router.post('/jobs/:jobId/run-now', authenticate, requireAdmin, async (req, res)
         // Job was already in queue - don't touch MongoDB status
         logger.info(`ℹ️ Job already in queue with state: ${jobState} - skipping MongoDB status update`);
       }
-      
+
     } catch (enqueueError) {
       logger.error(`❌ Failed to enqueue job:`, enqueueError);
       return res.status(500).json({
