@@ -223,21 +223,21 @@ router.post('/jobs/:jobId/run-now', authenticate, requireAdmin, async (req, res)
       });
     }
 
-    // If job is PAUSED, automatically resume it (don't require force flag)
-    const shouldResumeCheckpoint = job.status === 'PAUSED' && job.checkpoint?.isResuming;
-    if (shouldResumeCheckpoint && !force) {
-      logger.info(`📋 Job is PAUSED with checkpoint - automatically resuming from last position`);
-    } else if (job.status !== 'ACTIVE' && force) {
-      logger.info(`⚠️ Force flag set - overriding job status ${job.status} to run fresh`);
-      // Reset checkpoint if forcing a fresh run
-      job.checkpoint = {
-        lastProcessedIndex: 0,
-        lastProcessedFile: '',
-        lastProcessedPath: '',
-        processedCount: 0,
-        matchesFound: 0,
-        isResuming: false
-      };
+    // Manual "Start Now" should always start fresh - clear checkpoint and targetDate
+    logger.info(`🔄 Manual run triggered - clearing checkpoint to start fresh scan`);
+    job.checkpoint = {
+      lastProcessedIndex: 0,
+      lastProcessedFile: '',
+      lastProcessedPath: '',
+      processedCount: 0,
+      matchesFound: 0,
+      isResuming: false,
+      totalDocuments: 0
+    };
+    
+    // Clear any stored targetDate from previous manual runs
+    if (job.schedule?.targetDate) {
+      delete job.schedule.targetDate;
     }
 
     // Temporarily clear lastProcessedDate if force=true
