@@ -249,16 +249,41 @@ class ScanJobProcessor {
 
         if (isResuming) {
             logger.info(`🔄 Resuming scan after ${job.checkpoint.lastProcessedFile || 'unknown file'}`);
+            
+            // Ensure triggeredBy has an email even when resuming
+            if (!job.checkpoint.triggeredBy?.email) {
+                job.checkpoint.triggeredBy = {
+                    email: job.createdBy?.email || job.lastModifiedBy?.email || process.env.ADMIN_EMAIL || 'system@buildinginfo.com',
+                    name: job.createdBy?.name || job.lastModifiedBy?.name || 'System',
+                    timestamp: new Date()
+                };
+                await job.save();
+                logger.info(`📧 Set triggeredBy email to ${job.checkpoint.triggeredBy.email} for resumed job`);
+            }
         } else {
             // COUNT TOTAL DOCUMENTS UPFRONT (once, not incrementally)
             const totalDocumentCount = await fastS3Scanner.countDocumentsSince(scanStartDate, scanEndDate);
 
-            // Preserve triggeredBy if already set (manual run), otherwise use createdBy (scheduled run)
-            const triggeredBy = job.checkpoint?.triggeredBy || job.createdBy || {
-                email: process.env.ADMIN_EMAIL || 'system@buildinginfo.com',
-                name: 'Scheduled Run',
+            // Determine who triggered this run (preserve manual run trigger, fallback for scheduled)
+            // Check in order: existing triggeredBy > createdBy > lastModifiedBy > ADMIN_EMAIL > fallback
+            let triggeredByEmail = job.checkpoint?.triggeredBy?.email 
+                || job.createdBy?.email 
+                || job.lastModifiedBy?.email 
+                || process.env.ADMIN_EMAIL 
+                || 'system@buildinginfo.com';
+            
+            let triggeredByName = job.checkpoint?.triggeredBy?.name 
+                || job.createdBy?.name 
+                || job.lastModifiedBy?.name 
+                || 'System';
+
+            const triggeredBy = {
+                email: triggeredByEmail,
+                name: triggeredByName,
                 timestamp: new Date()
             };
+            
+            logger.info(`📧 Progress/summary emails will be sent to: ${triggeredByEmail}`);
 
             job.checkpoint = {
                 lastProcessedIndex: 0,
