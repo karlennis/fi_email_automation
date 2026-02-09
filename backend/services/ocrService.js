@@ -41,16 +41,17 @@ class OCRService {
 
     /**
      * Extract text from PDF using Tesseract OCR
+     * Tesseract cannot read PDFs directly - must convert to images first using pdftoppm
      * @param {string} pdfPath - Path to PDF file
      * @param {number} maxPages - Maximum pages to OCR (cost control)
      * @returns {Promise<string>} Extracted text
      */
     async extractTextViaOCR(pdfPath, maxPages = 10) {
+        const tempImages = [];
         try {
             // SAFETY CHECK: Skip OCR if low on memory
             const memUsage = process.memoryUsage();
             const rssMemMB = memUsage.rss / 1024 / 1024;
-            const heapUsedMB = memUsage.heapUsed / 1024 / 1024;
             const minFreeMemMB = 512; // Require 512MB free for OCR safety
             const totalMemMB = 4096; // System total (adjust if needed)
             const estimatedFreeMB = totalMemMB - rssMemMB;
@@ -65,21 +66,59 @@ class OCRService {
             }
 
             const fileName = path.basename(pdfPath);
-            logger.info(`📸 Running Tesseract OCR on ${fileName} (${estimatedFreeMB.toFixed(0)}MB free, max ${maxPages} pages)`);
+            const tempDir = path.dirname(pdfPath);
+            const baseName = path.basename(pdfPath, '.pdf');
+            const imagePrefix = path.join(tempDir, `ocr_${baseName}`);
+            
+            logger.info(`📸 Running OCR on ${fileName} (${estimatedFreeMB.toFixed(0)}MB free, max ${maxPages} pages)`);
 
-            // Tesseract command: convert PDF to text
-            // Using input directly without page range (Tesseract handles multi-page PDFs)
-            const { stdout, stderr } = await execFileAsync(
-                this.tesseractPath,
-                [pdfPath, 'stdout', '-l', 'eng', '--psm', '3'],
-                { maxBuffer: 10 * 1024 * 1024, timeout: 60000 } // 10MB buffer, 60s timeout
-            );
-
-            if (stderr && stderr.includes('Error')) {
-                logger.warn(`⚠️ Tesseract warning: ${stderr.substring(0, 200)}`);
+            // Step 1: Convert PDF to PNG images using pdftoppm (from poppler-utils)
+            // -png: output PNG images
+            // -r 150: 150 DPI (balance between quality and speed)
+            // -l maxPages: limit to first N pages
+            try {
+                await execFileAsync(
+                    'pdftoppm',
+                    ['-png', '-r', '150', '-l', String(maxPages), pdfPath, imagePrefix],
+                    { timeout: 60000 } // 60s timeout for conversion
+                );
+            } catch (pdfError) {
+                // pdftoppm not available or failed - skip OCR gracefully
+                logger.warn(`📸 PDF to image conversion failed: ${pdfError.message.substring(0, 100)}`);
+                return '';
             }
 
-            const ocrText = (stdout || '').trim();
+            // Step 2: Find all generated images
+            const files = fs.readdirSync(tempDir);
+            const imageFiles = files
+                .filter(f => f.startsWith(`ocr_${baseName}`) && f.endsWith('.png'))
+                .sort()
+                .map(f => path.join(tempDir, f));
+            
+            if (imageFiles.length === 0) {
+                logger.warn(`📸 No images generated from ${fileName}`);
+                return '';
+            }
+
+            tempImages.push(...imageFiles);
+            logger.debug(`📸 Converted ${fileName} to ${imageFiles.length} images`);
+
+            // Step 3: Run Tesseract on each image and combine results
+            let combinedText = '';
+            for (let i = 0; i < imageFiles.length; i++) {
+                try {
+                    const { stdout } = await execFileAsync(
+                        this.tesseractPath,
+                        [imageFiles[i], 'stdout', '-l', 'eng', '--psm', '3'],
+                        { maxBuffer: 10 * 1024 * 1024, timeout: 30000 } // 30s per page
+                    );
+                    combinedText += (stdout || '') + '\n';
+                } catch (tessError) {
+                    logger.warn(`📸 OCR failed on page ${i + 1}: ${tessError.message.substring(0, 50)}`);
+                }
+            }
+
+            const ocrText = combinedText.trim();
             const charCount = ocrText.length;
 
             if (charCount === 0) {
@@ -87,11 +126,18 @@ class OCRService {
                 return '';
             }
 
-            logger.info(`📸 OCR extracted ${charCount} chars from ${fileName}`);
+            logger.info(`📸 OCR extracted ${charCount} chars from ${fileName} (${imageFiles.length} pages)`);
             return ocrText;
         } catch (error) {
             logger.warn(`📸 OCR failed on ${pdfPath}: ${error.message}`);
             return ''; // Return empty string on failure, don't crash
+        } finally {
+            // Clean up temp images
+            for (const img of tempImages) {
+                try {
+                    if (fs.existsSync(img)) fs.unlinkSync(img);
+                } catch (e) { /* ignore cleanup errors */ }
+            }
         }
     }
 
