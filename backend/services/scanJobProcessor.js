@@ -419,6 +419,17 @@ class ScanJobProcessor {
 
                         if (matches.length > 0 && autoProcess) {
                             logger.info(`📧 Sending match emails for ${matches.length} matches found so far...`);
+                            
+                            // Log validation quotes at checkpoint (sanity check)
+                            logger.info(`\n📋 ===== CHECKPOINT VALIDATION QUOTES (${totalProcessed} docs) =====`);
+                            matches.forEach((match, idx) => {
+                                const fileName = match.document.fileName;
+                                const quote = match.result.validationQuote || 'No quote captured';
+                                logger.info(`[${idx + 1}] ${fileName}`);
+                                logger.info(`    Quote: "${quote.substring(0, 200)}${quote.length > 200 ? '...' : ''}"`);
+                            });
+                            logger.info(`=================================================\n`);
+                            
                             await this.sendMatchEmails(matches, job);
                             logger.info(`✅ Match emails sent for checkpoint at ${totalProcessed} documents`);
                             matches = []; // Clear matches after sending to avoid duplicates
@@ -493,18 +504,20 @@ class ScanJobProcessor {
             job.checkpoint.totalDocuments = totalDocuments;
         }
 
-        logger.info(`✅ Job ${job.jobId} complete: ${matches.length} matches found from ${totalProcessed} documents`);
+        // Use job.checkpoint.matchesFound for accurate count (matches array gets cleared after each checkpoint email)
+        const totalMatchesFound = job.checkpoint.matchesFound || 0;
+        logger.info(`✅ Job ${job.jobId} complete: ${totalMatchesFound} matches found from ${totalProcessed} documents`);
 
-        // Print validation quotes for sanity check
+        // Print validation quotes for any remaining matches (only those since last checkpoint)
         if (matches.length > 0) {
-            logger.info('\n📋 ===== VALIDATION QUOTES (Sanity Check) =====');
+            logger.info('\n📋 ===== FINAL VALIDATION QUOTES =====');
             matches.forEach((match, index) => {
                 const fileName = match.document.fileName;
                 const quote = match.result.validationQuote || 'No quote captured';
                 logger.info(`\n[${index + 1}] File: ${fileName}`);
                 logger.info(`    Quote: "${quote.substring(0, 300)}${quote.length > 300 ? '...' : ''}"`);
             });
-            logger.info('\n================================================\n');
+            logger.info('\n========================================\n');
         }
 
         // Send emails for matches
@@ -514,10 +527,10 @@ class ScanJobProcessor {
             await this.sendMatchEmails(matches, job);
         }
 
-        // Update job statistics
+        // Update job statistics - use checkpoint.matchesFound for accurate count
         job.statistics.totalScans = (job.statistics.totalScans || 0) + 1;
         job.statistics.totalDocumentsProcessed = (job.statistics.totalDocumentsProcessed || 0) + totalProcessed;
-        job.statistics.totalMatches = (job.statistics.totalMatches || 0) + matches.length;
+        job.statistics.totalMatches = (job.statistics.totalMatches || 0) + totalMatchesFound;
         job.statistics.lastScanDate = new Date();
 
         // Reset job status back to ACTIVE after completion (don't leave it as RUNNING)
