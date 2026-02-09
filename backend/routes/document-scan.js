@@ -232,7 +232,14 @@ router.post('/jobs/:jobId/run-now', authenticate, requireAdmin, async (req, res)
       processedCount: 0,
       matchesFound: 0,
       isResuming: false,
-      totalDocuments: 0
+      totalDocuments: 0,
+      // Track who triggered this run for progress emails (goes to triggering user, NOT customers)
+      triggeredBy: {
+        userId: req.user._id,
+        email: req.user.email,
+        name: req.user.name || req.user.email,
+        timestamp: new Date()
+      }
     };
 
     // Clear any stored targetDate from previous manual runs

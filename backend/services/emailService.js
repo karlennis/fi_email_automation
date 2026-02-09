@@ -661,6 +661,127 @@ class EmailService {
       throw error;
     }
   }
+
+  /**
+   * Send scan summary email (sent at end of run to triggering user)
+   * Always sent, even if zero matches found
+   */
+  async sendScanSummaryEmail(toEmail, summaryData) {
+    try {
+      if (!this.transporter) {
+        logger.warn('Email service not configured, skipping summary email');
+        return { success: false, reason: 'Email service not configured' };
+      }
+
+      const { jobName, documentType, startTime, endTime, duration, processedCount, totalDocuments, matchesFound, matches } = summaryData;
+      
+      // Build HTML content for summary email
+      let matchesHtml = '';
+      if (matches && matches.length > 0) {
+        matchesHtml = `
+          <h3 style="color: #2e7d32;">✅ FI Requests Found (${matchesFound})</h3>
+          <table style="border-collapse: collapse; width: 100%; margin-bottom: 20px;">
+            <thead>
+              <tr style="background-color: #f5f5f5;">
+                <th style="border: 1px solid #ddd; padding: 10px; text-align: left;">File Name</th>
+                <th style="border: 1px solid #ddd; padding: 10px; text-align: left;">FI Type</th>
+                <th style="border: 1px solid #ddd; padding: 10px; text-align: left;">Validation Quote</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${matches.map(m => `
+                <tr>
+                  <td style="border: 1px solid #ddd; padding: 10px;">${m.fileName}</td>
+                  <td style="border: 1px solid #ddd; padding: 10px;">${m.fiType}</td>
+                  <td style="border: 1px solid #ddd; padding: 10px; font-style: italic;">"${m.validationQuote}"</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } else {
+        matchesHtml = `
+          <div style="background-color: #fff3e0; border-left: 4px solid #ff9800; padding: 15px; margin: 20px 0;">
+            <strong>No further information requests were found.</strong>
+            <p style="margin: 5px 0 0 0; color: #666;">All ${processedCount.toLocaleString()} documents were processed. No documents matched the ${documentType} FI request criteria.</p>
+          </div>
+        `;
+      }
+
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 800px; margin: 0 auto; padding: 20px; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px 8px 0 0; }
+            .content { background: #fff; padding: 20px; border: 1px solid #ddd; border-top: none; border-radius: 0 0 8px 8px; }
+            .stats { display: flex; flex-wrap: wrap; gap: 15px; margin: 20px 0; }
+            .stat-box { background: #f8f9fa; padding: 15px; border-radius: 8px; flex: 1; min-width: 150px; }
+            .stat-value { font-size: 24px; font-weight: bold; color: #667eea; }
+            .stat-label { color: #666; font-size: 14px; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1 style="margin: 0;">📋 Scan Complete: ${jobName}</h1>
+              <p style="margin: 10px 0 0 0; opacity: 0.9;">Document Type: ${documentType.toUpperCase()}</p>
+            </div>
+            <div class="content">
+              <div class="stats">
+                <div class="stat-box">
+                  <div class="stat-value">${processedCount.toLocaleString()}</div>
+                  <div class="stat-label">Documents Processed</div>
+                </div>
+                <div class="stat-box">
+                  <div class="stat-value">${matchesFound}</div>
+                  <div class="stat-label">FI Requests Found</div>
+                </div>
+                <div class="stat-box">
+                  <div class="stat-value">${duration}s</div>
+                  <div class="stat-label">Duration</div>
+                </div>
+              </div>
+              
+              <p><strong>Start Time:</strong> ${new Date(startTime).toLocaleString()}</p>
+              <p><strong>End Time:</strong> ${new Date(endTime).toLocaleString()}</p>
+              
+              ${matchesHtml}
+              
+              <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+              <p style="color: #666; font-size: 12px;">
+                This is an automated summary from the FI Email Automation system.<br>
+                Timestamp: ${new Date().toISOString()}
+              </p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `;
+
+      const mailOptions = {
+        from: process.env.SMTP_USER,
+        to: toEmail,
+        subject: `Scan Complete: ${jobName} - ${matchesFound} FI request${matchesFound !== 1 ? 's' : ''} found (${processedCount.toLocaleString()} docs)`,
+        html: htmlContent
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+
+      logger.info(`📧 Summary email sent to ${toEmail} (${matchesFound} matches from ${processedCount} docs)`);
+
+      return {
+        success: true,
+        messageId: result.messageId
+      };
+
+    } catch (error) {
+      logger.error('Error sending summary email:', error);
+      return { success: false, error: error.message };
+    }
+  }
 }
 
 module.exports = new EmailService();

@@ -253,6 +253,13 @@ class ScanJobProcessor {
             // COUNT TOTAL DOCUMENTS UPFRONT (once, not incrementally)
             const totalDocumentCount = await fastS3Scanner.countDocumentsSince(scanStartDate, scanEndDate);
 
+            // Preserve triggeredBy if already set (manual run), otherwise use createdBy (scheduled run)
+            const triggeredBy = job.checkpoint?.triggeredBy || job.createdBy || {
+                email: process.env.ADMIN_EMAIL || 'system@buildinginfo.com',
+                name: 'Scheduled Run',
+                timestamp: new Date()
+            };
+
             job.checkpoint = {
                 lastProcessedIndex: 0,
                 lastProcessedFile: '',
@@ -264,7 +271,10 @@ class ScanJobProcessor {
                 matchesFound: 0,
                 scanStartTime: new Date(),
                 lastCheckpointTime: new Date(),
-                isResuming: false
+                isResuming: false,
+                triggeredBy: triggeredBy,
+                // Track all match details for final summary email
+                allMatchDetails: []
             };
             await job.save();
             logger.info(`💾 Checkpoint initialized: ${totalDocumentCount} documents to process`);
@@ -368,6 +378,18 @@ class ScanJobProcessor {
                             });
 
                             job.checkpoint.matchesFound = (job.checkpoint.matchesFound || 0) + 1;
+                            
+                            // Track match details for final summary email
+                            if (!job.checkpoint.allMatchDetails) {
+                                job.checkpoint.allMatchDetails = [];
+                            }
+                            job.checkpoint.allMatchDetails.push({
+                                fileName: document.fileName,
+                                fiType: job.documentType,
+                                validationQuote: result.validationQuote || 'No quote captured',
+                                confidence: result.confidence,
+                                timestamp: new Date()
+                            });
                         } else {
                             logger.info(`❌ No match: ${document.fileName} (stage: ${result.stage})`);
                         }
@@ -437,22 +459,33 @@ class ScanJobProcessor {
                             logger.warn(`⚠️ Found ${matches.length} matches but autoProcess is disabled - skipping match emails`);
                         }
 
-                        // Send progress email to all job customers
-                        const customerEmails = job.customers
-                            .filter(c => c.email)
-                            .map(c => c.email);
-
-                        if (customerEmails.length > 0) {
-                            await emailService.sendScanProgressEmail(customerEmails, {
+                        // Send progress email to TRIGGERING USER ONLY (not customers)
+                        // This is an internal progress update, not a customer notification
+                        const triggeredByEmail = job.checkpoint.triggeredBy?.email;
+                        
+                        if (triggeredByEmail) {
+                            // Collect recent match details for the progress email
+                            const recentMatches = (job.checkpoint.allMatchDetails || []).slice(-10); // Last 10 matches
+                            
+                            await emailService.sendScanProgressEmail([triggeredByEmail], {
                                 jobName: job.name,
                                 documentType: job.documentType,
                                 startTime: job.checkpoint.scanStartTime,
                                 processedCount: totalProcessed,
                                 totalDocuments: totalDocuments,
-                                matchesFound: job.checkpoint.matchesFound,
+                                matchesFound: job.checkpoint.matchesFound || 0,
                                 lastProcessedFile: document.fileName,
-                                isCheckpoint: true
+                                isCheckpoint: true,
+                                // Include match details for visibility
+                                recentMatches: recentMatches.map(m => ({
+                                    fileName: m.fileName,
+                                    fiType: m.fiType,
+                                    validationQuote: m.validationQuote?.substring(0, 150) + (m.validationQuote?.length > 150 ? '...' : '')
+                                }))
                             });
+                            logger.info(`📧 Progress email sent to ${triggeredByEmail} (${totalProcessed} docs, ${job.checkpoint.matchesFound || 0} matches)`);
+                        } else {
+                            logger.warn(`⚠️ No triggeredBy email found, skipping progress email`);
                         }
                     } else if (totalProcessed <= 100) {
                         // Silent checkpoint save for first 100 docs (critical period)
@@ -532,6 +565,33 @@ class ScanJobProcessor {
         job.statistics.totalDocumentsProcessed = (job.statistics.totalDocumentsProcessed || 0) + totalProcessed;
         job.statistics.totalMatches = (job.statistics.totalMatches || 0) + totalMatchesFound;
         job.statistics.lastScanDate = new Date();
+
+        // SEND FINAL SUMMARY EMAIL TO TRIGGERING USER (always, even if zero matches)
+        const triggeredByEmail = job.checkpoint.triggeredBy?.email;
+        if (triggeredByEmail) {
+            const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+            const allMatchDetails = job.checkpoint.allMatchDetails || [];
+            
+            await emailService.sendScanSummaryEmail(triggeredByEmail, {
+                jobName: job.name,
+                documentType: job.documentType,
+                startTime: job.checkpoint.scanStartTime,
+                endTime: new Date(),
+                duration: duration,
+                processedCount: totalProcessed,
+                totalDocuments: totalDocuments,
+                matchesFound: totalMatchesFound,
+                // Include all match details for final summary
+                matches: allMatchDetails.map(m => ({
+                    fileName: m.fileName,
+                    fiType: m.fiType,
+                    validationQuote: m.validationQuote?.substring(0, 300) + (m.validationQuote?.length > 300 ? '...' : '')
+                }))
+            });
+            logger.info(`📧 Final summary email sent to ${triggeredByEmail}`);
+        } else {
+            logger.warn(`⚠️ No triggeredBy email found, skipping final summary email`);
+        }
 
         // Reset job status back to ACTIVE after completion (don't leave it as RUNNING)
         // This prevents the processor from thinking the job crashed if it was manually triggered

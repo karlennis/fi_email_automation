@@ -156,6 +156,20 @@
         </div>
         {{/if}}
 
+        {{#if recentMatches}}
+        {{#if recentMatches.length}}
+        <div class="progress-section" style="border-left-color: #28a745;">
+            <h3 style="margin-top: 0; color: #28a745;">✅ Recent FI Requests Found</h3>
+            {{#each recentMatches}}
+            <div style="background: #f0fff0; padding: 10px; margin: 10px 0; border-radius: 4px; border: 1px solid #c3e6cb;">
+                <strong>{{fileName}}</strong> ({{fiType}})<br>
+                <em style="color: #666; font-size: 12px;">"{{validationQuote}}"</em>
+            </div>
+            {{/each}}
+        </div>
+        {{/if}}
+        {{/if}}
+
         <p style="margin-top: 20px;">
             The scan is still in progress. You will receive another update when the next checkpoint is reached or when the scan completes.
         </p>
