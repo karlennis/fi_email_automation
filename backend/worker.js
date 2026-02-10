@@ -7,6 +7,7 @@ dotenv.config({ path: path.join(__dirname, '.env') });
 const mongoose = require('mongoose');
 const logger = require('./utils/logger');
 const { startScanWorker } = require('./services/scanJobWorker');
+const scanJobProcessor = require('./services/scanJobProcessor');
 
 const MONGODB_URI = process.env.MONGODB_URI;
 
@@ -18,6 +19,11 @@ if (!MONGODB_URI) {
 mongoose.connect(MONGODB_URI)
   .then(async () => {
     logger.info('✅ Worker connected to MongoDB');
+    
+    // Initialize scan job processor scheduler (runs daily at 12:10 AM)
+    await scanJobProcessor.initialize();
+    
+    // Start the queue worker
     await startScanWorker();
   })
   .catch((error) => {

@@ -116,10 +116,10 @@ class ScanJobProcessor {
                         } else {
                             logger.info(`🔄 Job ${job.jobId} needs to resume from checkpoint at ${job.checkpoint.processedCount} documents...`);
                         }
-                        await this.processJob(job);
+                        await enqueueScanJob(job.jobId, { targetDate: job.schedule?.targetDate || null });
                         continue;
                     }
-                                await enqueueScanJob(job.jobId, { targetDate: job.schedule?.targetDate || null });
+                    
                     // Check if this job should run based on its schedule
                     const shouldRun = this.shouldJobRun(job, today);
 
@@ -129,7 +129,7 @@ class ScanJobProcessor {
                         continue;
                     }
 
-                            await enqueueScanJob(job.jobId, { targetDate: job.schedule?.targetDate || null });
+                    await enqueueScanJob(job.jobId, { targetDate: job.schedule?.targetDate || null });
                 } catch (error) {
                     logger.error(`❌ Error processing job ${job.jobId}:`, error);
                 }
