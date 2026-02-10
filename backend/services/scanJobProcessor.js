@@ -247,43 +247,34 @@ class ScanJobProcessor {
         const CHECKPOINT_INTERVAL = 10000; // Send progress email every 10,000 documents
         const SAVE_INTERVAL = 100; // Save checkpoint to DB every 100 docs (for crash recovery)
 
+        // Always send progress/summary emails to admin
+        const adminEmail = process.env.ADMIN_EMAIL || 'afatogun@buildinginfo.com';
+        
         if (isResuming) {
             logger.info(`🔄 Resuming scan after ${job.checkpoint.lastProcessedFile || 'unknown file'}`);
             
-            // Ensure triggeredBy has an email even when resuming
+            // Ensure triggeredBy uses admin email
             if (!job.checkpoint.triggeredBy?.email) {
                 job.checkpoint.triggeredBy = {
-                    email: job.createdBy?.email || job.lastModifiedBy?.email || process.env.ADMIN_EMAIL || 'system@buildinginfo.com',
-                    name: job.createdBy?.name || job.lastModifiedBy?.name || 'System',
+                    email: adminEmail,
+                    name: 'Admin',
                     timestamp: new Date()
                 };
                 await job.save();
-                logger.info(`📧 Set triggeredBy email to ${job.checkpoint.triggeredBy.email} for resumed job`);
+                logger.info(`📧 Progress/summary emails will go to admin: ${adminEmail}`);
             }
         } else {
             // COUNT TOTAL DOCUMENTS UPFRONT (once, not incrementally)
             const totalDocumentCount = await fastS3Scanner.countDocumentsSince(scanStartDate, scanEndDate);
 
-            // Determine who triggered this run (preserve manual run trigger, fallback for scheduled)
-            // Check in order: existing triggeredBy > createdBy > lastModifiedBy > ADMIN_EMAIL > fallback
-            let triggeredByEmail = job.checkpoint?.triggeredBy?.email 
-                || job.createdBy?.email 
-                || job.lastModifiedBy?.email 
-                || process.env.ADMIN_EMAIL 
-                || 'system@buildinginfo.com';
-            
-            let triggeredByName = job.checkpoint?.triggeredBy?.name 
-                || job.createdBy?.name 
-                || job.lastModifiedBy?.name 
-                || 'System';
-
+            // Always send progress/summary emails to admin
             const triggeredBy = {
-                email: triggeredByEmail,
-                name: triggeredByName,
+                email: adminEmail,
+                name: 'Admin',
                 timestamp: new Date()
             };
             
-            logger.info(`📧 Progress/summary emails will be sent to: ${triggeredByEmail}`);
+            logger.info(`📧 Progress/summary emails will be sent to admin: ${adminEmail}`);
 
             job.checkpoint = {
                 lastProcessedIndex: 0,
