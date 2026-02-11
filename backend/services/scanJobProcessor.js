@@ -116,7 +116,8 @@ class ScanJobProcessor {
                         } else {
                             logger.info(`🔄 Job ${job.jobId} needs to resume from checkpoint at ${job.checkpoint.processedCount} documents...`);
                         }
-                        await enqueueScanJob(job.jobId, { targetDate: job.schedule?.targetDate || null });
+                        // Pass null - processJob will use checkpoint dates for resuming
+                        await enqueueScanJob(job.jobId, { targetDate: null });
                         continue;
                     }
                     
@@ -129,7 +130,8 @@ class ScanJobProcessor {
                         continue;
                     }
 
-                    await enqueueScanJob(job.jobId, { targetDate: job.schedule?.targetDate || null });
+                    // SCHEDULED DAILY RUN: Pass null - processJob will use lookback (yesterday)
+                    await enqueueScanJob(job.jobId, { targetDate: null });
                 } catch (error) {
                     logger.error(`❌ Error processing job ${job.jobId}:`, error);
                 }
@@ -160,55 +162,27 @@ class ScanJobProcessor {
         let scanStartDate, scanEndDate;
 
         // Priority order for determining scan dates:
-        // 1. Stored dates from checkpoint (resuming mid-scan)
-        // 2. Stored targetDate in job schedule (manual jobs)
-        // 3. Parameter targetDate (new manual job)
-        // 4. Lookback calculation (scheduled jobs)
+        // 1. Parameter targetDate (manual run - user just selected)
+        // 2. Stored dates from checkpoint (resuming mid-scan)
+        // 3. Lookback calculation (scheduled daily runs - always scan yesterday)
 
         const isResuming = job.checkpoint && job.checkpoint.isResuming && job.checkpoint.lastProcessedIndex > 0;
-        if (isResuming && job.checkpoint.scanStartDate && job.checkpoint.scanEndDate) {
-            // 1. Use stored dates from checkpoint (resuming mid-scan)
-            scanStartDate = new Date(job.checkpoint.scanStartDate);
-            scanEndDate = new Date(job.checkpoint.scanEndDate);
-            logger.info(`🔄 Resuming with original scan dates: ${scanStartDate.toISOString().split('T')[0]} to ${scanEndDate.toISOString().split('T')[0]}`);
-        } else if (job.schedule?.targetDate) {
-            // 2. Use stored targetDate from job schedule (manual jobs)
-            scanStartDate = new Date(job.schedule.targetDate);
-            scanStartDate.setHours(0, 0, 0, 0);
-            scanEndDate = new Date(scanStartDate);
-            // Don't add a day - just set to end of the same day
-            scanEndDate.setHours(23, 59, 59, 999);
-            logger.info(`📅 Scanning documents for ${job.schedule.targetDate} (stored target date)`);
-        } else if (targetDate) {
-            // 3. Use specified target date (new manual job)
+        
+        if (targetDate) {
+            // 1. MANUAL RUN: Use user-specified target date
             scanStartDate = new Date(targetDate);
             scanStartDate.setHours(0, 0, 0, 0);
             scanEndDate = new Date(scanStartDate);
-            // Don't add a day - just set to end of the same day
             scanEndDate.setHours(23, 59, 59, 999);
-            logger.info(`📅 Scanning document register for ${targetDate} (user-specified date)`);
-
-            // Store this targetDate in job for future resume
-            job.schedule = job.schedule || {};
-            job.schedule.targetDate = targetDate;
-            await job.save();
-            logger.info(`💾 Stored target date ${targetDate} in job schedule for future resume`);
+            logger.info(`📅 MANUAL RUN: Scanning documents for ${targetDate}`);
+            // Note: Date is stored in checkpoint below, not in job.schedule
+        } else if (isResuming && job.checkpoint.scanStartDate && job.checkpoint.scanEndDate) {
+            // 2. RESUMING: Use stored dates from checkpoint
+            scanStartDate = new Date(job.checkpoint.scanStartDate);
+            scanEndDate = new Date(job.checkpoint.scanEndDate);
+            logger.info(`🔄 RESUMING: Original scan dates ${scanStartDate.toISOString().split('T')[0]} to ${scanEndDate.toISOString().split('T')[0]}`);
         } else {
-            // 4. LEGACY DETECTION: Check if this looks like a manual job that needs target date
-            // Indicators: has checkpoint but no schedule.targetDate (pre-fix manual jobs)
-            if (job.checkpoint && job.checkpoint.processedCount > 0 && (!job.schedule || !job.schedule.targetDate)) {
-                // This looks like a legacy manual job - prompt for target date or use a reasonable default
-                logger.warn(`⚠️ Legacy manual job detected without stored target date: ${job.jobId}`);
-                logger.warn(`⚠️ Job has checkpoint (${job.checkpoint.processedCount} processed) but no targetDate`);
-                logger.warn(`⚠️ This appears to be a manual job created before target date storage was implemented`);
-
-                // For now, ask user to specify the target date
-                logger.error(`❌ Cannot determine target date for legacy manual job ${job.jobId}`);
-                logger.error(`❌ Please update job.schedule.targetDate manually or restart with targetDate parameter`);
-                throw new Error(`Legacy manual job ${job.jobId} missing target date. Please specify the original scan date.`);
-            }
-
-            // 5. Use lookback period from job configuration (scheduled jobs)
+            // 3. SCHEDULED DAILY RUN: Use lookback period (default: yesterday)
             const lookbackDays = job.schedule?.lookbackDays || 1; // Default to 1 day if not specified
 
             // End date: yesterday (don't include today's partial data)
