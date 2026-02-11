@@ -968,11 +968,12 @@ class ScanJobProcessor {
                         });
                     }
 
-                    // Add match with document and project info
+                    // Add match with document and project info (including validation quote)
                     customerMatchesMap.get(email).matches.push({
                         reportType: job.documentType,
                         projectId: document.projectId,
                         documentName: document.fileName,
+                        validationQuote: result.validationQuote || 'No quote captured',
                         requestingAuthority: 'Planning Authority',
                         deadline: 'See document for details',
                         summary: result.reasoning || `FI request detected for ${job.documentType} report`,

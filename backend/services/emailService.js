@@ -141,6 +141,12 @@ class EmailService {
             .view-link:hover { text-decoration: underline; }
             .report-type-section { margin: 15px 0; }
             .report-type-section h3 { color: #28a745; margin-bottom: 10px; font-size: 1.2em; }
+            .evidence-table { width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 0.9em; }
+            .evidence-table th { background-color: #28a745; color: white; padding: 10px; text-align: left; }
+            .evidence-table td { padding: 10px; border-bottom: 1px solid #e0e0e0; vertical-align: top; }
+            .evidence-table tr:nth-child(even) { background-color: #f8f9fa; }
+            .evidence-table .doc-name { font-weight: 500; color: #333; max-width: 250px; word-break: break-word; }
+            .evidence-table .quote-text { font-style: italic; color: #555; max-width: 450px; }
             .footer { background-color: #f4f4f4; padding: 20px; text-align: center; font-size: 11px; color: #666; border-top: 1px solid #ddd; line-height: 1.4; }
             .footer strong { color: #333; }
             .footer a { color: #007bff; text-decoration: none; }
@@ -175,6 +181,30 @@ class EmailService {
               {{/each}}
             </div>
             {{/each}}
+
+            {{#if allMatches.length}}
+            <div style="margin-top: 25px;">
+              <h3 style="color: #28a745; border-bottom: 2px solid #28a745; padding-bottom: 8px;">Evidence Details</h3>
+              <table class="evidence-table">
+                <thead>
+                  <tr>
+                    <th style="width: 15%;">Project ID</th>
+                    <th style="width: 30%;">Doc Name</th>
+                    <th style="width: 55%;">Validation Quote</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {{#each allMatches}}
+                  <tr>
+                    <td style="font-family: monospace; font-size: 11px; color: #666;">{{projectId}}</td>
+                    <td class="doc-name">{{documentName}}</td>
+                    <td class="quote-text">"{{validationQuote}}"</td>
+                  </tr>
+                  {{/each}}
+                </tbody>
+              </table>
+            </div>
+            {{/if}}
 
             <p>Best regards,<br><strong>Building Info Team</strong></p>
           </div>
@@ -386,12 +416,21 @@ class EmailService {
       const uniqueProjects = new Set(batchData.matches.map(match => match.projectId));
       const totalProjects = uniqueProjects.size;
 
+      // Prepare all matches with validation quotes for the evidence table
+      const allMatches = batchData.matches.map(match => ({
+        documentName: match.documentName || 'Unknown document',
+        validationQuote: (match.validationQuote || 'No quote captured').substring(0, 300) + 
+          ((match.validationQuote?.length || 0) > 300 ? '...' : ''),
+        projectId: match.projectId
+      }));
+
       const html = template({
         customerName,
         totalMatches: batchData.matches.length,
         totalProjects,
         reportTypes: Object.keys(processedMatchesByType),
         matchesByType: processedMatchesByType,
+        allMatches: allMatches,
         processingDate: new Date().toLocaleDateString(),
         dashboardUrl: `${process.env.FRONTEND_URL}/dashboard`
       });
