@@ -449,9 +449,8 @@ class ScanJobProcessor {
                             logger.warn(`⚠️ Found ${matches.length} matches but autoProcess is disabled - skipping match emails`);
                         }
 
-                        // Send progress email to TRIGGERING USER ONLY (not customers)
-                        // This is an internal progress update, not a customer notification
-                        const triggeredByEmail = job.checkpoint.triggeredBy?.email;
+                        // Send progress email to admin (internal progress update)
+                        const triggeredByEmail = job.checkpoint.triggeredBy?.email || adminEmail;
                         
                         if (triggeredByEmail) {
                             // Collect recent match details for the progress email
@@ -556,8 +555,8 @@ class ScanJobProcessor {
         job.statistics.totalMatches = (job.statistics.totalMatches || 0) + totalMatchesFound;
         job.statistics.lastScanDate = new Date();
 
-        // SEND FINAL SUMMARY EMAIL TO TRIGGERING USER (always, even if zero matches)
-        const triggeredByEmail = job.checkpoint.triggeredBy?.email;
+        // SEND FINAL SUMMARY EMAIL TO ADMIN (always, even if zero matches)
+        const triggeredByEmail = job.checkpoint.triggeredBy?.email || adminEmail;
         if (triggeredByEmail) {
             const duration = ((Date.now() - startTime) / 1000).toFixed(2);
             const allMatchDetails = job.checkpoint.allMatchDetails || [];
