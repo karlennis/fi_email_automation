@@ -380,9 +380,26 @@ class EmailService {
         throw new Error('FI batch notification template not loaded');
       }
 
+      // Filter out matches without valid project details from BII
+      const invalidTitles = ['Title unavailable', 'Untitled project', 'Error loading data', 'N/A'];
+      const validMatches = batchData.matches.filter(match => {
+        const title = match.projectMetadata?.planning_title;
+        if (!title || invalidTitles.includes(title)) {
+          logger.info(`⚠️ Excluding project ${match.projectId} from email - no valid details from BII`);
+          return false;
+        }
+        return true;
+      });
+
+      // If no valid matches remain, skip sending the email
+      if (validMatches.length === 0) {
+        logger.info(`ℹ️ No valid matches for ${customerEmail} after filtering - skipping email`);
+        return { success: true, skipped: true, reason: 'No matches with valid project details' };
+      }
+
       // Group matches by report type and deduplicate projects within each type
       const matchesByType = {};
-      batchData.matches.forEach(match => {
+      validMatches.forEach(match => {
         // Capitalize report type
         const reportType = match.reportType.charAt(0).toUpperCase() + match.reportType.slice(1);
 
@@ -395,11 +412,11 @@ class EmailService {
           // Map project metadata fields to template-expected names
           const projectData = {
             ...match,
-            projectTitle: match.projectMetadata?.planning_title || 'Title unavailable',
-            planningStage: match.projectMetadata?.planning_stage || 'N/A',
-            planningSector: match.projectMetadata?.planning_sector || 'N/A',
-            planningAuthority: match.projectMetadata?.planning_authority || 'N/A',
-            biiUrl: match.projectMetadata?.bii_url || null // Don't create fallback URLs
+            projectTitle: match.projectMetadata.planning_title,
+            planningStage: match.projectMetadata.planning_stage || 'N/A',
+            planningSector: match.projectMetadata.planning_sector || 'N/A',
+            planningAuthority: match.projectMetadata.planning_authority || 'N/A',
+            biiUrl: match.projectMetadata.bii_url || null
           };
 
           matchesByType[reportType][match.projectId] = projectData;
@@ -413,11 +430,11 @@ class EmailService {
       });
 
       // Get unique project count
-      const uniqueProjects = new Set(batchData.matches.map(match => match.projectId));
+      const uniqueProjects = new Set(validMatches.map(match => match.projectId));
       const totalProjects = uniqueProjects.size;
 
       // Prepare all matches with validation quotes for the evidence table
-      const allMatches = batchData.matches.map(match => ({
+      const allMatches = validMatches.map(match => ({
         documentName: match.documentName || 'Unknown document',
         validationQuote: (match.validationQuote || 'No quote captured').substring(0, 300) + 
           ((match.validationQuote?.length || 0) > 300 ? '...' : ''),
@@ -426,7 +443,7 @@ class EmailService {
 
       const html = template({
         customerName,
-        totalMatches: batchData.matches.length,
+        totalMatches: validMatches.length,
         totalProjects,
         reportTypes: Object.keys(processedMatchesByType),
         matchesByType: processedMatchesByType,
@@ -478,21 +495,27 @@ class EmailService {
         throw new Error('FI notification template not loaded');
       }
 
+      // Skip if no valid project details from BII
+      const invalidTitles = ['Title unavailable', 'Untitled project', 'Error loading data', 'N/A'];
+      const projectTitle = fiData.projectMetadata?.planning_title || fiData.projectTitle;
+      if (!projectTitle || invalidTitles.includes(projectTitle)) {
+        logger.info(`⚠️ Skipping FI notification for project ${fiData.projectId} - no valid details from BII`);
+        return { success: true, skipped: true, reason: 'No valid project details' };
+      }
+
       const html = template({
         customerName,
         reportType: fiData.reportType,
         projectId: fiData.projectId,
-        projectTitle: fiData.projectMetadata?.planning_title || fiData.projectTitle || 'Title unavailable',
+        projectTitle: projectTitle,
         documentName: fiData.documentName,
         requestingAuthority: fiData.requestingAuthority,
         deadline: fiData.deadline,
         summary: fiData.summary,
         specificRequests: fiData.specificRequests,
-        biiUrl: fiData.projectMetadata?.bii_url || null, // Don't create fallback URLs
+        biiUrl: fiData.projectMetadata?.bii_url || null,
         dashboardUrl: `${process.env.FRONTEND_URL}/dashboard`
       });
-
-      const projectTitle = fiData.projectMetadata?.planning_title || fiData.projectTitle || 'Title unavailable';
 
       const mailOptions = {
         from: `"Building Info Team" <noreply@buildinginfo.com>`,
