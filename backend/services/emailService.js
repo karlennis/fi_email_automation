@@ -436,7 +436,7 @@ class EmailService {
       // Prepare all matches with validation quotes for the evidence table
       const allMatches = validMatches.map(match => ({
         documentName: match.documentName || 'Unknown document',
-        validationQuote: (match.validationQuote || 'No quote captured').substring(0, 300) + 
+        validationQuote: (match.validationQuote || 'No quote captured').substring(0, 300) +
           ((match.validationQuote?.length || 0) > 300 ? '...' : ''),
         projectId: match.projectId
       }));
@@ -736,7 +736,7 @@ class EmailService {
       }
 
       const { jobName, documentType, startTime, endTime, duration, processedCount, totalDocuments, matchesFound, matches } = summaryData;
-      
+
       // Build HTML content for summary email
       let matchesHtml = '';
       if (matches && matches.length > 0) {
@@ -806,12 +806,12 @@ class EmailService {
                   <div class="stat-label">Duration</div>
                 </div>
               </div>
-              
+
               <p><strong>Start Time:</strong> ${new Date(startTime).toLocaleString()}</p>
               <p><strong>End Time:</strong> ${new Date(endTime).toLocaleString()}</p>
-              
+
               ${matchesHtml}
-              
+
               <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
               <p style="color: #666; font-size: 12px;">
                 This is an automated summary from the FI Email Automation system.<br>

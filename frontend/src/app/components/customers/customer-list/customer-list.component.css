@@ -171,6 +171,67 @@
   font-weight: 500;
 }
 
+/* Subscription Filters */
+.subscription-filters {
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background: #f8f9fa;
+  border-radius: 6px;
+}
+
+.subscription-filters h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.9rem;
+  color: #495057;
+}
+
+.subscription-filters.no-restrictions {
+  background: #e8f5e9;
+}
+
+.filter-badges {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.filter-label {
+  font-size: 0.75rem;
+  color: #6c757d;
+  font-weight: 500;
+  margin-right: 0.25rem;
+}
+
+.filter-badge {
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.filter-badge.county {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.filter-badge.sector {
+  background: #f3e5f5;
+  color: #7b1fa2;
+}
+
+.filter-badge.all {
+  background: #e8f5e9;
+  color: #2e7d32;
+  font-size: 0.8rem;
+}
+
 .customer-stats {
   display: flex;
   gap: 1rem;

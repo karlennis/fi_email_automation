@@ -20,7 +20,8 @@ export interface FilteringParams {
 
 export interface DropdownData {
   categories: Array<{ id: number; name: string; subcategories: Array<{ id: number; name: string }> }>;
-  counties: Array<{ id: number; name: string }>;
+  counties: Array<{ id: number; name: string; province?: string }>;
+  provinces: Array<{ id: number; name: string; counties: string[] }>;
   stages: Array<{ id: number; name: string }>;
   types: Array<{ id: number; name: string }>;
 }

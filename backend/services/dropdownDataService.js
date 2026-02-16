@@ -64,36 +64,86 @@ class DropdownDataService {
       { id: 36, name: 'Alteration', categoryID: 10 }
     ];
 
-    // Irish counties (fixing duplicate Longford)
+    // Irish provinces with their constituent counties
+    this.provinces = [
+      { 
+        id: 1, 
+        name: 'Leinster', 
+        counties: ['Dublin', 'Wicklow', 'Wexford', 'Carlow', 'Kildare', 'Meath', 'Louth', 'Longford', 'Westmeath', 'Offaly', 'Laois', 'Kilkenny']
+      },
+      { 
+        id: 2, 
+        name: 'Munster', 
+        counties: ['Cork', 'Kerry', 'Limerick', 'Tipperary', 'Clare', 'Waterford']
+      },
+      { 
+        id: 3, 
+        name: 'Connacht', 
+        counties: ['Galway', 'Mayo', 'Roscommon', 'Sligo', 'Leitrim']
+      },
+      { 
+        id: 4, 
+        name: 'Ulster (ROI)', 
+        counties: ['Donegal', 'Cavan', 'Monaghan']
+      },
+      { 
+        id: 5, 
+        name: 'Northern Ireland', 
+        counties: ['Antrim', 'Armagh', 'Derry', 'Down', 'Fermanagh', 'Tyrone', 'Antrim & Newtownabbey', 'Armagh Banbridge & Craigavon', 'Belfast', 'Causeway Coast & Glens', 'Derry City & Strabane', 'Fermanagh & Omagh', 'Lisburn & Castlereagh', 'Mid & East Antrim', 'Mid Ulster', 'Newry Mourne & Down', 'Ards & North Down']
+      }
+    ];
+
+    // All counties - Republic of Ireland + Northern Ireland
     this.counties = [
-      { id: 1, name: 'Dublin' },
-      { id: 2, name: 'Wicklow' },
-      { id: 3, name: 'Wexford' },
-      { id: 4, name: 'Carlow' },
-      { id: 5, name: 'Kildare' },
-      { id: 6, name: 'Meath' },
-      { id: 7, name: 'Louth' },
-      { id: 8, name: 'Monaghan' },
-      { id: 9, name: 'Cavan' },
-      { id: 10, name: 'Longford' },
-      { id: 12, name: 'Westmeath' },
-      { id: 13, name: 'Offaly' },
-      { id: 14, name: 'Laois' },
-      { id: 15, name: 'Kilkenny' },
-      { id: 16, name: 'Waterford' },
-      { id: 17, name: 'Cork' },
-      { id: 18, name: 'Kerry' },
-      { id: 19, name: 'Limerick' },
-      { id: 20, name: 'Tipperary' },
-      { id: 21, name: 'Clare' },
-      { id: 22, name: 'Galway' },
-      { id: 23, name: 'Mayo' },
-      { id: 24, name: 'Roscommon' },
-      { id: 25, name: 'Sligo' },
-      { id: 26, name: 'Leitrim' },
-      { id: 27, name: 'Donegal' },
-      { id: 28, name: 'Antrim & Newtownabbey' },
-      { id: 29, name: 'Armagh Banbridge & Craigavon' }
+      // Leinster
+      { id: 1, name: 'Dublin', province: 'Leinster' },
+      { id: 2, name: 'Wicklow', province: 'Leinster' },
+      { id: 3, name: 'Wexford', province: 'Leinster' },
+      { id: 4, name: 'Carlow', province: 'Leinster' },
+      { id: 5, name: 'Kildare', province: 'Leinster' },
+      { id: 6, name: 'Meath', province: 'Leinster' },
+      { id: 7, name: 'Louth', province: 'Leinster' },
+      { id: 8, name: 'Longford', province: 'Leinster' },
+      { id: 9, name: 'Westmeath', province: 'Leinster' },
+      { id: 10, name: 'Offaly', province: 'Leinster' },
+      { id: 11, name: 'Laois', province: 'Leinster' },
+      { id: 12, name: 'Kilkenny', province: 'Leinster' },
+      // Munster
+      { id: 13, name: 'Cork', province: 'Munster' },
+      { id: 14, name: 'Kerry', province: 'Munster' },
+      { id: 15, name: 'Limerick', province: 'Munster' },
+      { id: 16, name: 'Tipperary', province: 'Munster' },
+      { id: 17, name: 'Clare', province: 'Munster' },
+      { id: 18, name: 'Waterford', province: 'Munster' },
+      // Connacht
+      { id: 19, name: 'Galway', province: 'Connacht' },
+      { id: 20, name: 'Mayo', province: 'Connacht' },
+      { id: 21, name: 'Roscommon', province: 'Connacht' },
+      { id: 22, name: 'Sligo', province: 'Connacht' },
+      { id: 23, name: 'Leitrim', province: 'Connacht' },
+      // Ulster (ROI)
+      { id: 24, name: 'Donegal', province: 'Ulster (ROI)' },
+      { id: 25, name: 'Cavan', province: 'Ulster (ROI)' },
+      { id: 26, name: 'Monaghan', province: 'Ulster (ROI)' },
+      // Northern Ireland - Traditional counties
+      { id: 27, name: 'Antrim', province: 'Northern Ireland' },
+      { id: 28, name: 'Armagh', province: 'Northern Ireland' },
+      { id: 29, name: 'Derry', province: 'Northern Ireland' },
+      { id: 30, name: 'Down', province: 'Northern Ireland' },
+      { id: 31, name: 'Fermanagh', province: 'Northern Ireland' },
+      { id: 32, name: 'Tyrone', province: 'Northern Ireland' },
+      // Northern Ireland - Council areas (for BII data compatibility)
+      { id: 33, name: 'Antrim & Newtownabbey', province: 'Northern Ireland' },
+      { id: 34, name: 'Armagh Banbridge & Craigavon', province: 'Northern Ireland' },
+      { id: 35, name: 'Belfast', province: 'Northern Ireland' },
+      { id: 36, name: 'Causeway Coast & Glens', province: 'Northern Ireland' },
+      { id: 37, name: 'Derry City & Strabane', province: 'Northern Ireland' },
+      { id: 38, name: 'Fermanagh & Omagh', province: 'Northern Ireland' },
+      { id: 39, name: 'Lisburn & Castlereagh', province: 'Northern Ireland' },
+      { id: 40, name: 'Mid & East Antrim', province: 'Northern Ireland' },
+      { id: 41, name: 'Mid Ulster', province: 'Northern Ireland' },
+      { id: 42, name: 'Newry Mourne & Down', province: 'Northern Ireland' },
+      { id: 43, name: 'Ards & North Down', province: 'Northern Ireland' }
     ];
 
     // Planning stages
@@ -140,6 +190,21 @@ class DropdownDataService {
   }
 
   /**
+   * Get all provinces
+   */
+  getProvinces() {
+    return this.provinces;
+  }
+
+  /**
+   * Get counties for a specific province
+   */
+  getCountiesByProvince(provinceName) {
+    const province = this.provinces.find(p => p.name === provinceName);
+    return province ? province.counties : [];
+  }
+
+  /**
    * Get all planning stages
    */
   getStages() {
@@ -168,6 +233,7 @@ class DropdownDataService {
     return {
       categories: categoriesWithSubcategories,
       counties: this.counties,
+      provinces: this.provinces,
       stages: this.stages,
       types: this.types
     };

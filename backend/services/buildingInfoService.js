@@ -75,6 +75,7 @@ class BuildingInfoService {
         planning_updated: 'N/A',
         planning_stage: 'N/A',
         planning_sector: 'N/A',
+        planning_county: 'N/A',
         planning_authority: 'N/A',
         planning_status: 'N/A'
       };
@@ -117,6 +118,7 @@ class BuildingInfoService {
         planning_updated: (row.planning_public_updated || row.api_date || 'N/A').slice(0, 10),
         planning_stage: row.planning_stage || 'N/A',
         planning_sector: row.planning_category || 'N/A',
+        planning_county: row.planning_county || 'N/A',
         planning_authority: row.planning_authority || 'N/A',
         planning_status: row.planning_status || 'N/A',
         planning_description: row.planning_description || '',
@@ -154,6 +156,7 @@ class BuildingInfoService {
         planning_updated: 'N/A',
         planning_stage: 'N/A',
         planning_sector: 'N/A',
+        planning_county: 'N/A',
         planning_authority: 'N/A',
         planning_status: 'N/A'
       };
@@ -191,6 +194,7 @@ class BuildingInfoService {
             planning_updated: 'N/A',
             planning_stage: 'N/A',
             planning_sector: 'N/A',
+            planning_county: 'N/A',
             planning_authority: 'N/A',
             planning_status: 'Error'
           };

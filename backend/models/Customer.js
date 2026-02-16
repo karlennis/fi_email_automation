@@ -32,6 +32,17 @@ const customerSchema = new mongoose.Schema({
     enum: ['acoustic', 'transport', 'ecological', 'flood', 'heritage', 'arboricultural', 'waste', 'lighting'],
     required: true
   }],
+  // Subscription filters - determines which matches the customer receives
+  filters: {
+    allowedCounties: [{
+      type: String,
+      trim: true
+    }],
+    allowedSectors: [{
+      type: String,
+      trim: true
+    }]
+  },
   isActive: {
     type: Boolean,
     default: true

@@ -6,6 +6,7 @@ const fiDetectionService = require('./fiDetectionService');
 const s3Service = require('./s3Service');
 const emailService = require('./emailService');
 const buildingInfoService = require('./buildingInfoService');
+const fiReportService = require('./fiReportService');
 const logger = require('../utils/logger');
 const { enqueueScanJob } = require('./scanJobQueue');
 const optimizedPdfExtractor = require('./optimizedPdfExtractor');
@@ -120,7 +121,7 @@ class ScanJobProcessor {
                         await enqueueScanJob(job.jobId, { targetDate: null });
                         continue;
                     }
-                    
+
                     // Check if this job should run based on its schedule
                     const shouldRun = this.shouldJobRun(job, today);
 
@@ -167,7 +168,7 @@ class ScanJobProcessor {
         // 3. Lookback calculation (scheduled daily runs - always scan yesterday)
 
         const isResuming = job.checkpoint && job.checkpoint.isResuming && job.checkpoint.lastProcessedIndex > 0;
-        
+
         if (targetDate) {
             // 1. MANUAL RUN: Use user-specified target date
             scanStartDate = new Date(targetDate);
@@ -223,10 +224,10 @@ class ScanJobProcessor {
 
         // Always send progress/summary emails to admin
         const adminEmail = process.env.ADMIN_EMAIL || 'afatogun@buildinginfo.com';
-        
+
         if (isResuming) {
             logger.info(`🔄 Resuming scan after ${job.checkpoint.lastProcessedFile || 'unknown file'}`);
-            
+
             // Ensure triggeredBy uses admin email
             if (!job.checkpoint.triggeredBy?.email) {
                 job.checkpoint.triggeredBy = {
@@ -247,7 +248,7 @@ class ScanJobProcessor {
                 name: 'Admin',
                 timestamp: new Date()
             };
-            
+
             logger.info(`📧 Progress/summary emails will be sent to admin: ${adminEmail}`);
 
             job.checkpoint = {
@@ -368,7 +369,7 @@ class ScanJobProcessor {
                             });
 
                             job.checkpoint.matchesFound = (job.checkpoint.matchesFound || 0) + 1;
-                            
+
                             // Track match details for final summary email
                             if (!job.checkpoint.allMatchDetails) {
                                 job.checkpoint.allMatchDetails = [];
@@ -431,7 +432,7 @@ class ScanJobProcessor {
 
                         if (matches.length > 0 && autoProcess) {
                             logger.info(`📧 Sending match emails for ${matches.length} matches found so far...`);
-                            
+
                             // Log validation quotes at checkpoint (sanity check)
                             logger.info(`\n📋 ===== CHECKPOINT VALIDATION QUOTES (${totalProcessed} docs) =====`);
                             matches.forEach((match, idx) => {
@@ -441,7 +442,7 @@ class ScanJobProcessor {
                                 logger.info(`    Quote: "${quote.substring(0, 200)}${quote.length > 200 ? '...' : ''}"`);
                             });
                             logger.info(`=================================================\n`);
-                            
+
                             await this.sendMatchEmails(matches, job);
                             logger.info(`✅ Match emails sent for checkpoint at ${totalProcessed} documents`);
                             matches = []; // Clear matches after sending to avoid duplicates
@@ -451,11 +452,11 @@ class ScanJobProcessor {
 
                         // Send progress email to admin (internal progress update)
                         const triggeredByEmail = job.checkpoint.triggeredBy?.email || adminEmail;
-                        
+
                         if (triggeredByEmail) {
                             // Collect recent match details for the progress email
                             const recentMatches = (job.checkpoint.allMatchDetails || []).slice(-10); // Last 10 matches
-                            
+
                             await emailService.sendScanProgressEmail([triggeredByEmail], {
                                 jobName: job.name,
                                 documentType: job.documentType,
@@ -560,7 +561,7 @@ class ScanJobProcessor {
         if (triggeredByEmail) {
             const duration = ((Date.now() - startTime) / 1000).toFixed(2);
             const allMatchDetails = job.checkpoint.allMatchDetails || [];
-            
+
             await emailService.sendScanSummaryEmail(triggeredByEmail, {
                 jobName: job.name,
                 documentType: job.documentType,
@@ -961,8 +962,10 @@ class ScanJobProcessor {
 
                     if (!customerMatchesMap.has(email)) {
                         customerMatchesMap.set(email, {
+                            customerId: customer.customerId._id.toString(), // Store MongoDB _id for FIReport
                             email: email,
                             name: customer.customerId.name,
+                            filters: customer.customerId.filters || {}, // Store customer's subscription filters
                             matches: []
                         });
                     }
@@ -1014,9 +1017,57 @@ class ScanJobProcessor {
                 }
             }
 
-            // Send batch emails to each customer
-            let emailsSent = 0;
+            // Apply customer subscription filters (county/sector)
+            // Customers only receive matches that pass their filter criteria
             for (const customerData of customerMatchesMap.values()) {
+                const customerFilters = customerData.filters || {};
+                const allowedCounties = customerFilters.allowedCounties || [];
+                const allowedSectors = customerFilters.allowedSectors || [];
+
+                // Filter matches based on customer's subscription
+                const originalCount = customerData.matches.length;
+                customerData.matches = customerData.matches.filter(match => {
+                    const metadata = match.projectMetadata;
+                    if (!metadata) return true; // No metadata = include (can't filter)
+
+                    // County check: empty allowedCounties = no restriction
+                    // Use trim() to handle trailing spaces from API
+                    const countyOK = allowedCounties.length === 0 ||
+                        allowedCounties.some(county =>
+                            metadata.planning_county &&
+                            metadata.planning_county.trim().toLowerCase() === county.trim().toLowerCase()
+                        );
+
+                    // Sector check: empty allowedSectors = no restriction
+                    const sectorOK = allowedSectors.length === 0 ||
+                        allowedSectors.some(sector =>
+                            metadata.planning_sector &&
+                            metadata.planning_sector.trim().toLowerCase() === sector.trim().toLowerCase()
+                        );
+
+                    return countyOK && sectorOK;
+                });
+
+                if (originalCount !== customerData.matches.length) {
+                    logger.info(`📋 ${customerData.email}: ${customerData.matches.length}/${originalCount} matches after applying subscription filters (counties: ${allowedCounties.length || 'all'}, sectors: ${allowedSectors.length || 'all'})`);
+                }
+            }
+
+            // Send batch emails to each customer (only if they have eligible matches)
+            let emailsSent = 0;
+            let customersSkipped = 0;
+            for (const customerData of customerMatchesMap.values()) {
+                // Skip if no matches remain after filtering
+                if (customerData.matches.length === 0) {
+                    logger.info(`⏭️ Skipping ${customerData.email} - no matches after applying subscription filters`);
+                    customersSkipped++;
+                    continue;
+                }
+
+                const startTime = Date.now();
+                let emailStatus = 'FAILED';
+                let emailError = null;
+
                 try {
                     await emailService.sendBatchFINotification(
                         customerData.email,
@@ -1030,10 +1081,85 @@ class ScanJobProcessor {
                     );
 
                     emailsSent++;
+                    emailStatus = 'SENT';
                     logger.info(`✉️ Sent batch email to ${customerData.email} (${customerData.matches.length} matches)`);
 
+                    // Update Customer record with email statistics
+                    try {
+                        const customerRecord = await Customer.findById(customerData.customerId);
+                        if (customerRecord) {
+                            await customerRecord.recordEmailSent();
+                            logger.info(`📈 Updated email stats for customer ${customerData.email}`);
+                        }
+                    } catch (customerUpdateError) {
+                        logger.warn(`⚠️ Failed to update customer email stats for ${customerData.email}:`, customerUpdateError.message);
+                    }
+
                 } catch (error) {
+                    emailError = error.message;
                     logger.error(`❌ Failed to send batch email to ${customerData.email}:`, error);
+                }
+
+                // Create FIReport record to track what was sent
+                try {
+                    const projectsFound = customerData.matches.map(match => ({
+                        projectId: match.projectId,
+                        planningTitle: match.projectMetadata?.planning_title || 'N/A',
+                        planningStage: match.projectMetadata?.planning_stage || 'N/A',
+                        planningValue: match.projectMetadata?.planning_value || 0,
+                        planningCounty: match.projectMetadata?.planning_county || 'N/A',
+                        planningRegion: match.projectMetadata?.planning_region || 'N/A',
+                        biiUrl: match.projectMetadata?.bii_url || '',
+                        fiIndicators: [match.reportType],
+                        matchedKeywords: [],
+                        confidence: 1,
+                        metadata: {
+                            documentName: match.documentName,
+                            validationQuote: match.validationQuote,
+                            summary: match.summary,
+                            specificRequests: match.specificRequests,
+                            planningSector: match.projectMetadata?.planning_sector || 'N/A'
+                        }
+                    }));
+
+                    await fiReportService.createReport({
+                        customerId: customerData.customerId,
+                        customerEmail: customerData.email,
+                        customerName: customerData.name,
+                        reportType: 'BATCH_FI_NOTIFICATION',
+                        status: emailStatus,
+                        searchCriteria: {
+                            projectTypes: [job.documentType],
+                            customFilters: {
+                                jobId: job.jobId,
+                                allowedCounties: customerData.filters?.allowedCounties || [],
+                                allowedSectors: customerData.filters?.allowedSectors || []
+                            }
+                        },
+                        projectsFound: projectsFound,
+                        totalProjectsScanned: matches.length,
+                        totalFIMatches: customerData.matches.length,
+                        processingTime: Date.now() - startTime,
+                        source: 'SCHEDULED',
+                        deliveryAttempts: emailStatus === 'SENT' ? [{
+                            attemptNumber: 1,
+                            timestamp: new Date(),
+                            status: 'SUCCESS',
+                            recipientEmail: customerData.email
+                        }] : [{
+                            attemptNumber: 1,
+                            timestamp: new Date(),
+                            status: 'FAILED',
+                            recipientEmail: customerData.email,
+                            error: emailError
+                        }],
+                        sentAt: emailStatus === 'SENT' ? new Date() : undefined
+                    });
+
+                    logger.info(`📊 Created FIReport for ${customerData.email} (${customerData.matches.length} matches, status: ${emailStatus})`);
+
+                } catch (reportError) {
+                    logger.error(`❌ Failed to create FIReport for ${customerData.email}:`, reportError);
                 }
             }
 
@@ -1041,7 +1167,7 @@ class ScanJobProcessor {
             job.statistics.totalEmailsSent = (job.statistics.totalEmailsSent || 0) + emailsSent;
             await job.save();
 
-            logger.info(`✅ Sent ${emailsSent} batch email notifications for ${matches.length} total matches`);
+            logger.info(`✅ Sent ${emailsSent} batch email notifications for ${matches.length} total matches (${customersSkipped} customers skipped due to filters)`);
 
         } catch (error) {
             logger.error('❌ Error sending batch emails:', error);

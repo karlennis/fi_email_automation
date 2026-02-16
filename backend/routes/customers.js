@@ -14,6 +14,10 @@ const customerSchema = Joi.object({
   reportTypes: Joi.array().items(
     Joi.string().valid('acoustic', 'transport', 'ecological', 'flood', 'heritage', 'arboricultural', 'waste', 'lighting')
   ).min(1).required(),
+  filters: Joi.object({
+    allowedCounties: Joi.array().items(Joi.string().trim()),
+    allowedSectors: Joi.array().items(Joi.string().trim())
+  }),
   emailPreferences: Joi.object({
     instantNotification: Joi.boolean(),
     dailyDigest: Joi.boolean(),
@@ -23,12 +27,17 @@ const customerSchema = Joi.object({
 
 const updateCustomerSchema = Joi.object({
   name: Joi.string().trim().min(2).max(100),
+  email: Joi.string().email().lowercase().trim(),
   company: Joi.string().trim().max(200),
   phone: Joi.string().trim().max(20),
   projectId: Joi.string().trim().uppercase().max(50),
   reportTypes: Joi.array().items(
     Joi.string().valid('acoustic', 'transport', 'ecological', 'flood', 'heritage', 'arboricultural', 'waste', 'lighting')
   ).min(1),
+  filters: Joi.object({
+    allowedCounties: Joi.array().items(Joi.string().trim()),
+    allowedSectors: Joi.array().items(Joi.string().trim())
+  }),
   isActive: Joi.boolean(),
   emailPreferences: Joi.object({
     instantNotification: Joi.boolean(),

@@ -10,7 +10,7 @@ interface ScanJob {
   jobId: string;
   name: string;
   documentType: string;
-  status: 'ACTIVE' | 'PAUSED' | 'STOPPED' | 'CANCELLING';
+  status: 'ACTIVE' | 'PAUSED' | 'STOPPED' | 'CANCELLING' | 'RUNNING';
   config: {
     confidenceThreshold: number;
     reviewThreshold: number;

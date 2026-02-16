@@ -12,6 +12,10 @@ export interface Customer {
   phone?: string;
   company?: string;
   reportTypes: string[];
+  filters?: {
+    allowedCounties: string[];
+    allowedSectors: string[];
+  };
   isActive: boolean;
   emailCount: number;
   lastEmailSent?: Date;
@@ -72,6 +76,10 @@ export interface CustomerRequest {
   phone?: string;
   company?: string;
   reportTypes?: string[];
+  filters?: {
+    allowedCounties?: string[];
+    allowedSectors?: string[];
+  };
   isActive?: boolean;
   emailPreferences?: {
     instantNotification?: boolean;

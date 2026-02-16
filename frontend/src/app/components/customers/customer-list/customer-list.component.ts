@@ -4,6 +4,7 @@ import { RouterModule } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { CustomerService, Customer, CustomerHistory } from '../../../services/customer.service';
+import { ApiFilteringService, DropdownData } from '../../../services/api-filtering.service';
 import { ToastrService } from 'ngx-toastr';
 import { environment } from '../../../../environments/environment';
 
@@ -93,6 +94,27 @@ import { environment } from '../../../../environments/environment';
                     {{ formatReportType(type) }}
                   </span>
                 </div>
+              </div>
+
+              <div class="subscription-filters" *ngIf="hasFilters(customer)">
+                <h4>Subscription Filters</h4>
+                <div class="filter-badges">
+                  <div class="filter-group" *ngIf="customer.filters?.allowedCounties?.length">
+                    <span class="filter-label">Counties:</span>
+                    <span class="filter-badge county" *ngFor="let county of customer.filters!.allowedCounties">
+                      {{ county }}
+                    </span>
+                  </div>
+                  <div class="filter-group" *ngIf="customer.filters?.allowedSectors?.length">
+                    <span class="filter-label">Sectors:</span>
+                    <span class="filter-badge sector" *ngFor="let sector of customer.filters!.allowedSectors">
+                      {{ sector }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div class="subscription-filters no-restrictions" *ngIf="!hasFilters(customer)">
+                <span class="filter-badge all">📬 Receives all matches (no restrictions)</span>
               </div>
 
               <div class="customer-stats" *ngIf="customer.emailCount > 0">
@@ -443,6 +465,71 @@ import { environment } from '../../../../environments/environment';
               placeholder="Enter company name (optional)"
               [disabled]="isUpdating"
             >
+          </div>
+
+          <!-- Subscription Filters -->
+          <div class="filter-section">
+            <h4>📍 Subscription Filters</h4>
+            <p class="filter-help">Select which counties and sectors this customer should receive. Leave empty to receive all results.</p>
+
+            <div class="form-group">
+              <label>Quick Select by Province</label>
+              <div class="province-buttons" *ngIf="dropdownData?.provinces">
+                <button
+                  *ngFor="let province of dropdownData!.provinces"
+                  type="button"
+                  class="btn btn-sm province-btn"
+                  [class.selected]="isProvinceFullySelected(province)"
+                  [class.partial]="isProvincePartiallySelected(province)"
+                  (click)="toggleProvinceFilter(province)"
+                  [disabled]="isUpdating"
+                >
+                  {{ province.name }}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline clear-btn"
+                  (click)="clearAllCountyFilters()"
+                  [disabled]="isUpdating || editingCustomer.filters.allowedCounties.length === 0"
+                >
+                  Clear All
+                </button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Counties ({{ editingCustomer.filters.allowedCounties.length }} selected)</label>
+              <div class="filter-chips" *ngIf="dropdownData">
+                <button
+                  *ngFor="let county of dropdownData.counties"
+                  type="button"
+                  class="filter-chip"
+                  [class.selected]="isCountySelected(county.name)"
+                  (click)="toggleCountyFilter(county.name)"
+                  [disabled]="isUpdating"
+                >
+                  {{ county.name }}
+                </button>
+              </div>
+              <div *ngIf="!dropdownData" class="loading-filters">Loading counties...</div>
+            </div>
+
+            <div class="form-group">
+              <label>Sectors</label>
+              <div class="filter-chips" *ngIf="dropdownData">
+                <button
+                  *ngFor="let category of dropdownData.categories"
+                  type="button"
+                  class="filter-chip sector"
+                  [class.selected]="isSectorSelected(category.name)"
+                  (click)="toggleSectorFilter(category.name)"
+                  [disabled]="isUpdating"
+                >
+                  {{ category.name }}
+                </button>
+              </div>
+              <div *ngIf="!dropdownData" class="loading-filters">Loading sectors...</div>
+            </div>
           </div>
 
           <div class="modal-actions">
@@ -1151,6 +1238,184 @@ import { environment } from '../../../../environments/environment';
         padding: 0.2rem 0.4rem;
       }
     }
+
+    /* Subscription Filters - Customer Card */
+    .subscription-filters {
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid #e9ecef;
+    }
+
+    .filter-badges {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .filter-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.25rem;
+      align-items: center;
+    }
+
+    .filter-label {
+      font-size: 0.75rem;
+      color: #666;
+      font-weight: 500;
+      min-width: 60px;
+    }
+
+    .filter-badge {
+      display: inline-block;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+
+    .filter-badge.county {
+      background: #e7f3ff;
+      color: #0366d6;
+    }
+
+    .filter-badge.sector {
+      background: #faf3e0;
+      color: #b8860b;
+    }
+
+    .filter-badge.all {
+      background: #d4edda;
+      color: #155724;
+    }
+
+    .no-restrictions {
+      font-size: 0.85rem;
+    }
+
+    /* Filter Section - Edit Modal */
+    .filter-section {
+      margin-top: 1.5rem;
+      padding: 1rem;
+      background: #f8f9fa;
+      border-radius: 8px;
+      border: 1px solid #e9ecef;
+    }
+
+    .filter-section h4 {
+      margin: 0 0 0.5rem 0;
+      color: #333;
+      font-size: 1rem;
+    }
+
+    .filter-help {
+      margin: 0 0 1rem 0;
+      font-size: 0.85rem;
+      color: #666;
+    }
+
+    .filter-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      max-height: 200px;
+      overflow-y: auto;
+      padding: 0.5rem;
+      background: white;
+      border-radius: 4px;
+      border: 1px solid #e9ecef;
+    }
+
+    .filter-chip {
+      padding: 0.35rem 0.75rem;
+      border-radius: 16px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      border: 1px solid #ddd;
+      background: white;
+      color: #666;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .filter-chip:hover:not(:disabled) {
+      background: #f0f0f0;
+    }
+
+    .filter-chip.selected {
+      background: #0366d6;
+      color: white;
+      border-color: #0366d6;
+    }
+
+    .filter-chip.sector.selected {
+      background: #b8860b;
+      border-color: #b8860b;
+    }
+
+    .filter-chip:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    /* Province quick-select buttons */
+    .province-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .province-btn {
+      padding: 0.4rem 0.75rem;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      border: 2px solid #28a745;
+      background: white;
+      color: #28a745;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .province-btn:hover:not(:disabled) {
+      background: #e8f5e9;
+    }
+
+    .province-btn.selected {
+      background: #28a745;
+      color: white;
+    }
+
+    .province-btn.partial {
+      background: linear-gradient(135deg, #28a745 50%, white 50%);
+      color: #28a745;
+    }
+
+    .province-btn.partial:hover {
+      background: linear-gradient(135deg, #28a745 50%, #e8f5e9 50%);
+    }
+
+    .clear-btn {
+      border-color: #dc3545;
+      color: #dc3545;
+    }
+
+    .clear-btn:hover:not(:disabled) {
+      background: #fce4ec;
+    }
+
+    .clear-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .loading-filters {
+      padding: 1rem;
+      text-align: center;
+      color: #666;
+      font-size: 0.9rem;
+    }
   `]
 })
 export class CustomerListComponent implements OnInit {
@@ -1192,8 +1457,16 @@ export class CustomerListComponent implements OnInit {
     name: '',
     email: '',
     phone: '',
-    company: ''
+    company: '',
+    filters: {
+      allowedCounties: [] as string[],
+      allowedSectors: [] as string[]
+    }
   };
+
+  // Dropdown data for filters
+  dropdownData: DropdownData | null = null;
+  dropdownLoading = false;
 
   // Delete customer modal
   showDeleteModal = false;
@@ -1201,6 +1474,7 @@ export class CustomerListComponent implements OnInit {
 
   constructor(
     private customerService: CustomerService,
+    private apiFilteringService: ApiFilteringService,
     private toastr: ToastrService,
     private http: HttpClient
   ) {}
@@ -1209,6 +1483,21 @@ export class CustomerListComponent implements OnInit {
 
   ngOnInit() {
     this.loadCustomers();
+    this.loadDropdownData();
+  }
+
+  loadDropdownData() {
+    this.dropdownLoading = true;
+    this.apiFilteringService.getDropdownData().subscribe({
+      next: (data) => {
+        this.dropdownData = data;
+        this.dropdownLoading = false;
+      },
+      error: (error) => {
+        console.error('Error loading dropdown data:', error);
+        this.dropdownLoading = false;
+      }
+    });
   }
 
   loadCustomers() {
@@ -1345,6 +1634,10 @@ export class CustomerListComponent implements OnInit {
     return reportType.charAt(0).toUpperCase() + reportType.slice(1);
   }
 
+  hasFilters(customer: Customer): boolean {
+    return !!(customer.filters?.allowedCounties?.length || customer.filters?.allowedSectors?.length);
+  }
+
   formatStatus(status: string): string {
     switch (status) {
       case 'detected': return 'Detected';
@@ -1469,7 +1762,11 @@ export class CustomerListComponent implements OnInit {
       name: customer.name,
       email: customer.email,
       phone: customer.phone || '',
-      company: customer.company || ''
+      company: customer.company || '',
+      filters: {
+        allowedCounties: customer.filters?.allowedCounties || [],
+        allowedSectors: customer.filters?.allowedSectors || []
+      }
     };
     this.showEditModal = true;
   }
@@ -1481,8 +1778,74 @@ export class CustomerListComponent implements OnInit {
       name: '',
       email: '',
       phone: '',
-      company: ''
+      company: '',
+      filters: {
+        allowedCounties: [],
+        allowedSectors: []
+      }
     };
+  }
+
+  // Toggle filter selection
+  toggleCountyFilter(county: string) {
+    const index = this.editingCustomer.filters.allowedCounties.indexOf(county);
+    if (index === -1) {
+      this.editingCustomer.filters.allowedCounties.push(county);
+    } else {
+      this.editingCustomer.filters.allowedCounties.splice(index, 1);
+    }
+  }
+
+  toggleSectorFilter(sector: string) {
+    const index = this.editingCustomer.filters.allowedSectors.indexOf(sector);
+    if (index === -1) {
+      this.editingCustomer.filters.allowedSectors.push(sector);
+    } else {
+      this.editingCustomer.filters.allowedSectors.splice(index, 1);
+    }
+  }
+
+  isCountySelected(county: string): boolean {
+    return this.editingCustomer.filters.allowedCounties.includes(county);
+  }
+
+  isSectorSelected(sector: string): boolean {
+    return this.editingCustomer.filters.allowedSectors.includes(sector);
+  }
+
+  // Province quick-select methods
+  isProvinceFullySelected(province: { name: string; counties: string[] }): boolean {
+    return province.counties.every(county => 
+      this.editingCustomer.filters.allowedCounties.includes(county)
+    );
+  }
+
+  isProvincePartiallySelected(province: { name: string; counties: string[] }): boolean {
+    const selectedCount = province.counties.filter(county => 
+      this.editingCustomer.filters.allowedCounties.includes(county)
+    ).length;
+    return selectedCount > 0 && selectedCount < province.counties.length;
+  }
+
+  toggleProvinceFilter(province: { name: string; counties: string[] }) {
+    if (this.isProvinceFullySelected(province)) {
+      // Remove all counties in this province
+      this.editingCustomer.filters.allowedCounties = 
+        this.editingCustomer.filters.allowedCounties.filter(
+          (county: string) => !province.counties.includes(county)
+        );
+    } else {
+      // Add all counties in this province
+      province.counties.forEach(county => {
+        if (!this.editingCustomer.filters.allowedCounties.includes(county)) {
+          this.editingCustomer.filters.allowedCounties.push(county);
+        }
+      });
+    }
+  }
+
+  clearAllCountyFilters() {
+    this.editingCustomer.filters.allowedCounties = [];
   }
 
   saveCustomerEdit() {
@@ -1497,7 +1860,11 @@ export class CustomerListComponent implements OnInit {
       name: this.editingCustomer.name,
       email: this.editingCustomer.email,
       phone: this.editingCustomer.phone || undefined,
-      company: this.editingCustomer.company || undefined
+      company: this.editingCustomer.company || undefined,
+      filters: {
+        allowedCounties: this.editingCustomer.filters.allowedCounties,
+        allowedSectors: this.editingCustomer.filters.allowedSectors
+      }
     };
 
     this.customerService.updateCustomer(this.editingCustomer._id, updateData).subscribe({

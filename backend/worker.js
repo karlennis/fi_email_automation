@@ -19,10 +19,10 @@ if (!MONGODB_URI) {
 mongoose.connect(MONGODB_URI)
   .then(async () => {
     logger.info('✅ Worker connected to MongoDB');
-    
+
     // Initialize scan job processor scheduler (runs daily at 12:10 AM)
     await scanJobProcessor.initialize();
-    
+
     // Start the queue worker
     await startScanWorker();
   })

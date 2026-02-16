@@ -24,8 +24,8 @@ async function clearTargetDates() {
         // Also clear checkpoint dates to force fresh scan
         const checkpointResult = await mongoose.connection.db.collection('scanjobs').updateMany(
             {},
-            { 
-                $set: { 
+            {
+                $set: {
                     'checkpoint.lastProcessedIndex': 0,
                     'checkpoint.processedCount': 0,
                     'checkpoint.matchesFound': 0,

@@ -49,9 +49,9 @@ async function debugS3Dates(targetDateStr) {
             if (response.Contents) {
                 for (const object of response.Contents) {
                     totalScanned++;
-                    
+
                     if (!object.LastModified) continue;
-                    
+
                     // Get date string for grouping
                     const dateStr = object.LastModified.toISOString().split('T')[0];
                     dateCounts[dateStr] = (dateCounts[dateStr] || 0) + 1;
@@ -59,13 +59,13 @@ async function debugS3Dates(targetDateStr) {
                     // Check if in target range
                     if (object.LastModified >= startOfDay && object.LastModified <= endOfDay) {
                         const fileName = object.Key.split('/').pop();
-                        if (fileName && 
-                            !fileName.startsWith('.') && 
+                        if (fileName &&
+                            !fileName.startsWith('.') &&
                             fileName.includes('.') &&
                             fileName.toLowerCase() !== 'docfiles.txt' &&
                             (fileName.toLowerCase().endsWith('.pdf') || fileName.toLowerCase().endsWith('.docx'))) {
                             matchedInRange++;
-                            
+
                             // Store sample documents
                             if (sampleDocs.length < 10) {
                                 sampleDocs.push({
@@ -101,7 +101,7 @@ async function debugS3Dates(targetDateStr) {
         }
 
         console.log(`\n🎯 Documents matching ${targetDateStr}: ${matchedInRange}`);
-        
+
         if (sampleDocs.length > 0) {
             console.log('\n📄 Sample matched documents:');
             for (const doc of sampleDocs) {
