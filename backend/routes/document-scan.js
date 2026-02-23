@@ -15,7 +15,7 @@ const { enqueueScanJob } = require('../services/scanJobQueue');
 router.get('/jobs', authenticate, async (req, res) => {
   try {
     const jobs = await ScanJob.find()
-      .populate('customers.customerId', 'company email projectId')
+      .populate('customers.customerId', 'company email projectId filters')
       .sort({ createdAt: -1 });
 
     res.json({
@@ -207,7 +207,7 @@ router.post('/jobs/:jobId/run-now', authenticate, requireAdmin, async (req, res)
     });
 
     const job = await ScanJob.findOne({ jobId })
-      .populate('customers.customerId', 'email company name projectId');
+      .populate('customers.customerId', 'email company name projectId filters');
 
     if (!job) {
       return res.status(404).json({

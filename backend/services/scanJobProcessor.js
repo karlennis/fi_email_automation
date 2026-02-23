@@ -74,7 +74,7 @@ class ScanJobProcessor {
         try {
             // Get all active and running jobs
             const activeJobs = await ScanJob.find({ status: { $in: ['ACTIVE', 'RUNNING'] } })
-                .populate('customers.customerId', 'email company name projectId');
+                .populate('customers.customerId', 'email company name projectId filters');
 
             // Log all jobs for debugging
             const allJobs = await ScanJob.find({});
@@ -237,6 +237,22 @@ class ScanJobProcessor {
                 };
                 await job.save();
                 logger.info(`📧 Progress/summary emails will go to admin: ${adminEmail}`);
+            }
+
+            // Fix missing totalDocuments from older checkpoints
+            if (!job.checkpoint.totalDocuments || job.checkpoint.totalDocuments === 0) {
+                logger.info(`📊 Counting documents for resumed job (missing totalDocuments)...`);
+                const totalDocumentCount = await fastS3Scanner.countDocumentsSince(scanStartDate, scanEndDate);
+                job.checkpoint.totalDocuments = totalDocumentCount;
+                await job.save();
+                logger.info(`📊 Total documents set to ${totalDocumentCount}`);
+            }
+
+            // Fix missing scanStartTime from older checkpoints
+            if (!job.checkpoint.scanStartTime) {
+                job.checkpoint.scanStartTime = new Date();
+                await job.save();
+                logger.info(`⏰ Fixed missing scanStartTime for resumed job`);
             }
         } else {
             // COUNT TOTAL DOCUMENTS UPFRONT (once, not incrementally)
@@ -961,11 +977,22 @@ class ScanJobProcessor {
                     const email = customer.customerId.email;
 
                     if (!customerMatchesMap.has(email)) {
+                        // Get filters from customer document
+                        const customerFilters = customer.customerId.filters || {};
+                        const hasFilters = (customerFilters.allowedCounties?.length > 0) || (customerFilters.allowedSectors?.length > 0);
+                        
+                        // Debug log customer filter setup
+                        if (hasFilters) {
+                            logger.info(`📋 Customer ${email} loaded with filters - Counties: [${(customerFilters.allowedCounties || []).join(', ')}], Sectors: [${(customerFilters.allowedSectors || []).join(', ')}]`);
+                        } else {
+                            logger.debug(`📋 Customer ${email} has no subscription filters (receives all matches)`);
+                        }
+                        
                         customerMatchesMap.set(email, {
                             customerId: customer.customerId._id.toString(), // Store MongoDB _id for FIReport
                             email: email,
                             name: customer.customerId.name,
-                            filters: customer.customerId.filters || {}, // Store customer's subscription filters
+                            filters: customerFilters, // Store customer's subscription filters
                             matches: []
                         });
                     }

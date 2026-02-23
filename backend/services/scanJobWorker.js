@@ -8,7 +8,7 @@ async function processScanJob(job) {
   logger.info(`🧵 Worker picked up scan job: ${jobId}`);
 
   const scanJob = await ScanJob.findOne({ jobId })
-    .populate('customers.customerId', 'email company name projectId');
+    .populate('customers.customerId', 'email company name projectId filters');
 
   if (!scanJob) {
     throw new Error(`Scan job not found: ${jobId}`);

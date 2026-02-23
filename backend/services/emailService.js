@@ -632,29 +632,46 @@ class EmailService {
         return { success: false, reason: 'Template not found' };
       }
 
+      // Safely handle startTime - check if it's a valid date
+      let startTimeStr = 'N/A';
+      if (progressData.startTime) {
+        const startDate = new Date(progressData.startTime);
+        if (!isNaN(startDate.getTime())) {
+          startTimeStr = startDate.toLocaleString();
+        }
+      }
+
+      // Safely handle totalDocuments - prevent division by zero
+      const totalDocs = progressData.totalDocuments || 0;
+      const processedCount = progressData.processedCount || 0;
+      const progressPercentage = totalDocs > 0 
+        ? Math.round((processedCount / totalDocs) * 100) 
+        : 0;
+      const remainingCount = totalDocs > 0 ? totalDocs - processedCount : 0;
+
       const htmlContent = template({
         jobName: progressData.jobName,
         documentType: progressData.documentType,
-        startTime: new Date(progressData.startTime).toLocaleString(),
-        processedCount: progressData.processedCount.toLocaleString(),
-        totalDocuments: progressData.totalDocuments.toLocaleString(),
-        remainingCount: (progressData.totalDocuments - progressData.processedCount).toLocaleString(),
-        matchesFound: progressData.matchesFound,
-        lastProcessedFile: progressData.lastProcessedFile,
-        progressPercentage: Math.round((progressData.processedCount / progressData.totalDocuments) * 100),
+        startTime: startTimeStr,
+        processedCount: processedCount.toLocaleString(),
+        totalDocuments: totalDocs > 0 ? totalDocs.toLocaleString() : 'Counting...',
+        remainingCount: totalDocs > 0 ? remainingCount.toLocaleString() : 'Counting...',
+        matchesFound: progressData.matchesFound || 0,
+        lastProcessedFile: progressData.lastProcessedFile || 'N/A',
+        progressPercentage: progressPercentage,
         isCheckpoint: progressData.isCheckpoint
       });
 
       const mailOptions = {
         from: process.env.SMTP_USER,
         to: toEmails.join(', '),
-        subject: `Scan Progress: ${progressData.processedCount.toLocaleString()}/${progressData.totalDocuments.toLocaleString()} documents processed`,
+        subject: `Scan Progress: ${processedCount.toLocaleString()}/${totalDocs > 0 ? totalDocs.toLocaleString() : '?'} documents processed`,
         html: htmlContent
       };
 
       const result = await this.transporter.sendMail(mailOptions);
 
-      logger.info(`📧 Progress email sent to ${toEmails.length} recipients (${progressData.processedCount}/${progressData.totalDocuments} docs)`);
+      logger.info(`📧 Progress email sent to ${toEmails.length} recipients (${processedCount}/${totalDocs} docs)`);
 
       return {
         success: true,
