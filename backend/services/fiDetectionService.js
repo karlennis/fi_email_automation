@@ -455,17 +455,17 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
 
   /**
    * SELECTIVE REJECTION: Only reject files that are CLEARLY not FI requests/recommendations
-   * 
+   *
    * IMPORTANT: We do NOT reject based on:
    * - Email/correspondence patterns (may contain requests or recommendations)
    * - Consultation responses (may contain recommendations for future reports)
-   * 
+   *
    * We ONLY reject:
    * - Clear FI RESPONSES (applicant responding to FI request)
    * - Submitted reports (the actual report, not a request for one)
-   * 
+   *
    * Content analysis will determine if emails/correspondence contain valuable recommendations.
-   * 
+   *
    * @param {string} fileName - The filename to check
    * @returns {boolean} - true if file should be REJECTED (is clearly NOT an FI request/recommendation)
    */
@@ -520,7 +520,7 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
     ];
 
     const shouldReject = allRejectPatterns.some(pattern => filenameLower.includes(pattern));
-    
+
     if (shouldReject) {
       logger.info(`📛 Rejecting by filename pattern: ${fileName}`);
     }
@@ -582,7 +582,7 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
       "is required to submit",
       "must be submitted",
       "must provide",
-      
+
       // Alternative request language
       "the council requests",
       "the authority requests",
@@ -597,7 +597,7 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
       "should be undertaken",
       "assessment should be",
       "survey should be",
-      
+
       // Consultation recommendation patterns (valuable leads)
       "would recommend the applicant",
       "recommends the applicant",
@@ -620,24 +620,24 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
       "we have submitted", "we have provided", "the applicant has submitted",
       "in response to your request",
       "in response to the request",
-      
+
       // Decision patterns (planning decision made)
       "grant permission", "permission is granted", "conditions set out",
       "subject to conditions", "decision to grant", "decision: grant",
       "refuse permission", "decision to refuse",
       "we will condition", "this will be conditioned",
-      
+
       // Review of existing submission (not a new request)
       "acknowledge receipt", "acknowledges receipt",
       "has reviewed the submitted", "reviewed the submitted",
       "receipt of this application",
-      
+
       // NOTE: Email greetings/signatures NOT rejected - email may contain valid request
       // "good morning" + "please submit acoustic report" = valuable lead
-      
+
       // Extension/waiting patterns (not a request, just correspondence)
       "waiting until", "waiting to", "can we please agree",
-      
+
       // Submitted report discussion patterns (report ALREADY submitted - not a lead)
       "the submitted acoustic", "submitted noise assessment",
       "the acoustic report shows", "the noise report indicates",
@@ -645,13 +645,13 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
       "has received and reviewed", "received and reviewed the",
       "environmental health service has received",
       "environmental health has reviewed",
-      
+
       // FI received/fulfilled patterns (request already satisfied)
       "further information received", "fi received", "f.i. received",
       "further information has been received",
       "enclosed please find", "attached please find",
       "please find enclosed", "please find attached"
-      
+
       // NOTE: Consultation recommendations like "would recommend the applicant submits"
       // are NOT rejected - they indicate future report needs (valuable leads)
     ];
@@ -868,7 +868,7 @@ Answer with just YES or NO.`;
           }
         }
       }
-      
+
       logger.error('Error in cheap AI filter after 3 retries:', lastError);
       // On error, let it pass to full analysis (fail open)
       return true;
@@ -919,7 +919,7 @@ Answer with just YES or NO.`;
         "following your request for further information",
         "in response to your request",
         "in response to the request",
-        
+
         // FI received/fulfilled patterns
         "the further information received",
         "further information has been received",
@@ -929,7 +929,7 @@ Answer with just YES or NO.`;
         "attached herewith the further information",
         "enclosed please find", "attached please find",
         "please find enclosed", "please find attached",
-        
+
         // Decision patterns
         "permission is hereby granted",
         "it is proposed to grant permission",
@@ -937,24 +937,24 @@ Answer with just YES or NO.`;
         "it is proposed to refuse permission",
         "decision to refuse permission",
         "we will condition", "this will be conditioned",
-        
+
         // Consultant report indicators
         "were engaged to undertake",
         "were engaged by",
         "commissioned to undertake",
         "this report has been prepared by",
-        
+
         // Acknowledgment/receipt patterns
         "acknowledge receipt", "acknowledges receipt",
         "has reviewed the submitted", "reviewed the submitted",
         "receipt of this application",
-        
+
         // Email/correspondence patterns
         "good morning", "good afternoon", "good evening",
         "kind regards", "best regards",
         "happy to discuss", "please let me know",
         "waiting until", "waiting to", "can we please agree",
-        
+
         // Submitted report discussion patterns (report ALREADY submitted - not a lead)
         "the submitted acoustic", "submitted noise assessment",
         "the acoustic report shows", "the noise report indicates",
@@ -962,7 +962,7 @@ Answer with just YES or NO.`;
         "has received and reviewed", "received and reviewed the",
         "environmental health service has received",
         "environmental health has reviewed"
-        
+
         // NOTE: Consultation recommendations like "would recommend the applicant submits"
         // are NOT rejected - they indicate future report needs (valuable leads)
       ];
@@ -1093,7 +1093,7 @@ Answer with just YES or NO.`;
         const contextEnd = Math.min(sentences.length, i + 3);  // 2 sentences after
         const contextSentences = sentences.slice(contextStart, contextEnd);
         const quote = contextSentences.join(' ').trim();
-        
+
         // If quote is still very long, truncate intelligently at sentence boundary
         if (quote.length > 600) {
           // Keep the core matching sentence + immediate context
@@ -1115,7 +1115,7 @@ Answer with just YES or NO.`;
           const contextEnd = Math.min(sentences.length, i + 4);
           const contextSentences = sentences.slice(contextStart, contextEnd);
           const quote = contextSentences.join(' ').trim();
-          
+
           if (quote.length > 600) {
             return sentences.slice(i, Math.min(sentences.length, i + 3)).join(' ').trim();
           }
@@ -1131,17 +1131,17 @@ Answer with just YES or NO.`;
         // Find sentence boundaries for cleaner quote
         const sentenceStart = this.findSentenceStart(textLower, idx);
         const sentenceEnd = this.findSentenceEnd(textLower, idx);
-        
+
         // Expand to include adjacent sentences if not too long
         let start = sentenceStart;
         let end = sentenceEnd;
-        
+
         // Try to include next sentence for context
         const nextEnd = this.findSentenceEnd(textLower, end + 1);
         if (nextEnd - start < 500) {
           end = nextEnd;
         }
-        
+
         return documentText.substring(start, end).trim();
       }
     }
@@ -1785,6 +1785,7 @@ Answer with just YES or NO.`;
       logger.info(`   Breakdown by type: ${JSON.stringify(processingStats.matchesByReportType)}`);
 
       // Step 4: Group results by customer if customer data provided
+      // Apply county/sector filters based on each customer's subscription
       const customerMatches = {};
       if (customerData && customerData.length > 0) {
         // Create or find customer records in database
@@ -1793,28 +1794,72 @@ Answer with just YES or NO.`;
             // Find or create customer record in database
             const customerRecord = await this.findOrCreateCustomer(customer, reportTypes);
 
+            // Get customer's subscription filters
+            const allowedCounties = customerRecord.filters?.allowedCounties || [];
+            const allowedSectors = customerRecord.filters?.allowedSectors || [];
+            const hasActiveFilters = allowedCounties.length > 0 || allowedSectors.length > 0;
+
+            // Debug: Log customer filter settings
+            if (hasActiveFilters) {
+              logger.info(`🔍 ${customer.email} subscription filters - Counties: [${allowedCounties.join(', ')}], Sectors: [${allowedSectors.join(', ')}]`);
+            }
+
+            // Filter matches based on customer's subscription (county/sector)
+            let filteredMatches = [...docfilesMatches];
+
+            if (hasActiveFilters) {
+              const originalCount = filteredMatches.length;
+              filteredMatches = filteredMatches.filter(match => {
+                const projectCounty = match.planningCounty || match.projectMetadata?.planning_county;
+                const projectSector = match.planningSector || match.projectMetadata?.planning_sector;
+
+                // If no county/sector info, exclude (can't verify against active filters)
+                if (!projectCounty || projectCounty === 'Unknown' || projectCounty === 'N/A') {
+                  logger.warn(`⚠️ Project ${match.projectId}: No county data - EXCLUDING for ${customer.email}`);
+                  return false;
+                }
+
+                // County check: empty allowedCounties = no restriction
+                const countyOK = allowedCounties.length === 0 ||
+                  allowedCounties.some(county =>
+                    projectCounty.trim().toLowerCase() === county.trim().toLowerCase()
+                  );
+
+                // Sector check: empty allowedSectors = no restriction
+                const sectorOK = allowedSectors.length === 0 ||
+                  (projectSector && allowedSectors.some(sector =>
+                    projectSector.trim().toLowerCase() === sector.trim().toLowerCase()
+                  ));
+
+                // Debug: Log filtering decisions for projects that fail
+                if (!countyOK || !sectorOK) {
+                  logger.info(`🚫 Project ${match.projectId} (${projectCounty}/${projectSector}) EXCLUDED for ${customer.email} - countyOK: ${countyOK}, sectorOK: ${sectorOK}`);
+                }
+
+                return countyOK && sectorOK;
+              });
+
+              if (originalCount !== filteredMatches.length) {
+                logger.info(`📋 ${customer.email}: ${filteredMatches.length}/${originalCount} matches after applying subscription filters`);
+              }
+            }
+
             customerMatches[customer.email] = {
               email: customer.email,
               name: customerRecord.name,
-              matches: [],
+              matches: filteredMatches,
               customerId: customerRecord._id
             };
           } catch (error) {
             logger.error(`Failed to create/find customer ${customer.email}:`, error);
-            // Fallback to in-memory customer data
+            // Fallback to in-memory customer data - give all matches (no filter info available)
             customerMatches[customer.email] = {
               email: customer.email,
               name: customer.name || customer.email.split('@')[0],
-              matches: []
+              matches: [...docfilesMatches]
             };
           }
         }
-
-        // Give ALL matches to ALL customers (each customer subscribed to these report types)
-        const customerEmails = Object.keys(customerMatches);
-        customerEmails.forEach(email => {
-          customerMatches[email].matches = [...docfilesMatches];
-        });
       }
 
       // Step 5: Save FI reports to database if requested

@@ -1023,12 +1023,29 @@ class ScanJobProcessor {
                 const customerFilters = customerData.filters || {};
                 const allowedCounties = customerFilters.allowedCounties || [];
                 const allowedSectors = customerFilters.allowedSectors || [];
+                const hasActiveFilters = allowedCounties.length > 0 || allowedSectors.length > 0;
+
+                // Debug: Log customer filter settings
+                if (hasActiveFilters) {
+                    logger.info(`🔍 ${customerData.email} subscription filters - Counties: [${allowedCounties.join(', ')}], Sectors: [${allowedSectors.join(', ')}]`);
+                }
 
                 // Filter matches based on customer's subscription
                 const originalCount = customerData.matches.length;
                 customerData.matches = customerData.matches.filter(match => {
                     const metadata = match.projectMetadata;
-                    if (!metadata) return true; // No metadata = include (can't filter)
+                    
+                    // If no filters set, include all projects
+                    if (!hasActiveFilters) return true;
+                    
+                    // Debug: Log what we're filtering
+                    const projectCounty = metadata?.planning_county || 'NO_METADATA';
+                    const projectSector = metadata?.planning_sector || 'NO_METADATA';
+                    
+                    if (!metadata) {
+                        logger.warn(`⚠️ Project ${match.projectId}: No metadata - EXCLUDING (can't verify against active filters)`);
+                        return false; // Exclude if no metadata when filters are active
+                    }
 
                     // County check: empty allowedCounties = no restriction
                     // Use trim() to handle trailing spaces from API
@@ -1044,6 +1061,11 @@ class ScanJobProcessor {
                             metadata.planning_sector &&
                             metadata.planning_sector.trim().toLowerCase() === sector.trim().toLowerCase()
                         );
+
+                    // Debug: Log filtering decisions for projects that fail
+                    if (!countyOK || !sectorOK) {
+                        logger.info(`🚫 Project ${match.projectId} (${projectCounty}/${projectSector}) EXCLUDED for ${customerData.email} - countyOK: ${countyOK}, sectorOK: ${sectorOK}`);
+                    }
 
                     return countyOK && sectorOK;
                 });
