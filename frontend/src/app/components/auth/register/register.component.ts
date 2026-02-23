@@ -107,15 +107,15 @@ import { ToastrService } from 'ngx-toastr';
       display: flex;
       align-items: center;
       justify-content: center;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
       padding: 20px;
     }
 
     .register-card {
-      background: white;
+      background: var(--bg-card);
       padding: 2rem;
       border-radius: 8px;
-      box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+      box-shadow: var(--shadow-lg);
       width: 100%;
       max-width: 400px;
     }
@@ -127,13 +127,13 @@ import { ToastrService } from 'ngx-toastr';
 
     .register-header h2 {
       margin: 0 0 0.5rem 0;
-      color: #333;
+      color: var(--text-primary);
       font-size: 1.8rem;
     }
 
     .register-header p {
       margin: 0;
-      color: #666;
+      color: var(--text-secondary);
       font-size: 0.9rem;
     }
 
@@ -144,32 +144,34 @@ import { ToastrService } from 'ngx-toastr';
     .form-group label {
       display: block;
       margin-bottom: 0.5rem;
-      color: #333;
+      color: var(--text-primary);
       font-weight: 500;
     }
 
     .form-control {
       width: 100%;
       padding: 0.75rem;
-      border: 1px solid #ddd;
+      border: 1px solid var(--border-color);
       border-radius: 4px;
       font-size: 1rem;
       transition: border-color 0.3s, box-shadow 0.3s;
       box-sizing: border-box;
+      background: var(--bg-input);
+      color: var(--text-primary);
     }
 
     .form-control:focus {
       outline: none;
-      border-color: #667eea;
-      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-light);
     }
 
     .form-control.error {
-      border-color: #e74c3c;
+      border-color: var(--error);
     }
 
     .error-message {
-      color: #e74c3c;
+      color: var(--error);
       font-size: 0.8rem;
       margin-top: 0.25rem;
     }
@@ -188,17 +190,17 @@ import { ToastrService } from 'ngx-toastr';
     }
 
     .btn-primary {
-      background: #667eea;
+      background: var(--primary);
       color: white;
     }
 
     .btn-primary:hover:not(:disabled) {
-      background: #5a6fd8;
+      background: var(--primary-hover);
       transform: translateY(-1px);
     }
 
     .btn-primary:disabled {
-      background: #ccc;
+      opacity: 0.6;
       cursor: not-allowed;
       transform: none;
     }
@@ -226,17 +228,17 @@ import { ToastrService } from 'ngx-toastr';
       text-align: center;
       margin-top: 2rem;
       padding-top: 1rem;
-      border-top: 1px solid #eee;
+      border-top: 1px solid var(--border-light);
     }
 
     .register-footer p {
       margin: 0;
-      color: #666;
+      color: var(--text-secondary);
       font-size: 0.9rem;
     }
 
     .link {
-      color: #667eea;
+      color: var(--primary);
       text-decoration: none;
       font-weight: 500;
     }

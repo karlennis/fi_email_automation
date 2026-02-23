@@ -328,6 +328,8 @@ import { AuthService } from '../../services/auth.service';
       max-width: 1200px;
       margin: 0 auto;
       padding: 20px;
+      background: var(--bg-primary);
+      min-height: calc(100vh - 56px);
     }
 
     .page-header {
@@ -335,12 +337,12 @@ import { AuthService } from '../../services/auth.service';
     }
 
     .page-header h1 {
-      color: #2c3e50;
+      color: var(--text-primary);
       margin-bottom: 10px;
     }
 
     .page-header p {
-      color: #7f8c8d;
+      color: var(--text-secondary);
       margin: 0;
     }
 
@@ -362,16 +364,18 @@ import { AuthService } from '../../services/auth.service';
     .search-input,
     .filter-select {
       padding: 10px;
-      border: 2px solid #e3e6ea;
+      border: 2px solid var(--border-color);
       border-radius: 8px;
       font-size: 14px;
       transition: border-color 0.3s ease;
+      background: var(--bg-input);
+      color: var(--text-primary);
     }
 
     .search-input:focus,
     .filter-select:focus {
       outline: none;
-      border-color: #4f46e5;
+      border-color: var(--primary);
     }
 
     .search-input {
@@ -383,11 +387,12 @@ import { AuthService } from '../../services/auth.service';
     }
 
     .table-container {
-      background: white;
+      background: var(--bg-card);
       border-radius: 12px;
-      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
+      box-shadow: var(--shadow-sm);
       overflow: hidden;
       margin-bottom: 20px;
+      border: 1px solid var(--border-light);
     }
 
     .users-table {
@@ -396,22 +401,22 @@ import { AuthService } from '../../services/auth.service';
     }
 
     .users-table th {
-      background: #f8fafc;
+      background: var(--bg-secondary);
       padding: 15px;
       text-align: left;
       font-weight: 600;
-      color: #374151;
-      border-bottom: 2px solid #e5e7eb;
+      color: var(--text-primary);
+      border-bottom: 2px solid var(--border-color);
     }
 
     .users-table td {
       padding: 15px;
-      border-bottom: 1px solid #e5e7eb;
+      border-bottom: 1px solid var(--border-color);
       vertical-align: middle;
     }
 
     .users-table tr:hover {
-      background-color: #f9fafb;
+      background-color: var(--bg-secondary);
     }
 
     .users-table tr.inactive {
@@ -428,7 +433,7 @@ import { AuthService } from '../../services/auth.service';
       width: 40px;
       height: 40px;
       border-radius: 50%;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
       color: white;
       display: flex;
       align-items: center;
@@ -439,12 +444,12 @@ import { AuthService } from '../../services/auth.service';
 
     .user-name {
       font-weight: 500;
-      color: #374151;
+      color: var(--text-primary);
     }
 
     .user-title {
       font-size: 12px;
-      color: #9ca3af;
+      color: var(--text-secondary);
     }
 
     .role-badge {
@@ -456,13 +461,13 @@ import { AuthService } from '../../services/auth.service';
     }
 
     .role-badge.admin {
-      background: #fef3c7;
-      color: #92400e;
+      background: var(--warning-bg);
+      color: var(--warning-text);
     }
 
     .role-badge.operator {
-      background: #dbeafe;
-      color: #1e40af;
+      background: var(--primary-light);
+      color: var(--primary);
     }
 
     .status-badge {
@@ -473,13 +478,13 @@ import { AuthService } from '../../services/auth.service';
     }
 
     .status-badge.active {
-      background: #d1fae5;
-      color: #065f46;
+      background: var(--success-bg);
+      color: var(--success-text);
     }
 
     .status-badge.inactive {
-      background: #fee2e2;
-      color: #991b1b;
+      background: var(--error-bg);
+      color: var(--error-text);
     }
 
     .action-buttons {
@@ -502,7 +507,7 @@ import { AuthService } from '../../services/auth.service';
     }
 
     .page-info {
-      color: #6b7280;
+      color: var(--text-secondary);
       font-size: 14px;
     }
 
@@ -521,7 +526,7 @@ import { AuthService } from '../../services/auth.service';
     }
 
     .modal-content {
-      background: white;
+      background: var(--bg-card);
       border-radius: 12px;
       width: 90%;
       max-width: 500px;
@@ -539,7 +544,7 @@ import { AuthService } from '../../services/auth.service';
 
     .modal-header h3 {
       margin: 0;
-      color: #374151;
+      color: var(--text-primary);
     }
 
     .close-btn {
@@ -547,7 +552,7 @@ import { AuthService } from '../../services/auth.service';
       border: none;
       font-size: 24px;
       cursor: pointer;
-      color: #9ca3af;
+      color: var(--text-secondary);
       padding: 0;
       width: 30px;
       height: 30px;
@@ -558,8 +563,8 @@ import { AuthService } from '../../services/auth.service';
     }
 
     .close-btn:hover {
-      background: #f3f4f6;
-      color: #374151;
+      background: var(--bg-secondary);
+      color: var(--text-primary);
     }
 
     .form-group {
@@ -571,36 +576,38 @@ import { AuthService } from '../../services/auth.service';
       display: block;
       margin-bottom: 8px;
       font-weight: 500;
-      color: #374151;
+      color: var(--text-primary);
     }
 
     .form-control {
       width: 100%;
       padding: 10px 12px;
-      border: 2px solid #e5e7eb;
+      border: 2px solid var(--border-color);
       border-radius: 8px;
       font-size: 14px;
       transition: border-color 0.3s ease;
       box-sizing: border-box;
+      background: var(--bg-input);
+      color: var(--text-primary);
     }
 
     .form-control:focus {
       outline: none;
-      border-color: #4f46e5;
+      border-color: var(--primary);
     }
 
     .form-control.error {
-      border-color: #ef4444;
+      border-color: var(--error);
     }
 
     .error-message {
-      color: #ef4444;
+      color: var(--error);
       font-size: 12px;
       margin-top: 5px;
     }
 
     .help-text {
-      color: #6b7280;
+      color: var(--text-secondary);
       font-size: 12px;
       margin-top: 5px;
       display: block;
@@ -621,7 +628,7 @@ import { AuthService } from '../../services/auth.service';
 
     .modal-actions {
       padding: 20px;
-      border-top: 1px solid #e5e7eb;
+      border-top: 1px solid var(--border-color);
       display: flex;
       justify-content: flex-end;
       gap: 12px;
@@ -645,32 +652,32 @@ import { AuthService } from '../../services/auth.service';
     }
 
     .btn-primary {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
+      background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+      color: var(--text-inverse);
     }
 
     .btn-primary:hover:not(:disabled) {
       transform: translateY(-1px);
-      box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+      box-shadow: var(--shadow-lg);
     }
 
     .btn-secondary {
-      background: #f3f4f6;
-      color: #374151;
-      border: 2px solid #e5e7eb;
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      border: 2px solid var(--border-color);
     }
 
     .btn-secondary:hover:not(:disabled) {
-      background: #e5e7eb;
+      background: var(--border-color);
     }
 
     .btn-warning {
-      background: #fbbf24;
-      color: #92400e;
+      background: var(--warning);
+      color: var(--warning-btn-text);
     }
 
     .btn-warning:hover:not(:disabled) {
-      background: #f59e0b;
+      filter: brightness(0.9);
     }
 
     .btn-primary:disabled,
@@ -692,7 +699,7 @@ import { AuthService } from '../../services/auth.service';
       left: 0;
       width: 100vw;
       height: 100vh;
-      background: rgba(255, 255, 255, 0.8);
+      background: var(--modal-overlay);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -702,8 +709,8 @@ import { AuthService } from '../../services/auth.service';
     .spinner {
       width: 40px;
       height: 40px;
-      border: 4px solid #e5e7eb;
-      border-top: 4px solid #4f46e5;
+      border: 4px solid var(--border-color);
+      border-top: 4px solid var(--primary);
       border-radius: 50%;
       animation: spin 1s linear infinite;
     }

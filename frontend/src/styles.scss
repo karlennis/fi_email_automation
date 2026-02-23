@@ -1,15 +1,197 @@
 /* You can add global styles to this file, and also import other style files */
 @import 'ngx-toastr/toastr';
 
+/* Theme Variables - Light Mode (default) */
+:root {
+  /* Primary colors */
+  --primary: #667eea;
+  --primary-light: rgba(102, 126, 234, 0.1);
+  --primary-hover: #5a6fd6;
+  --accent: #764ba2;
+  
+  /* Background colors */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8f9fa;
+  --bg-tertiary: #f0f0f0;
+  --bg-card: #ffffff;
+  --bg-input: #ffffff;
+  
+  /* Text colors */
+  --text-primary: #1a1a2e;
+  --text-secondary: #666666;
+  --text-muted: #999999;
+  --text-inverse: #ffffff;
+  
+  /* Border colors */
+  --border-color: #e0e0e0;
+  --border-light: #f0f0f0;
+  
+  /* Status colors */
+  --success: #4caf50;
+  --success-bg: #e8f5e9;
+  --success-text: #2e7d32;
+  --warning: #ff9800;
+  --warning-bg: #fff3e0;
+  --warning-text: #e65100;
+  --warning-btn-text: #1a1a1a;
+  --error: #f44336;
+  --error-bg: #ffebee;
+  --error-text: #c62828;
+  --info: #17a2b8;
+  --info-bg: #e0f7fa;
+  --info-text: #006064;
+  
+  /* Shadows */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+  
+  /* Modal */
+  --modal-overlay: rgba(255, 255, 255, 0.8);
+  
+  /* Accent section */
+  --accent-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --accent-section-text: #ffffff;
+  
+  /* Navbar specific */
+  --navbar-bg: #1a1a2e;
+  --navbar-text: #ffffff;
+  --navbar-text-muted: rgba(255, 255, 255, 0.7);
+  --navbar-border: rgba(255, 255, 255, 0.08);
+  --navbar-hover: rgba(255, 255, 255, 0.08);
+  --navbar-active: rgba(255, 255, 255, 0.12);
+}
+
+/* Dark Mode */
+:root.dark-mode {
+  /* Primary colors */
+  --primary: #818cf8;
+  --primary-light: rgba(129, 140, 248, 0.15);
+  --primary-hover: #6366f1;
+  --accent: #a78bfa;
+  
+  /* Background colors */
+  --bg-primary: #0f0f0f;
+  --bg-secondary: #1a1a1a;
+  --bg-tertiary: #252525;
+  --bg-card: #1e1e1e;
+  --bg-input: #2a2a2a;
+  
+  /* Text colors */
+  --text-primary: #f0f0f0;
+  --text-secondary: #a0a0a0;
+  --text-muted: #707070;
+  --text-inverse: #0f0f0f;
+  
+  /* Border colors */
+  --border-color: #333333;
+  --border-light: #2a2a2a;
+  
+  /* Status colors - simpler for dark mode */
+  --success: #22c55e;
+  --success-bg: rgba(34, 197, 94, 0.15);
+  --success-text: #22c55e;
+  --warning: #f59e0b;
+  --warning-bg: rgba(245, 158, 11, 0.15);
+  --warning-text: #f59e0b;
+  --warning-btn-text: #1a1a1a;
+  --error: #ef4444;
+  --error-bg: rgba(239, 68, 68, 0.15);
+  --error-text: #ef4444;
+  --info: #06b6d4;
+  --info-bg: rgba(6, 182, 212, 0.15);
+  --info-text: #06b6d4;
+  
+  /* Shadows */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+  
+  /* Modal */
+  --modal-overlay: rgba(0, 0, 0, 0.7);
+  
+  /* Accent section - more subtle for dark mode */
+  --accent-gradient: linear-gradient(135deg, rgba(129, 140, 248, 0.2) 0%, rgba(167, 139, 250, 0.2) 100%);
+  --accent-section-text: var(--text-primary);
+  
+  /* Navbar specific */
+  --navbar-bg: #0a0a0a;
+  --navbar-text: #ffffff;
+  --navbar-text-muted: rgba(255, 255, 255, 0.6);
+  --navbar-border: rgba(255, 255, 255, 0.06);
+  --navbar-hover: rgba(255, 255, 255, 0.08);
+  --navbar-active: rgba(255, 255, 255, 0.12);
+}
+
 /* Basic reset */
 body, html {
   margin: 0;
   padding: 0;
-  font-family: Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 /* Make sure the app-root takes up full height */
 app-root {
   display: block;
   min-height: 100vh;
+  background-color: var(--bg-primary);
+}
+
+/* Global button styles */
+.btn {
+  font-family: inherit;
+  font-weight: 500;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: none;
+  padding: 10px 20px;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+  color: white;
+  box-shadow: var(--shadow-sm);
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.btn-secondary {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}
+
+.btn-secondary:hover {
+  background: var(--border-color);
+}
+
+/* Card styles */
+.card {
+  background: var(--bg-card);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-light);
+}
+
+/* Form controls */
+.form-control {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: 8px;
+  padding: 10px 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.form-control:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-light);
 }

@@ -609,7 +609,7 @@ import { environment } from '../../../../environments/environment';
 
     .page-header h1 {
       margin: 0;
-      color: #333;
+      color: var(--text-primary);
       font-size: 2rem;
     }
 
@@ -628,45 +628,45 @@ import { environment } from '../../../../environments/environment';
     }
 
     .btn-primary {
-      background: #667eea;
-      color: white;
+      background: var(--primary);
+      color: var(--text-inverse);
     }
 
     .btn-primary:hover {
-      background: #5a6fd8;
+      background: var(--primary-hover);
     }
 
     .btn-secondary {
-      background: #6c757d;
-      color: white;
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
     }
 
     .btn-success {
-      background: #28a745;
-      color: white;
+      background: var(--success);
+      color: var(--text-inverse);
     }
 
     .btn-warning {
-      background: #ffc107;
-      color: #212529;
+      background: var(--warning);
+      color: var(--warning-btn-text);
     }
 
     .btn-danger {
-      background: #dc3545;
-      color: white;
+      background: var(--error);
+      color: var(--text-inverse);
     }
 
     .btn-danger:hover {
-      background: #c82333;
+      filter: brightness(0.9);
     }
 
     .btn-info {
-      background: #17a2b8;
-      color: white;
+      background: var(--info);
+      color: var(--text-inverse);
     }
 
     .btn-info:hover {
-      background: #138496;
+      filter: brightness(0.9);
     }
 
     .btn-sm {
@@ -682,14 +682,14 @@ import { environment } from '../../../../environments/environment';
     .loading {
       text-align: center;
       padding: 3rem;
-      color: #666;
+      color: var(--text-secondary);
     }
 
     .spinner {
       width: 24px;
       height: 24px;
-      border: 2px solid #e9ecef;
-      border-top: 2px solid #667eea;
+      border: 2px solid var(--border-color);
+      border-top: 2px solid var(--primary);
       border-radius: 50%;
       animation: spin 1s linear infinite;
       margin: 0 auto 1rem;
@@ -713,10 +713,11 @@ import { environment } from '../../../../environments/environment';
     }
 
     .customer-card {
-      background: white;
+      background: var(--bg-card);
       border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      box-shadow: var(--shadow-md);
       overflow: hidden;
+      border: 1px solid var(--border-color);
     }
 
     .card-header {
@@ -724,18 +725,18 @@ import { environment } from '../../../../environments/environment';
       justify-content: space-between;
       align-items: center;
       padding: 1.5rem;
-      background: #f8f9fa;
-      border-bottom: 1px solid #e9ecef;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-color);
     }
 
     .customer-info h3 {
       margin: 0 0 0.25rem 0;
-      color: #333;
+      color: var(--text-primary);
       font-size: 1.3rem;
     }
 
     .customer-email {
-      color: #666;
+      color: var(--text-secondary);
       font-size: 0.9rem;
     }
 
@@ -748,13 +749,13 @@ import { environment } from '../../../../environments/environment';
     }
 
     .status-active {
-      background: #d4edda;
-      color: #155724;
+      background: var(--success-bg);
+      color: var(--success-text);
     }
 
     .status-inactive {
-      background: #f8d7da;
-      color: #721c24;
+      background: var(--error-bg);
+      color: var(--error-text);
     }
 
     .card-body {
@@ -773,17 +774,17 @@ import { environment } from '../../../../environments/environment';
 
     .detail-label {
       font-weight: 500;
-      color: #666;
+      color: var(--text-secondary);
       min-width: 60px;
     }
 
     .detail-value {
-      color: #333;
+      color: var(--text-primary);
     }
 
     .subscriptions h4 {
       margin: 0 0 0.75rem 0;
-      color: #333;
+      color: var(--text-primary);
       font-size: 1rem;
     }
 
@@ -794,8 +795,8 @@ import { environment } from '../../../../environments/environment';
     }
 
     .subscription-tag {
-      background: #e7f3ff;
-      color: #0366d6;
+      background: var(--primary-light);
+      color: var(--primary);
       padding: 0.25rem 0.5rem;
       border-radius: 4px;
       font-size: 0.8rem;
@@ -807,8 +808,8 @@ import { environment } from '../../../../environments/environment';
       justify-content: space-between;
       align-items: center;
       padding: 1rem 1.5rem;
-      background: #f8f9fa;
-      border-top: 1px solid #e9ecef;
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--border-color);
     }
 
     .customer-dates {
@@ -820,7 +821,7 @@ import { environment } from '../../../../environments/environment';
     .created-date,
     .notification-date {
       font-size: 0.8rem;
-      color: #666;
+      color: var(--text-secondary);
     }
 
     .card-actions {
@@ -845,12 +846,12 @@ import { environment } from '../../../../environments/environment';
 
     .no-customers h3 {
       margin: 0 0 1rem 0;
-      color: #333;
+      color: var(--text-primary);
     }
 
     .no-customers p {
       margin: 0 0 2rem 0;
-      color: #666;
+      color: var(--text-secondary);
       line-height: 1.6;
     }
 
@@ -861,7 +862,7 @@ import { environment } from '../../../../environments/environment';
       left: 0;
       width: 100%;
       height: 100%;
-      background: rgba(0, 0, 0, 0.5);
+      background: var(--modal-overlay);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -869,7 +870,7 @@ import { environment } from '../../../../environments/environment';
     }
 
     .modal-content {
-      background: white;
+      background: var(--bg-card);
       border-radius: 8px;
       width: 90%;
       max-width: 500px;
@@ -882,12 +883,12 @@ import { environment } from '../../../../environments/environment';
       justify-content: space-between;
       align-items: center;
       padding: 1.5rem;
-      border-bottom: 1px solid #e9ecef;
+      border-bottom: 1px solid var(--border-color);
     }
 
     .modal-header h2 {
       margin: 0;
-      color: #333;
+      color: var(--text-primary);
     }
 
     .close-btn {
@@ -895,7 +896,7 @@ import { environment } from '../../../../environments/environment';
       border: none;
       font-size: 1.5rem;
       cursor: pointer;
-      color: #666;
+      color: var(--text-secondary);
       padding: 0;
       width: 30px;
       height: 30px;
@@ -905,7 +906,7 @@ import { environment } from '../../../../environments/environment';
     }
 
     .close-btn:hover {
-      color: #333;
+      color: var(--text-primary);
     }
 
     .modal-body {
@@ -914,7 +915,7 @@ import { environment } from '../../../../environments/environment';
 
     .modal-footer {
       padding: 1rem 1.5rem;
-      border-top: 1px solid #e9ecef;
+      border-top: 1px solid var(--border-color);
       display: flex;
       justify-content: flex-end;
       gap: 1rem;
@@ -958,45 +959,45 @@ import { environment } from '../../../../environments/environment';
 
     .customer-name {
       font-weight: bold;
-      color: #2c3e50;
+      color: var(--text-primary);
     }
 
     .customer-email {
       font-size: 0.9rem;
-      color: #6c757d;
+      color: var(--text-secondary);
     }
 
     .loading-spinner {
       text-align: center;
       padding: 40px;
       font-size: 1.1rem;
-      color: #6c757d;
+      color: var(--text-secondary);
     }
 
     .empty-state {
       text-align: center;
       padding: 60px;
       font-size: 1.1rem;
-      color: #6c757d;
+      color: var(--text-secondary);
     }
 
     .reports-summary {
       margin-bottom: 20px;
       padding-bottom: 15px;
-      border-bottom: 2px solid #e9ecef;
+      border-bottom: 2px solid var(--border-color);
     }
 
     .reports-summary h3 {
       margin: 0;
-      color: #2c3e50;
+      color: var(--text-primary);
     }
 
     .report-card {
-      border: 1px solid #e9ecef;
+      border: 1px solid var(--border-color);
       border-radius: 8px;
       padding: 20px;
       margin-bottom: 15px;
-      background: #f8f9fa;
+      background: var(--bg-secondary);
     }
 
     .report-header {
@@ -1008,12 +1009,12 @@ import { environment } from '../../../../environments/environment';
 
     .report-info h4 {
       margin: 0 0 5px 0;
-      color: #2c3e50;
+      color: var(--text-primary);
     }
 
     .report-id {
       font-size: 0.8rem;
-      color: #6c757d;
+      color: var(--text-secondary);
       font-family: monospace;
     }
 
@@ -1026,18 +1027,18 @@ import { environment } from '../../../../environments/environment';
     }
 
     .badge-sent {
-      background: #d4edda;
-      color: #155724;
+      background: var(--success-bg);
+      color: var(--success-text);
     }
 
     .badge-failed {
-      background: #f8d7da;
-      color: #721c24;
+      background: var(--error-bg);
+      color: var(--error-text);
     }
 
     .badge-pending {
-      background: #fff3cd;
-      color: #856404;
+      background: var(--warning-bg);
+      color: var(--warning-text);
     }
 
     .report-stats {
@@ -1055,25 +1056,25 @@ import { environment } from '../../../../environments/environment';
 
     .stat-label {
       font-size: 0.8rem;
-      color: #6c757d;
+      color: var(--text-secondary);
       font-weight: 500;
     }
 
     .stat-value {
       font-weight: 600;
-      color: #2c3e50;
+      color: var(--text-primary);
     }
 
     .status-success {
-      color: #28a745;
+      color: var(--success);
     }
 
     .status-failed {
-      color: #dc3545;
+      color: var(--error);
     }
 
     .status-pending {
-      color: #ffc107;
+      color: var(--warning);
     }
 
     .report-actions {
@@ -1083,17 +1084,17 @@ import { environment } from '../../../../environments/environment';
     }
 
     .report-summary {
-      background: #f8f9fa;
+      background: var(--bg-secondary);
       padding: 15px;
       border-radius: 6px;
       margin-bottom: 20px;
-      border-left: 4px solid #007bff;
+      border-left: 4px solid var(--primary);
     }
 
     .projects-count {
       display: block;
       font-size: 0.9rem;
-      color: #6c757d;
+      color: var(--text-secondary);
       margin-top: 5px;
     }
 
@@ -1112,22 +1113,24 @@ import { environment } from '../../../../environments/environment';
       display: block;
       margin-bottom: 8px;
       font-weight: 600;
-      color: #495057;
+      color: var(--text-primary);
     }
 
     .form-control {
       width: 100%;
       padding: 10px 12px;
-      border: 1px solid #ced4da;
+      border: 1px solid var(--border-color);
       border-radius: 6px;
       font-size: 1rem;
       transition: border-color 0.15s ease-in-out;
+      background: var(--bg-input);
+      color: var(--text-primary);
     }
 
     .form-control:focus {
       outline: none;
-      border-color: #007bff;
-      box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px var(--primary-light);
     }
 
     /* Edit and Delete Modal Styles */
@@ -1139,12 +1142,12 @@ import { environment } from '../../../../environments/environment';
       display: block;
       margin-bottom: 0.5rem;
       font-weight: 500;
-      color: #333;
+      color: var(--text-primary);
     }
 
     .modal-danger .modal-header {
-      background: #f8d7da;
-      border-bottom-color: #dc3545;
+      background: var(--error-bg);
+      border-bottom-color: var(--error);
     }
 
     .warning-message {
@@ -1158,12 +1161,12 @@ import { environment } from '../../../../environments/environment';
     }
 
     .warning-message h3 {
-      color: #dc3545;
+      color: var(--error);
       margin-bottom: 1rem;
     }
 
     .customer-details {
-      background: #f8f9fa;
+      background: var(--bg-secondary);
       padding: 1rem;
       border-radius: 4px;
       margin: 1rem 0;
@@ -1174,8 +1177,8 @@ import { environment } from '../../../../environments/environment';
       text-align: left;
       margin-top: 1.5rem;
       padding: 1rem;
-      background: #fff3cd;
-      border-left: 4px solid #ffc107;
+      background: var(--warning-bg);
+      border-left: 4px solid var(--warning);
       border-radius: 4px;
     }
 
@@ -1190,7 +1193,7 @@ import { environment } from '../../../../environments/environment';
 
     .danger-note {
       margin-top: 1rem;
-      color: #dc3545;
+      color: var(--error);
       font-size: 1.1rem;
     }
 
@@ -1243,7 +1246,7 @@ import { environment } from '../../../../environments/environment';
     .subscription-filters {
       margin-top: 0.75rem;
       padding-top: 0.75rem;
-      border-top: 1px solid #e9ecef;
+      border-top: 1px solid var(--border-color);
     }
 
     .filter-badges {
@@ -1261,7 +1264,7 @@ import { environment } from '../../../../environments/environment';
 
     .filter-label {
       font-size: 0.75rem;
-      color: #666;
+      color: var(--text-secondary);
       font-weight: 500;
       min-width: 60px;
     }
@@ -1275,18 +1278,18 @@ import { environment } from '../../../../environments/environment';
     }
 
     .filter-badge.county {
-      background: #e7f3ff;
-      color: #0366d6;
+      background: var(--primary-light);
+      color: var(--primary);
     }
 
     .filter-badge.sector {
-      background: #faf3e0;
-      color: #b8860b;
+      background: var(--warning-bg);
+      color: var(--warning-text);
     }
 
     .filter-badge.all {
-      background: #d4edda;
-      color: #155724;
+      background: var(--success-bg);
+      color: var(--success-text);
     }
 
     .no-restrictions {
@@ -1297,21 +1300,21 @@ import { environment } from '../../../../environments/environment';
     .filter-section {
       margin-top: 1.5rem;
       padding: 1rem;
-      background: #f8f9fa;
+      background: var(--bg-secondary);
       border-radius: 8px;
-      border: 1px solid #e9ecef;
+      border: 1px solid var(--border-color);
     }
 
     .filter-section h4 {
       margin: 0 0 0.5rem 0;
-      color: #333;
+      color: var(--text-primary);
       font-size: 1rem;
     }
 
     .filter-help {
       margin: 0 0 1rem 0;
       font-size: 0.85rem;
-      color: #666;
+      color: var(--text-secondary);
     }
 
     .filter-chips {
@@ -1321,9 +1324,9 @@ import { environment } from '../../../../environments/environment';
       max-height: 200px;
       overflow-y: auto;
       padding: 0.5rem;
-      background: white;
+      background: var(--bg-input);
       border-radius: 4px;
-      border: 1px solid #e9ecef;
+      border: 1px solid var(--border-color);
     }
 
     .filter-chip {
@@ -1331,21 +1334,21 @@ import { environment } from '../../../../environments/environment';
       border-radius: 16px;
       font-size: 0.8rem;
       font-weight: 500;
-      border: 1px solid #ddd;
-      background: white;
-      color: #666;
+      border: 1px solid var(--border-color);
+      background: var(--bg-card);
+      color: var(--text-secondary);
       cursor: pointer;
       transition: all 0.2s ease;
     }
 
     .filter-chip:hover:not(:disabled) {
-      background: #f0f0f0;
+      background: var(--bg-tertiary);
     }
 
     .filter-chip.selected {
-      background: #0366d6;
-      color: white;
-      border-color: #0366d6;
+      background: var(--primary);
+      color: var(--text-inverse);
+      border-color: var(--primary);
     }
 
     .filter-chip.sector.selected {
@@ -1371,38 +1374,38 @@ import { environment } from '../../../../environments/environment';
       border-radius: 6px;
       font-size: 0.85rem;
       font-weight: 500;
-      border: 2px solid #28a745;
-      background: white;
-      color: #28a745;
+      border: 2px solid var(--success);
+      background: var(--bg-card);
+      color: var(--success);
       cursor: pointer;
       transition: all 0.2s ease;
     }
 
     .province-btn:hover:not(:disabled) {
-      background: #e8f5e9;
+      background: var(--success-bg);
     }
 
     .province-btn.selected {
-      background: #28a745;
-      color: white;
+      background: var(--success);
+      color: var(--text-inverse);
     }
 
     .province-btn.partial {
-      background: linear-gradient(135deg, #28a745 50%, white 50%);
-      color: #28a745;
+      background: linear-gradient(135deg, var(--success) 50%, var(--bg-card) 50%);
+      color: var(--success);
     }
 
     .province-btn.partial:hover {
-      background: linear-gradient(135deg, #28a745 50%, #e8f5e9 50%);
+      background: linear-gradient(135deg, var(--success) 50%, var(--success-bg) 50%);
     }
 
     .clear-btn {
-      border-color: #dc3545;
-      color: #dc3545;
+      border-color: var(--error);
+      color: var(--error);
     }
 
     .clear-btn:hover:not(:disabled) {
-      background: #fce4ec;
+      background: var(--error-bg);
     }
 
     .clear-btn:disabled {
@@ -1413,7 +1416,7 @@ import { environment } from '../../../../environments/environment';
     .loading-filters {
       padding: 1rem;
       text-align: center;
-      color: #666;
+      color: var(--text-secondary);
       font-size: 0.9rem;
     }
   `]

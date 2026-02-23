@@ -331,7 +331,7 @@ import { environment } from '../../../../environments/environment';
     }
 
     .breadcrumb-link {
-      color: #667eea;
+      color: var(--primary);
       text-decoration: none;
     }
 
@@ -341,16 +341,16 @@ import { environment } from '../../../../environments/environment';
 
     .breadcrumb-separator {
       margin: 0 0.5rem;
-      color: #666;
+      color: var(--text-secondary);
     }
 
     .breadcrumb-current {
-      color: #666;
+      color: var(--text-secondary);
     }
 
     .detail-header h1 {
       margin: 0 0 1rem 0;
-      color: #333;
+      color: var(--text-primary);
       font-size: 2rem;
     }
 
@@ -361,7 +361,7 @@ import { environment } from '../../../../environments/environment';
     }
 
     .customer-email {
-      color: #666;
+      color: var(--text-secondary);
       font-size: 1rem;
     }
 
@@ -374,13 +374,13 @@ import { environment } from '../../../../environments/environment';
     }
 
     .status-active {
-      background: #d4edda;
-      color: #155724;
+      background: var(--success-bg);
+      color: var(--success-text);
     }
 
     .status-inactive {
-      background: #f8d7da;
-      color: #721c24;
+      background: var(--error-bg);
+      color: var(--error-text);
     }
 
     .header-actions {
@@ -404,30 +404,40 @@ import { environment } from '../../../../environments/environment';
     }
 
     .btn-primary {
-      background: #667eea;
-      color: white;
+      background: var(--primary);
+      color: var(--text-inverse);
     }
 
     .btn-primary:hover:not(:disabled) {
-      background: #5a6fd8;
+      background: var(--primary-hover);
+    }
+
+    .btn-secondary {
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      border: 2px solid var(--border-color);
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+      background: var(--border-color);
     }
 
     .btn-success {
-      background: #28a745;
-      color: white;
+      background: var(--success);
+      color: var(--text-inverse);
     }
 
     .btn-success:hover:not(:disabled) {
-      background: #218838;
+      filter: brightness(0.9);
     }
 
     .btn-warning {
-      background: #ffc107;
-      color: #212529;
+      background: var(--warning);
+      color: var(--warning-btn-text);
     }
 
     .btn-warning:hover:not(:disabled) {
-      background: #e0a800;
+      filter: brightness(0.9);
     }
 
     .btn:disabled {
@@ -463,17 +473,17 @@ import { environment } from '../../../../environments/environment';
     }
 
     .detail-section {
-      background: white;
+      background: var(--bg-card);
       padding: 2rem;
       border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      box-shadow: var(--shadow-md);
     }
 
     .detail-section h2 {
       margin: 0 0 1.5rem 0;
-      color: #333;
+      color: var(--text-primary);
       font-size: 1.5rem;
-      border-bottom: 2px solid #f0f4ff;
+      border-bottom: 2px solid var(--border-color);
       padding-bottom: 0.5rem;
     }
 
@@ -491,14 +501,14 @@ import { environment } from '../../../../environments/environment';
 
     .info-item label {
       font-weight: 500;
-      color: #666;
+      color: var(--text-secondary);
       font-size: 0.9rem;
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
 
     .info-item span {
-      color: #333;
+      color: var(--text-primary);
       font-size: 1rem;
     }
 
@@ -516,8 +526,8 @@ import { environment } from '../../../../environments/environment';
       display: flex;
       align-items: center;
       gap: 0.5rem;
-      background: #e7f3ff;
-      color: #0366d6;
+      background: var(--primary-light);
+      color: var(--primary);
       padding: 0.5rem 0.75rem;
       border-radius: 6px;
       font-weight: 500;
@@ -555,7 +565,7 @@ import { environment } from '../../../../environments/environment';
     .no-subscriptions {
       text-align: center;
       padding: 2rem;
-      color: #666;
+      color: var(--text-secondary);
     }
 
     .section-header {
@@ -581,13 +591,13 @@ import { environment } from '../../../../environments/environment';
       justify-content: space-between;
       align-items: center;
       padding: 1rem;
-      background: #f9fafb;
+      background: var(--bg-secondary);
       border-radius: 8px;
       transition: background 0.2s;
     }
 
     .scan-job-item:hover {
-      background: #f3f4f6;
+      background: var(--bg-tertiary);
     }
 
     .job-info {
@@ -608,12 +618,12 @@ import { environment } from '../../../../environments/environment';
 
     .job-name {
       font-weight: 600;
-      color: #111827;
+      color: var(--text-primary);
     }
 
     .job-type {
       font-size: 0.85rem;
-      color: #6b7280;
+      color: var(--text-secondary);
       text-transform: capitalize;
     }
 
@@ -624,18 +634,18 @@ import { environment } from '../../../../environments/environment';
     }
 
     .job-active {
-      background: #d1fae5;
-      color: #065f46;
+      background: var(--success-bg);
+      color: var(--success-text);
     }
 
     .job-paused {
-      background: #fed7aa;
-      color: #c2410c;
+      background: var(--warning-bg);
+      color: var(--warning-text);
     }
 
     .job-stopped {
-      background: #fecaca;
-      color: #991b1b;
+      background: var(--error-bg);
+      color: var(--error-text);
     }
 
     .remove-job-btn {
@@ -664,7 +674,7 @@ import { environment } from '../../../../environments/environment';
       left: 0;
       right: 0;
       bottom: 0;
-      background: rgba(0, 0, 0, 0.5);
+      background: var(--modal-overlay);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -672,7 +682,7 @@ import { environment } from '../../../../environments/environment';
     }
 
     .modal-content {
-      background: white;
+      background: var(--bg-card);
       border-radius: 12px;
       width: 90%;
       max-width: 600px;
@@ -682,7 +692,7 @@ import { environment } from '../../../../environments/environment';
 
     .modal-header {
       padding: 1.5rem;
-      border-bottom: 1px solid #e5e7eb;
+      border-bottom: 1px solid var(--border-color);
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -690,7 +700,7 @@ import { environment } from '../../../../environments/environment';
 
     .modal-header h3 {
       margin: 0;
-      color: #111827;
+      color: var(--text-primary);
     }
 
     .modal-close {
@@ -698,11 +708,11 @@ import { environment } from '../../../../environments/environment';
       border: none;
       font-size: 1.5rem;
       cursor: pointer;
-      color: #6b7280;
+      color: var(--text-secondary);
     }
 
     .modal-close:hover {
-      color: #111827;
+      color: var(--text-primary);
     }
 
     .modal-body {
@@ -720,27 +730,27 @@ import { environment } from '../../../../environments/environment';
       align-items: center;
       gap: 0.75rem;
       padding: 1rem;
-      background: #f9fafb;
+      background: var(--bg-secondary);
       border-radius: 8px;
       cursor: pointer;
       transition: background 0.2s;
     }
 
     .job-selection-item:hover {
-      background: #f3f4f6;
+      background: var(--bg-tertiary);
     }
 
     .no-jobs {
       text-align: center;
       padding: 2rem;
-      color: #6b7280;
+      color: var(--text-secondary);
     }
 
     .loading,
     .error {
       text-align: center;
       padding: 3rem;
-      color: #666;
+      color: var(--text-secondary);
     }
 
     .error-icon {
@@ -750,7 +760,7 @@ import { environment } from '../../../../environments/environment';
 
     .error h2 {
       margin: 0 0 1rem 0;
-      color: #333;
+      color: var(--text-primary);
     }
 
     .edit-form {
@@ -768,43 +778,45 @@ import { environment } from '../../../../environments/environment';
     .form-group label {
       font-weight: 600;
       margin-bottom: 0.5rem;
-      color: #374151;
+      color: var(--text-primary);
     }
 
     .form-control {
       padding: 0.75rem;
-      border: 2px solid #e5e7eb;
+      border: 2px solid var(--border-color);
       border-radius: 8px;
       font-size: 1rem;
       transition: border-color 0.3s, box-shadow 0.3s;
+      background: var(--bg-input);
+      color: var(--text-primary);
     }
 
     .form-control:focus {
       outline: none;
-      border-color: #667eea;
-      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-light);
     }
 
     .form-control:readonly {
-      background-color: #f9fafb;
-      color: #6b7280;
+      background-color: var(--bg-secondary);
+      color: var(--text-secondary);
       cursor: not-allowed;
     }
 
     .form-control.is-invalid {
-      border-color: #ef4444;
-      box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
+      border-color: var(--error);
+      box-shadow: 0 0 0 3px var(--error-bg);
     }
 
     .invalid-feedback {
-      color: #ef4444;
+      color: var(--error);
       font-size: 0.875rem;
       margin-top: 0.25rem;
     }
 
     .form-text {
       font-size: 0.875rem;
-      color: #6b7280;
+      color: var(--text-secondary);
       margin-top: 0.25rem;
     }
 

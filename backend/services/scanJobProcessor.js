@@ -1034,14 +1034,14 @@ class ScanJobProcessor {
                 const originalCount = customerData.matches.length;
                 customerData.matches = customerData.matches.filter(match => {
                     const metadata = match.projectMetadata;
-                    
+
                     // If no filters set, include all projects
                     if (!hasActiveFilters) return true;
-                    
+
                     // Debug: Log what we're filtering
                     const projectCounty = metadata?.planning_county || 'NO_METADATA';
                     const projectSector = metadata?.planning_sector || 'NO_METADATA';
-                    
+
                     if (!metadata) {
                         logger.warn(`⚠️ Project ${match.projectId}: No metadata - EXCLUDING (can't verify against active filters)`);
                         return false; // Exclude if no metadata when filters are active

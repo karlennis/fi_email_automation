@@ -2,6 +2,8 @@
   padding: 2rem;
   max-width: 1400px;
   margin: 0 auto;
+  background: var(--bg-primary);
+  min-height: calc(100vh - 56px);
 }
 
 .page-header {
@@ -13,7 +15,7 @@
 
 .page-header h1 {
   margin: 0;
-  color: #2c3e50;
+  color: var(--text-primary);
   font-size: 2rem;
 }
 
@@ -23,11 +25,11 @@
 }
 
 .search-filters {
-  background: #f8f9fa;
+  background: var(--bg-secondary);
   padding: 1.5rem;
   border-radius: 8px;
   margin-bottom: 2rem;
-  border: 1px solid #e9ecef;
+  border: 1px solid var(--border-color);
 }
 
 .search-bar {
@@ -37,15 +39,17 @@
 .search-input {
   width: 100%;
   padding: 0.75rem;
-  border: 1px solid #ced4da;
+  border: 1px solid var(--border-color);
   border-radius: 4px;
   font-size: 1rem;
+  background: var(--bg-input);
+  color: var(--text-primary);
 }
 
 .search-input:focus {
   outline: none;
-  border-color: #007bff;
-  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-light);
 }
 
 .filters {
@@ -56,9 +60,10 @@
 
 .filter-select {
   padding: 0.5rem;
-  border: 1px solid #ced4da;
+  border: 1px solid var(--border-color);
   border-radius: 4px;
-  background: white;
+  background: var(--bg-input);
+  color: var(--text-primary);
   min-width: 150px;
 }
 
@@ -69,16 +74,16 @@
 }
 
 .customer-card {
-  background: white;
-  border: 1px solid #e9ecef;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-sm);
   transition: transform 0.2s, box-shadow 0.2s;
 }
 
 .customer-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-md);
 }
 
 .card-header {
@@ -86,17 +91,17 @@
   justify-content: space-between;
   align-items: flex-start;
   padding: 1.5rem 1.5rem 1rem;
-  border-bottom: 1px solid #e9ecef;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .customer-info h3 {
   margin: 0 0 0.5rem 0;
-  color: #2c3e50;
+  color: var(--text-primary);
   font-size: 1.2rem;
 }
 
 .customer-email {
-  color: #6c757d;
+  color: var(--text-secondary);
   font-size: 0.9rem;
 }
 
@@ -114,13 +119,13 @@
 }
 
 .status-active {
-  background: #d4edda;
-  color: #155724;
+  background: var(--success-bg);
+  color: var(--success-text);
 }
 
 .status-inactive {
-  background: #f8d7da;
-  color: #721c24;
+  background: var(--error-bg);
+  color: var(--error-text);
 }
 
 .card-body {
@@ -138,12 +143,12 @@
 
 .detail-label {
   font-weight: 600;
-  color: #495057;
+  color: var(--text-primary);
   min-width: 80px;
 }
 
 .detail-value {
-  color: #6c757d;
+  color: var(--text-secondary);
 }
 
 .report-types {
@@ -153,7 +158,7 @@
 .report-types h4 {
   margin: 0 0 0.5rem 0;
   font-size: 1rem;
-  color: #495057;
+  color: var(--text-primary);
 }
 
 .report-type-list {
@@ -163,8 +168,8 @@
 }
 
 .report-type-tag {
-  background: #e3f2fd;
-  color: #1565c0;
+  background: var(--primary-light);
+  color: var(--primary);
   padding: 0.25rem 0.75rem;
   border-radius: 16px;
   font-size: 0.8rem;
@@ -175,18 +180,18 @@
 .subscription-filters {
   margin-bottom: 1rem;
   padding: 0.75rem;
-  background: #f8f9fa;
+  background: var(--bg-secondary);
   border-radius: 6px;
 }
 
 .subscription-filters h4 {
   margin: 0 0 0.5rem 0;
   font-size: 0.9rem;
-  color: #495057;
+  color: var(--text-primary);
 }
 
 .subscription-filters.no-restrictions {
-  background: #e8f5e9;
+  background: var(--success-bg);
 }
 
 .filter-badges {
@@ -204,7 +209,7 @@
 
 .filter-label {
   font-size: 0.75rem;
-  color: #6c757d;
+  color: var(--text-secondary);
   font-weight: 500;
   margin-right: 0.25rem;
 }
@@ -217,18 +222,18 @@
 }
 
 .filter-badge.county {
-  background: #fff3e0;
-  color: #e65100;
+  background: var(--warning-bg);
+  color: var(--warning-text);
 }
 
 .filter-badge.sector {
-  background: #f3e5f5;
-  color: #7b1fa2;
+  background: var(--primary-light);
+  color: var(--accent);
 }
 
 .filter-badge.all {
-  background: #e8f5e9;
-  color: #2e7d32;
+  background: var(--success-bg);
+  color: var(--success-text);
   font-size: 0.8rem;
 }
 
@@ -237,7 +242,7 @@
   gap: 1rem;
   margin-top: 1rem;
   padding-top: 1rem;
-  border-top: 1px solid #e9ecef;
+  border-top: 1px solid var(--border-color);
 }
 
 .stat-item {
@@ -248,14 +253,14 @@
 
 .stat-label {
   font-size: 0.8rem;
-  color: #6c757d;
+  color: var(--text-secondary);
   font-weight: 500;
 }
 
 .stat-value {
   font-size: 1rem;
   font-weight: 600;
-  color: #007bff;
+  color: var(--primary);
 }
 
 .card-footer {
@@ -263,14 +268,14 @@
   justify-content: space-between;
   align-items: center;
   padding: 1rem 1.5rem;
-  background: #f8f9fa;
-  border-top: 1px solid #e9ecef;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
   border-radius: 0 0 8px 8px;
 }
 
 .customer-dates {
   font-size: 0.8rem;
-  color: #6c757d;
+  color: var(--text-secondary);
 }
 
 .card-actions {
@@ -303,48 +308,48 @@
 }
 
 .btn-primary {
-  background: #007bff;
+  background: var(--primary);
   color: white;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: #0056b3;
+  background: var(--primary-hover);
 }
 
 .btn-info {
-  background: #17a2b8;
-  color: white;
+  background: var(--info);
+  color: var(--text-inverse);
 }
 
 .btn-info:hover:not(:disabled) {
-  background: #138496;
+  filter: brightness(0.9);
 }
 
 .btn-success {
-  background: #28a745;
+  background: var(--success);
   color: white;
 }
 
 .btn-success:hover:not(:disabled) {
-  background: #1e7e34;
+  filter: brightness(0.9);
 }
 
 .btn-warning {
-  background: #ffc107;
-  color: #212529;
+  background: var(--warning);
+  color: var(--warning-btn-text);
 }
 
 .btn-warning:hover:not(:disabled) {
-  background: #e0a800;
+  filter: brightness(0.9);
 }
 
 .btn-secondary {
-  background: #6c757d;
-  color: white;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: #545b62;
+  background: var(--border-color);
 }
 
 .loading, .no-customers {
@@ -359,8 +364,8 @@
 .spinner {
   width: 40px;
   height: 40px;
-  border: 4px solid #e9ecef;
-  border-top: 4px solid #007bff;
+  border: 4px solid var(--border-color);
+  border-top: 4px solid var(--primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin-bottom: 1rem;
@@ -389,11 +394,11 @@
 
 .no-customers h3 {
   margin: 0 0 1rem 0;
-  color: #495057;
+  color: var(--text-primary);
 }
 
 .no-customers p {
-  color: #6c757d;
+  color: var(--text-secondary);
   margin-bottom: 2rem;
 }
 
@@ -412,14 +417,14 @@
 }
 
 .modal-content {
-  background: white;
+  background: var(--bg-card);
   border-radius: 8px;
   max-width: 600px;
   width: 90%;
   max-height: 80vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-lg);
 }
 
 .modal-content.large {
@@ -432,23 +437,23 @@
   justify-content: space-between;
   align-items: center;
   padding: 1.5rem;
-  border-bottom: 1px solid #e9ecef;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .modal-header h2 {
   margin: 0;
-  color: #2c3e50;
+  color: var(--text-primary);
 }
 
 .close {
   font-size: 2rem;
   cursor: pointer;
-  color: #6c757d;
+  color: var(--text-secondary);
   line-height: 1;
 }
 
 .close:hover {
-  color: #495057;
+  color: var(--text-primary);
 }
 
 .modal-body {
@@ -459,7 +464,7 @@
 
 .modal-footer {
   padding: 1rem 1.5rem;
-  border-top: 1px solid #e9ecef;
+  border-top: 1px solid var(--border-color);
   display: flex;
   justify-content: flex-end;
   gap: 1rem;
@@ -477,17 +482,17 @@
 .customer-info-header {
   margin-bottom: 2rem;
   padding-bottom: 1rem;
-  border-bottom: 2px solid #e9ecef;
+  border-bottom: 2px solid var(--border-color);
 }
 
 .customer-info-header h3 {
   margin: 0 0 0.5rem 0;
-  color: #2c3e50;
+  color: var(--text-primary);
   font-size: 1.5rem;
 }
 
 .customer-company {
-  color: #495057;
+  color: var(--text-primary);
   font-weight: 500;
   margin-bottom: 1rem;
 }
@@ -500,7 +505,7 @@
 
 .summary-stat {
   padding: 0.75rem 1rem;
-  background: #f8f9fa;
+  background: var(--bg-secondary);
   border-radius: 6px;
   text-align: center;
   font-size: 0.9rem;
@@ -508,12 +513,12 @@
 
 .fi-history-list h4 {
   margin-bottom: 1rem;
-  color: #495057;
+  color: var(--text-primary);
 }
 
 .history-item {
-  background: #f8f9fa;
-  border: 1px solid #e9ecef;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 1rem;
   margin-bottom: 1rem;
@@ -528,13 +533,13 @@
 
 .history-header h5 {
   margin: 0;
-  color: #2c3e50;
+  color: var(--text-primary);
   font-size: 1.1rem;
 }
 
 .report-type-badge {
-  background: #e3f2fd;
-  color: #1565c0;
+  background: var(--primary-light);
+  color: var(--primary);
   padding: 0.25rem 0.75rem;
   border-radius: 16px;
   font-size: 0.8rem;
@@ -554,14 +559,14 @@
 }
 
 .notification-info {
-  border-top: 1px solid #dee2e6;
+  border-top: 1px solid var(--border-color);
   padding-top: 1rem;
 }
 
 .notification-info h6 {
   margin: 0 0 0.5rem 0;
   font-size: 0.9rem;
-  color: #495057;
+  color: var(--text-primary);
 }
 
 .notification-item {
@@ -569,14 +574,14 @@
   justify-content: space-between;
   align-items: center;
   padding: 0.5rem;
-  background: white;
+  background: var(--bg-card);
   border-radius: 4px;
   margin-bottom: 0.5rem;
 }
 
 .notification-date {
   font-size: 0.8rem;
-  color: #6c757d;
+  color: var(--text-secondary);
 }
 
 .notification-status {
@@ -588,24 +593,24 @@
 }
 
 .status-sent {
-  background: #cce5ff;
-  color: #0066cc;
+  background: var(--primary-light);
+  color: var(--primary);
 }
 
 .status-delivered {
-  background: #d4edda;
-  color: #155724;
+  background: var(--success-bg);
+  color: var(--success-text);
 }
 
 .status-failed {
-  background: #f8d7da;
-  color: #721c24;
+  background: var(--error-bg);
+  color: var(--error-text);
 }
 
 .no-history {
   text-align: center;
   padding: 2rem;
-  color: #6c757d;
+  color: var(--text-secondary);
 }
 
 /* Success Modal Styles */
@@ -621,12 +626,12 @@
 
 .success-message h3 {
   margin: 0 0 1rem 0;
-  color: #28a745;
+  color: var(--success);
 }
 
 .success-message p {
   margin: 0.5rem 0;
-  color: #495057;
+  color: var(--text-primary);
 }
 
 /* Responsive Design */
