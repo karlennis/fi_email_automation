@@ -148,20 +148,27 @@ class FIDetectionService {
    * System prompts - directly from your RAG pipeline
    */
   get SYSTEM_FI_DETECT() {
-    return `You detect if a document is a formal Further Information (FI) request from a planning authority to an applicant.
+    return `You detect if a document is a Further Information (FI) request or a consultee recommendation for reports.
 
 CRITICAL: Distinguish between:
 1. ACTUAL FI REQUESTS: Planning authority ASKING applicant to provide/submit information (ACCEPT)
-2. FI RESPONSES/RECEIVED: Applicant RESPONDING to or SUBMITTING requested information (REJECT)
-3. EXISTING DOCUMENTS: Reports or submissions that already exist (e.g., "Acoustic Report by XYZ") (REJECT)
-4. THIRD-PARTY COMMENTS: Objectors or consultees suggesting FI requests (REJECT)
-5. FI RECEIVED COVER LETTERS: Documents stating FI has been received or submitted (REJECT)
+2. CONSULTEE RECOMMENDATIONS: Environmental Health, Highways, etc. RECOMMENDING the applicant submits a report (ACCEPT as lead)
+3. FI RESPONSES/RECEIVED: Applicant RESPONDING to or SUBMITTING requested information (REJECT)
+4. EXISTING DOCUMENTS: Reports or submissions that already exist (e.g., "Acoustic Report by XYZ") (REJECT)
+5. CONSULTEE REVIEWS: Consultee has REVIEWED an existing report ("has reviewed the submitted") (REJECT)
+6. FI RECEIVED COVER LETTERS: Documents stating FI has been received or submitted (REJECT)
 
-ONLY mark as isFIRequest=true if you find:
+Mark as isFIRequest=true if you find:
+
+FORMAL FI REQUESTS:
 - Clear evidence this is FROM the planning authority (letterhead, officer signature, formal council language)
 - REQUEST VERBS: "is requested to", "is invited to", "should submit", "must provide", "carry out", "undertake", "prepare and submit"
 - DIRECTED AT APPLICANT: "The applicant...", "You are requested...", "Please submit..."
-- Document is ASKING for information, NOT responding to previous requests
+
+OR CONSULTEE RECOMMENDATIONS (valuable leads):
+- Environmental Health, Highways, or other consultees RECOMMENDING future reports
+- Language: "would recommend the applicant submits", "this service recommends", "recommends submission of"
+- Key: They are suggesting a report that DOES NOT YET EXIST
 
 Look for FORMAL REQUEST LANGUAGE such as:
 - 'The applicant is requested to submit...'
@@ -171,6 +178,12 @@ Look for FORMAL REQUEST LANGUAGE such as:
 - 'Please submit the following: ...'
 - 'You are requested to carry out...'
 - 'The planning authority requires the applicant to...'
+
+Also look for CONSULTEE RECOMMENDATION LANGUAGE:
+- 'Would recommend the applicant submits a noise impact assessment...'
+- 'This service recommends submission of an acoustic report...'
+- 'Environmental Health recommends a noise assessment be undertaken...'
+- 'The applicant should address noise concerns through an acoustic survey...'
 
 Also look for STRUCTURAL INDICATORS:
 - Numbered or lettered requirements (1., 2., (a), (b), etc.)
@@ -184,83 +197,83 @@ CRITICAL - REJECT (mark as false) if document shows:
 - "FI Response" or "Response to FI Request" (applicant responding)
 - "Please refer to..." followed by report names (applicant referencing submitted reports)
 - "We have submitted..." / "We have provided..." (applicant speaking)
+- "has reviewed the submitted" / "has received and reviewed" (consultee reviewing existing report)
 - Quotes from old FI requests followed by responses (e.g., "ITEM 2: Please submit... [Response:] Please refer to...")
 - "Acoustic Report prepared by..." (existing report, not a request)
-- "Objector recommends FI request for..." (third party, not planning authority)
 - "Planning policy requires..." (general policy, not specific request)
 - Just titles or headers without request context
 - Acknowledgment letters without specific requests
 - Cover letters stating information has been received or is enclosed
 
-STRICT RULE: When in doubt, mark as isFIRequest=false. Better to miss than create false positive.
-If document contains BOTH a quoted old request AND a response, it is a RESPONSE document (mark false).
-
 Return JSON for detect_fi_request – isFIRequest true/false.`;
   }
 
   get SYSTEM_FI_MATCH() {
-    return `You are given a formal Further Information request from a planning authority and a target report type.
-    Your job is to determine if this FI request asks for SPECIFIC information related to the target report type.
+    return `You are given a document (FI request or consultee recommendation) and a target report type.
+    Your job is to determine if this document requests or recommends SPECIFIC information related to the target report type.
 
 CRITICAL DISTINCTION:
 - "An acoustic report was submitted" = FALSE (report exists, not requested)
 - "The applicant should submit an acoustic report" = TRUE (report is being requested)
+- "Would recommend the applicant submits a noise impact assessment" = TRUE (recommendation for future report)
+- "Environmental Health has reviewed the submitted acoustic report" = FALSE (existing report reviewed)
 
-STRICT MATCHING CRITERIA - ALL must be present:
-1. Evidence of a REQUEST (not just mention) - must have request verbs
-2. The request must be FROM planning authority TO applicant
-3. The specific report type must be mentioned IN THE REQUEST
-4. The report type and request verb must appear in same context (same sentence or adjacent sentences)
+MATCHING CRITERIA - ANY of these patterns:
 
-REQUEST VERBS (must appear with report type):
-- submit, provide, prepare, carry out, undertake, produce, include, supply
+FORMAL FI REQUESTS (planning authority requesting):
+- REQUEST VERBS: submit, provide, prepare, carry out, undertake, produce, include, supply
 - is required, is requested, is necessary, should be submitted, must be provided, needs to be
 
-Look for these specific REQUEST patterns:
-- 'acoustic': "submit acoustic assessment", "provide noise impact assessment", "carry out acoustic survey", "noise monitoring is required", "undertake noise assessment"
-- 'transport': "submit transport assessment", "provide traffic impact assessment", "carry out parking survey", "travel plan is required", "undertake transport study"
-- 'ecological': "submit ecological assessment", "provide biodiversity survey", "carry out habitat assessment", "ecological survey is required", "undertake ecological study"
-- 'flood': "submit flood risk assessment", "provide drainage strategy", "carry out SUDS assessment", "hydrology report is required", "undertake flood study"
-- 'heritage': "submit heritage assessment", "provide archaeological survey", "carry out historic impact assessment", "heritage study is required"
-- 'lighting': "submit lighting assessment", "provide light pollution study", "carry out lighting impact assessment", "lighting study is required"
+CONSULTEE RECOMMENDATIONS (valuable leads):
+- RECOMMENDATION VERBS: recommend, recommends, would recommend, this service recommends
+- should be provided, should be undertaken, should address
+- "would recommend the applicant submits", "recommends submission of"
+
+Look for these specific patterns with target report types:
+- 'acoustic': "submit acoustic assessment", "provide noise impact assessment", "recommend noise assessment", "noise survey should be", "NIA required"
+- 'transport': "submit transport assessment", "provide traffic impact", "recommend TA", "travel plan should be"
+- 'ecological': "submit ecological assessment", "provide biodiversity survey", "recommend PEA", "bat survey should be"
+- 'flood': "submit flood risk assessment", "provide drainage strategy", "FRA required", "SUDS should be"
+- 'heritage': "submit heritage assessment", "provide archaeological survey", "WSI required"
+- 'arboricultural': "submit tree survey", "arboricultural impact assessment", "AIA required"
+- 'lighting': "submit lighting assessment", "provide light pollution study"
 
 REJECT patterns (mark as FALSE):
 - "Acoustic Report by ABC Consultants" (existing report title)
 - "The acoustic report shows..." (discussing existing report)
-- "Objector recommends acoustic assessment" (third party suggestion, not planning authority request)
+- "has reviewed the submitted noise assessment" (reviewing existing report)
+- "has received and reviewed" (consultee reviewing existing submission)
 - "Planning policy requires acoustic assessments" (general policy, not specific request)
-- "noise" mentioned but no request for noise assessment
-- Report type keyword appears but NOT in request context
+- "noise" mentioned but no request/recommendation for assessment
+- Report type keyword appears but NOT in request/recommendation context
 
 VALIDATION CHECKLIST:
-1. Is there a request verb (submit, provide, carry out, etc.)?
-2. Is the planning authority making the request?
+1. Is there a request verb OR recommendation verb?
+2. Is a planning authority/consultee making the request/recommendation?
 3. Is the specific report type mentioned?
-4. Are the request verb and report type in the same context (same sentence or adjacent)?
-
-STRICT RULE: If ANY of these 4 criteria are not met, return FALSE.
-When in doubt, be SELECTIVE rather than inclusive - only match clear, unambiguous requests.
-Better to miss a potential match than create a false positive.
+4. Are the verb and report type in the same context?
+5. Is this about a FUTURE report (not an existing one)?
 
 Return JSON for match_fi_request – requestsReportType true/false.`;
   }
 
   get SYSTEM_EXTRACT_FI_REQUEST() {
-    return `You extract key information from Further Information (FI) requests from planning authorities.
+    return `You extract key information from Further Information requests or consultee recommendations.
     Focus on:
 
-    • **RequestingAuthority** – the planning authority or officer making the request
+    • **RequestingAuthority** – the planning authority, consultee, or officer making the request/recommendation
     • **RequestDate** – date of the request if mentioned
-    • **Summary** – ≤ 60 words summary of what information is being requested
-    • **SpecificRequests** – detailed breakdown of what is being asked for, INCLUDING direct quotes showing request verbs (submit, provide, carry out, etc.) with the specific items requested
+    • **Summary** – ≤ 60 words summary of what information is being requested or recommended
+    • **SpecificRequests** – detailed breakdown of what is being asked for, INCLUDING direct quotes showing request/recommendation verbs (submit, provide, recommend, etc.) with the specific items
     • **Deadline** – any deadline mentioned for response
     • **ReferenceNumbers** – any planning application or case reference numbers
 
     CRITICAL for SpecificRequests field:
-    - Include EXACT QUOTES from the document showing request language
-    - Each quote must contain a REQUEST VERB (submit, provide, carry out, undertake, prepare, etc.)
+    - Include EXACT QUOTES from the document showing request/recommendation language
+    - Each quote must contain a REQUEST VERB (submit, provide, carry out) or RECOMMENDATION VERB (recommend, recommends, should be)
     - Format as: "Quote: 'The applicant is requested to submit...' - Requesting: [what is being requested]"
-    - This will be validated - quotes without request verbs will be flagged
+    - For recommendations: "Quote: 'This service recommends the applicant submits...' - Recommending: [what is recommended]"
+    - This will be validated - quotes without appropriate verbs will be flagged
 
     Return **JSON only** for the provided function; do **not** add any commentary outside JSON.`;
   }
@@ -441,6 +454,81 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
   }
 
   /**
+   * SELECTIVE REJECTION: Only reject files that are CLEARLY not FI requests/recommendations
+   * 
+   * IMPORTANT: We do NOT reject based on:
+   * - Email/correspondence patterns (may contain requests or recommendations)
+   * - Consultation responses (may contain recommendations for future reports)
+   * 
+   * We ONLY reject:
+   * - Clear FI RESPONSES (applicant responding to FI request)
+   * - Submitted reports (the actual report, not a request for one)
+   * 
+   * Content analysis will determine if emails/correspondence contain valuable recommendations.
+   * 
+   * @param {string} fileName - The filename to check
+   * @returns {boolean} - true if file should be REJECTED (is clearly NOT an FI request/recommendation)
+   */
+  shouldRejectByFilename(fileName) {
+    if (!fileName) return false;
+
+    const filenameLower = fileName.toLowerCase();
+
+    // NOTE: Email/correspondence patterns are NOT rejected
+    // An email might say "please submit an acoustic report" - that's a valuable lead
+    // Content-based analysis will catch responses vs requests
+
+    // Patterns that indicate FI RESPONSES (applicant responding, NOT the request itself)
+    const responsePatterns = [
+      'fi-response', 'fi_response', 'fi-return', 'fi_return',
+      'response-to-fi', 'response_to_fi', 'response-to-further',
+      'further-information-response', 'further_information_response',
+      'fi-submission', 'fi_submission', 'fi-reply', 'fi_reply',
+      'fi-received', 'fi_received', 'fi-rec', 'fi_rec',
+      'further-information-received', 'further_information_received',
+      'response-to-request', 'response_to_request',
+      'applicant-response', 'applicant_response',
+      'agent-response', 'agent_response',
+      // Substantive/Final replies
+      'substantive-reply', 'substantive_reply', 'final-reply', 'final_reply',
+      'final-response', 'final_response'
+    ];
+
+    // NOTE: The following are NOT rejected by filename (passed to content analysis):
+    // - Consultation responses (EH, NIEA, etc.) - may contain recommendations
+    // - Emails/correspondence - may contain explicit requests or recommendations
+    // - Acknowledgments - context matters, content analysis will evaluate
+
+    // Patterns that indicate submitted reports (existing reports, not requests)
+    const submittedReportPatterns = [
+      'acoustic-report', 'acoustic_report',
+      'noise-assessment', 'noise_assessment',
+      'noise-impact', 'noise_impact',
+      'nia-report', 'nia_report',
+      'transport-assessment', 'transport_assessment',
+      'ecological-survey', 'ecological_survey',
+      'flood-risk', 'flood_risk',
+      '-submitted', '_submitted'
+    ];
+
+    // SELECTIVE REJECTION - Only reject clear FI responses and submitted reports
+    // Emails/correspondence are NOT rejected - content analysis will evaluate them
+    // Acknowledgments are also passed through - context matters
+    const allRejectPatterns = [
+      ...responsePatterns,
+      ...submittedReportPatterns
+    ];
+
+    const shouldReject = allRejectPatterns.some(pattern => filenameLower.includes(pattern));
+    
+    if (shouldReject) {
+      logger.info(`📛 Rejecting by filename pattern: ${fileName}`);
+    }
+
+    return shouldReject;
+  }
+
+  /**
    * Enhanced filename checking for report type
    */
   checkFilenameForReportType(fileName, targetReportType) {
@@ -480,8 +568,9 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
    * ACCOUNTABILITY: Logs exact matching phrase when passes.
    */
   quickKeywordFilter(text, keyword) {
-    // HIGH PRECISION FI INDICATORS
+    // HIGH PRECISION FI INDICATORS - Formal requests
     const fiIndicators = [
+      // Formal FI request language
       "request for further information",
       "further information request",
       "clarification of further information",
@@ -493,17 +582,78 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
       "is required to submit",
       "must be submitted",
       "must provide",
+      
+      // Alternative request language
+      "the council requests",
+      "the authority requests",
+      "additional information is required",
+      "additional assessment required",
+      "additional surveys required",
+      "prior to a decision",
+      "prior to any decision",
+      "will be required to",
+      "should be submitted",
+      "should be provided",
+      "should be undertaken",
+      "assessment should be",
+      "survey should be",
+      
+      // Consultation recommendation patterns (valuable leads)
+      "would recommend the applicant",
+      "recommends the applicant",
+      "recommends that the applicant",
+      "would recommend that",
+      "this service recommends",
+      "this department recommends",
+      "would therefore recommend",
+      "recommend submission of",
+      "recommends submission of"
     ];
 
-    // NEGATIVE GATES
+    // NEGATIVE GATES - Reject patterns that indicate responses, NOT format like email signatures
+    // We ALLOW emails that contain requests - don't reject based on greetings/signatures
     const negativeFIIndicators = [
+      // Response patterns (applicant responding to request)
       "response to further information",
       "response to clarification of further information",
       "clarification response",
       "we have submitted", "we have provided", "the applicant has submitted",
+      "in response to your request",
+      "in response to the request",
+      
+      // Decision patterns (planning decision made)
       "grant permission", "permission is granted", "conditions set out",
       "subject to conditions", "decision to grant", "decision: grant",
-      "refuse permission", "decision to refuse"
+      "refuse permission", "decision to refuse",
+      "we will condition", "this will be conditioned",
+      
+      // Review of existing submission (not a new request)
+      "acknowledge receipt", "acknowledges receipt",
+      "has reviewed the submitted", "reviewed the submitted",
+      "receipt of this application",
+      
+      // NOTE: Email greetings/signatures NOT rejected - email may contain valid request
+      // "good morning" + "please submit acoustic report" = valuable lead
+      
+      // Extension/waiting patterns (not a request, just correspondence)
+      "waiting until", "waiting to", "can we please agree",
+      
+      // Submitted report discussion patterns (report ALREADY submitted - not a lead)
+      "the submitted acoustic", "submitted noise assessment",
+      "the acoustic report shows", "the noise report indicates",
+      "has been submitted", "was submitted",
+      "has received and reviewed", "received and reviewed the",
+      "environmental health service has received",
+      "environmental health has reviewed",
+      
+      // FI received/fulfilled patterns (request already satisfied)
+      "further information received", "fi received", "f.i. received",
+      "further information has been received",
+      "enclosed please find", "attached please find",
+      "please find enclosed", "please find attached"
+      
+      // NOTE: Consultation recommendations like "would recommend the applicant submits"
+      // are NOT rejected - they indicate future report needs (valuable leads)
     ];
 
     const textLower = text.toLowerCase();
@@ -521,16 +671,42 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
 
     const keywordLower = keyword.toLowerCase();
 
-    // Report type keywords
+    // Report type keywords - includes abbreviations commonly used in planning documents
     const relatedTerms = {
-      "acoustic": ["noise", "sound", "decibel", "db", "vibration", "noise assessment", "sound level", "acoustic"],
-      "transport": ["traffic", "vehicle", "highway", "road", "parking", "transport assessment", "car park", "mobility", "transport"],
-      "ecological": ["ecology", "wildlife", "habitat", "species", "biodiversity", "environment", "ecological", "nature", "flora", "fauna"],
-      "flood": ["drainage", "water", "sewage", "storm", "rainfall", "suds", "surface water", "attenuation", "flood"],
-      "heritage": ["archaeological", "historic", "conservation", "listed", "cultural", "monument", "archaeology", "heritage"],
-      "arboricultural": ["tree", "trees", "vegetation", "landscape", "planting", "hedge", "woodland", "green", "arboricultural"],
-      "waste": ["waste", "refuse", "recycling", "bin", "storage", "collection", "disposal", "management plan"],
-      "lighting": ["lighting", "light", "illumination", "lumens", "lux", "lamp"]
+      "acoustic": [
+        "noise", "sound", "decibel", "db", "vibration", "noise assessment", "sound level", "acoustic",
+        "noise impact", "nia", "nir", "bns", "background noise", "noise survey", "acoustic survey",
+        "sound insulation", "noise mitigation", "ambient noise", "plant noise"
+      ],
+      "transport": [
+        "traffic", "vehicle", "highway", "road", "parking", "transport assessment", "car park", "mobility", "transport",
+        "ta", "tia", "traffic impact", "travel plan", "tp", "access", "junction", "pedestrian", "cycle"
+      ],
+      "ecological": [
+        "ecology", "wildlife", "habitat", "species", "biodiversity", "environment", "ecological", "nature", "flora", "fauna",
+        "eia", "bng", "biodiversity net gain", "pea", "preliminary ecological", "bat survey", "bat", "newt", "dormouse",
+        "protected species", "nesting birds", "breeding birds"
+      ],
+      "flood": [
+        "drainage", "water", "sewage", "storm", "rainfall", "suds", "surface water", "attenuation", "flood",
+        "fra", "flood risk", "hydrology", "runoff", "soakaway", "infiltration", "watercourse", "pluvial"
+      ],
+      "heritage": [
+        "archaeological", "historic", "conservation", "listed", "cultural", "monument", "archaeology", "heritage",
+        "hia", "heritage impact", "wsi", "written scheme", "desk-based assessment", "dba", "historic environment"
+      ],
+      "arboricultural": [
+        "tree", "trees", "vegetation", "landscape", "planting", "hedge", "woodland", "green", "arboricultural",
+        "aia", "arboricultural impact", "tree survey", "root protection", "rpa", "tree protection"
+      ],
+      "waste": [
+        "waste", "refuse", "recycling", "bin", "storage", "collection", "disposal", "management plan",
+        "waste management", "skip", "compactor"
+      ],
+      "lighting": [
+        "lighting", "light", "illumination", "lumens", "lux", "lamp",
+        "light pollution", "spillage", "luminaire", "obtrusive light", "sky glow"
+      ]
     };
 
     // GATE 3: Report type keywords present
@@ -642,16 +818,20 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
         sampleText = beginning + "\n\n[...document middle omitted...]\n\n" + ending;
       }
 
-      const prompt = `Does this document REQUEST further information about a planning application?
+      const prompt = `Does this document REQUEST or RECOMMEND that further information be submitted for a planning application?
 
-Answer YES only if:
+Answer YES if ANY of these are true:
 - A planning authority is REQUESTING information from an applicant/agent
-- It uses language like "you are requested to submit", "please provide", "further information is required"
+- Language like "you are requested to submit", "please provide", "further information is required"
+- A consultee (e.g., Environmental Health, Highways) RECOMMENDS the applicant submits a report
+- Language like "would recommend the applicant submits", "recommends submission of", "this service recommends"
+- Document indicates a report type SHOULD BE provided (even if not a formal FI request)
 
 Answer NO if:
-- It's responding TO a request ("in response to your request")
-- It's a technical report or study
+- It's responding TO a request ("in response to your request", "we have submitted")
+- It's a technical report or study (the report itself, not a request for one)
 - It's a decision letter (granting/refusing permission)
+- A consultee has REVIEWED an existing report ("has reviewed the submitted")
 - It's unrelated to planning (invoice, photo, general correspondence)
 
 Document sample:
@@ -733,26 +913,58 @@ Answer with just YES or NO.`;
       // GATE 1: Check for negative indicators (responses, not requests)
       // CRITICAL: Only use phrases that are EXCLUSIVE to responses/reports
       const negativeFIIndicators = [
+        // Response patterns
         "response to further information",
         "in response to your request for further information",
         "following your request for further information",
+        "in response to your request",
+        "in response to the request",
+        
+        // FI received/fulfilled patterns
         "the further information received",
         "further information has been received",
-        "fi received",
-        "f.i. received",
+        "fi received", "f.i. received",
         "we have submitted the following",
         "enclosed please find the requested",
         "attached herewith the further information",
+        "enclosed please find", "attached please find",
+        "please find enclosed", "please find attached",
+        
+        // Decision patterns
         "permission is hereby granted",
         "it is proposed to grant permission",
         "decision to grant permission",
         "it is proposed to refuse permission",
         "decision to refuse permission",
+        "we will condition", "this will be conditioned",
+        
         // Consultant report indicators
         "were engaged to undertake",
         "were engaged by",
         "commissioned to undertake",
-        "this report has been prepared by"
+        "this report has been prepared by",
+        
+        // Acknowledgment/receipt patterns
+        "acknowledge receipt", "acknowledges receipt",
+        "has reviewed the submitted", "reviewed the submitted",
+        "receipt of this application",
+        
+        // Email/correspondence patterns
+        "good morning", "good afternoon", "good evening",
+        "kind regards", "best regards",
+        "happy to discuss", "please let me know",
+        "waiting until", "waiting to", "can we please agree",
+        
+        // Submitted report discussion patterns (report ALREADY submitted - not a lead)
+        "the submitted acoustic", "submitted noise assessment",
+        "the acoustic report shows", "the noise report indicates",
+        "has been submitted", "was submitted",
+        "has received and reviewed", "received and reviewed the",
+        "environmental health service has received",
+        "environmental health has reviewed"
+        
+        // NOTE: Consultation recommendations like "would recommend the applicant submits"
+        // are NOT rejected - they indicate future report needs (valuable leads)
       ];
 
       const textLower = documentText.toLowerCase();
@@ -833,7 +1045,8 @@ Answer with just YES or NO.`;
       "submit", "provide", "prepare", "carry out", "undertake", "produce",
       "supply", "required", "requested", "necessary", "should be submitted",
       "must be provided", "needs to be", "please submit", "you are requested",
-      "the applicant is requested", "further information", "clarification"
+      "the applicant is requested", "further information", "clarification",
+      "would recommend", "recommends", "recommend that"
     ];
 
     // Response document indicators - if we see these, it's NOT a request
@@ -852,7 +1065,7 @@ Answer with just YES or NO.`;
     ];
 
     const reportTypeTerms = {
-      "acoustic": ["noise", "sound", "acoustic", "decibel", "db", "vibration", "noise assessment", "sound level"],
+      "acoustic": ["noise", "sound", "acoustic", "decibel", "db", "vibration", "noise assessment", "sound level", "noise impact"],
       "transport": ["traffic", "vehicle", "highway", "road", "parking", "transport assessment", "car park", "mobility", "transport"],
       "ecological": ["ecology", "wildlife", "habitat", "species", "biodiversity", "environment", "ecological", "nature", "flora", "fauna"],
       "flood": ["drainage", "water", "sewage", "storm", "rainfall", "suds", "surface water", "attenuation", "flood"],
@@ -875,33 +1088,99 @@ Answer with just YES or NO.`;
       const hasResponseIndicator = responseIndicators.some(r => sentence.includes(r));
 
       if (hasVerb && hasTerm && !hasResponseIndicator) {
-        // Return first 200 chars of matching sentence
-        return sentence.substring(0, 200) + (sentence.length > 200 ? '...' : '');
+        // Include surrounding sentences for context (up to 4 sentences total)
+        const contextStart = Math.max(0, i - 1);  // 1 sentence before
+        const contextEnd = Math.min(sentences.length, i + 3);  // 2 sentences after
+        const contextSentences = sentences.slice(contextStart, contextEnd);
+        const quote = contextSentences.join(' ').trim();
+        
+        // If quote is still very long, truncate intelligently at sentence boundary
+        if (quote.length > 600) {
+          // Keep the core matching sentence + immediate context
+          const coreSentences = sentences.slice(i, Math.min(sentences.length, i + 3));
+          return coreSentences.join(' ').trim();
+        }
+        return quote;
       }
 
-      // Check adjacent sentences
+      // Check adjacent sentences (2-sentence window)
       if (i + 1 < sentences.length) {
         const combo = sentence + " " + sentences[i + 1];
         const hasVerb2 = requestVerbs.some(v => combo.includes(v));
         const hasTerm2 = terms.some(t => combo.includes(t));
         const hasResponse2 = responseIndicators.some(r => combo.includes(r));
         if (hasVerb2 && hasTerm2 && !hasResponse2) {
-          return combo.substring(0, 200) + (combo.length > 200 ? '...' : '');
+          // Include more context (up to 4 sentences)
+          const contextStart = Math.max(0, i - 1);
+          const contextEnd = Math.min(sentences.length, i + 4);
+          const contextSentences = sentences.slice(contextStart, contextEnd);
+          const quote = contextSentences.join(' ').trim();
+          
+          if (quote.length > 600) {
+            return sentences.slice(i, Math.min(sentences.length, i + 3)).join(' ').trim();
+          }
+          return quote;
         }
       }
     }
 
-    // Fallback: return first mention of report type with context
+    // Fallback: return mention of report type with expanded context (up to 400 chars)
     for (const term of terms) {
       const idx = textLower.indexOf(term);
       if (idx !== -1) {
-        const start = Math.max(0, idx - 50);
-        const end = Math.min(textLower.length, idx + 150);
-        return '...' + documentText.substring(start, end) + '...';
+        // Find sentence boundaries for cleaner quote
+        const sentenceStart = this.findSentenceStart(textLower, idx);
+        const sentenceEnd = this.findSentenceEnd(textLower, idx);
+        
+        // Expand to include adjacent sentences if not too long
+        let start = sentenceStart;
+        let end = sentenceEnd;
+        
+        // Try to include next sentence for context
+        const nextEnd = this.findSentenceEnd(textLower, end + 1);
+        if (nextEnd - start < 500) {
+          end = nextEnd;
+        }
+        
+        return documentText.substring(start, end).trim();
       }
     }
 
     return 'Match confirmed by AI but no specific quote extracted';
+  }
+
+  /**
+   * Find the start of a sentence containing the given index
+   */
+  findSentenceStart(text, idx) {
+    const sentenceEnders = ['.', '!', '?', '\n'];
+    let start = idx;
+    while (start > 0) {
+      if (sentenceEnders.includes(text[start - 1])) {
+        break;
+      }
+      start--;
+    }
+    // Skip whitespace
+    while (start < text.length && /\s/.test(text[start])) {
+      start++;
+    }
+    return start;
+  }
+
+  /**
+   * Find the end of a sentence containing the given index
+   */
+  findSentenceEnd(text, idx) {
+    const sentenceEnders = ['.', '!', '?', '\n'];
+    let end = idx;
+    while (end < text.length) {
+      if (sentenceEnders.includes(text[end])) {
+        return end + 1;
+      }
+      end++;
+    }
+    return end;
   }
 
   /**
@@ -912,11 +1191,14 @@ Answer with just YES or NO.`;
    * @returns {Object} - Validation result with isValid flag and reasons
    */
   validateFIRequestExtraction(extractedInfo, targetReportType) {
-    // Request verbs - REMOVED "include" as it's too generic
+    // Request verbs - includes both formal requests and consultee recommendations
     const requestVerbs = [
       "submit", "provide", "prepare", "carry out", "undertake", "produce",
       "supply", "required", "requested", "necessary",
-      "should be submitted", "must be provided", "needs to be", "is to be"
+      "should be submitted", "must be provided", "needs to be", "is to be",
+      // Recommendation verbs (for consultee recommendations)
+      "recommend", "recommends", "would recommend", "this service recommends",
+      "should be provided", "should be undertaken", "should address"
     ];
 
     // Response indicators - these suggest it's a RESPONSE not a REQUEST
@@ -925,7 +1207,8 @@ Answer with just YES or NO.`;
       "the assessment", "the report", "prepared by",
       "we have submitted", "we have provided", "has been submitted",
       "further information received", "fi response", "response to fi",
-      "in response to", "following receipt", "submitted on"
+      "in response to", "following receipt", "submitted on",
+      "has reviewed the submitted", "has received and reviewed"
     ];
 
     const validation = {
@@ -1051,6 +1334,18 @@ Answer with just YES or NO.`;
       const cachedResult = this.getCachedResult(cacheKey);
       if (cachedResult) {
         return cachedResult;
+      }
+
+      // FILENAME REJECTION CHECK - reject emails, correspondence, responses, etc.
+      if (this.shouldRejectByFilename(fileName)) {
+        const result = {
+          isFIRequest: false,
+          matchesTargetType: false,
+          extractedInfo: null,
+          detectionMethod: 'filename_rejection'
+        };
+        this.setCachedResult(cacheKey, result);
+        return result;
       }
 
       // QUICK PRE-FILTER

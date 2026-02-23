@@ -129,24 +129,23 @@ class EmailService {
             .header { background-color: #f4f4f4; padding: 20px; text-align: center; }
             .content { padding: 20px; }
             .summary-box { background-color: #d1ecf1; border: 1px solid #bee5eb; padding: 15px; margin: 15px 0; border-radius: 5px; }
-            .project-card-compact { background-color: #f8f9fa; border-left: 4px solid #28a745; padding: 10px 15px; margin: 8px 0; border-radius: 3px; }
+            .project-card-compact { background-color: #f8f9fa; border-left: 4px solid #28a745; padding: 12px 15px; margin: 12px 0; border-radius: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
             .project-card-compact h4 { margin: 0 0 5px 0; font-size: 1.1em; color: #333; }
             .project-card-compact h4 a { color: #333; text-decoration: none; font-weight: bold; }
             .project-card-compact h4 a:hover { text-decoration: underline; color: #28a745; }
             .project-id { font-weight: normal; color: #666; font-size: 0.9em; }
-            .project-meta-compact { font-size: 0.85em; color: #666; }
+            .project-meta-compact { font-size: 0.85em; color: #666; margin-bottom: 10px; }
             .meta-item { display: inline; }
             .meta-separator { margin: 0 8px; color: #999; }
             .view-link { color: #28a745; text-decoration: none; }
             .view-link:hover { text-decoration: underline; }
-            .report-type-section { margin: 15px 0; }
-            .report-type-section h3 { color: #28a745; margin-bottom: 10px; font-size: 1.2em; }
-            .evidence-table { width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 0.9em; }
-            .evidence-table th { background-color: #28a745; color: white; padding: 10px; text-align: left; }
-            .evidence-table td { padding: 10px; border-bottom: 1px solid #e0e0e0; vertical-align: top; }
-            .evidence-table tr:nth-child(even) { background-color: #f8f9fa; }
-            .evidence-table .doc-name { font-weight: 500; color: #333; max-width: 250px; word-break: break-word; }
-            .evidence-table .quote-text { font-style: italic; color: #555; max-width: 450px; }
+            .report-type-section { margin: 20px 0; }
+            .report-type-section h3 { color: #28a745; margin-bottom: 12px; font-size: 1.2em; border-bottom: 2px solid #28a745; padding-bottom: 5px; }
+            .evidence-box { background-color: #fff; border: 1px solid #e0e0e0; border-radius: 4px; padding: 10px 12px; margin-top: 10px; }
+            .evidence-label { font-size: 0.75em; text-transform: uppercase; color: #28a745; font-weight: 600; letter-spacing: 0.5px; margin-bottom: 4px; }
+            .evidence-doc { font-size: 0.8em; color: #666; margin-bottom: 6px; }
+            .evidence-doc strong { color: #333; font-weight: 500; }
+            .evidence-quote { font-style: italic; color: #444; font-size: 0.9em; line-height: 1.5; border-left: 3px solid #28a745; padding-left: 10px; background-color: #f9fff9; padding: 8px 10px; border-radius: 0 4px 4px 0; }
             .footer { background-color: #f4f4f4; padding: 20px; text-align: center; font-size: 11px; color: #666; border-top: 1px solid #ddd; line-height: 1.4; }
             .footer strong { color: #333; }
             .footer a { color: #007bff; text-decoration: none; }
@@ -177,34 +176,15 @@ class EmailService {
                   <span class="meta-separator">•</span>
                   <span class="meta-item">{{planningSector}}</span>
                 </div>
+                <div class="evidence-box">
+                  <div class="evidence-label">📄 Evidence</div>
+                  <div class="evidence-doc"><strong>Document:</strong> {{documentName}}</div>
+                  <div class="evidence-quote">"{{validationQuote}}"</div>
+                </div>
               </div>
               {{/each}}
             </div>
             {{/each}}
-
-            {{#if allMatches.length}}
-            <div style="margin-top: 25px;">
-              <h3 style="color: #28a745; border-bottom: 2px solid #28a745; padding-bottom: 8px;">Evidence Details</h3>
-              <table class="evidence-table">
-                <thead>
-                  <tr>
-                    <th style="width: 15%;">Project ID</th>
-                    <th style="width: 30%;">Doc Name</th>
-                    <th style="width: 55%;">Validation Quote</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {{#each allMatches}}
-                  <tr>
-                    <td style="font-family: monospace; font-size: 11px; color: #666;">{{projectId}}</td>
-                    <td class="doc-name">{{documentName}}</td>
-                    <td class="quote-text">"{{validationQuote}}"</td>
-                  </tr>
-                  {{/each}}
-                </tbody>
-              </table>
-            </div>
-            {{/if}}
 
             <p>Best regards,<br><strong>Building Info Team</strong></p>
           </div>
@@ -409,6 +389,10 @@ class EmailService {
 
         // Use project ID as key to prevent duplicates
         if (!matchesByType[reportType][match.projectId]) {
+          // Truncate validation quote for display
+          const truncatedQuote = (match.validationQuote || 'No quote captured').substring(0, 350) +
+            ((match.validationQuote?.length || 0) > 350 ? '...' : '');
+          
           // Map project metadata fields to template-expected names
           const projectData = {
             ...match,
@@ -416,7 +400,9 @@ class EmailService {
             planningStage: match.projectMetadata.planning_stage || 'N/A',
             planningSector: match.projectMetadata.planning_sector || 'N/A',
             planningAuthority: match.projectMetadata.planning_authority || 'N/A',
-            biiUrl: match.projectMetadata.bii_url || null
+            biiUrl: match.projectMetadata.bii_url || null,
+            documentName: match.documentName || 'Unknown document',
+            validationQuote: truncatedQuote
           };
 
           matchesByType[reportType][match.projectId] = projectData;
@@ -433,21 +419,12 @@ class EmailService {
       const uniqueProjects = new Set(validMatches.map(match => match.projectId));
       const totalProjects = uniqueProjects.size;
 
-      // Prepare all matches with validation quotes for the evidence table
-      const allMatches = validMatches.map(match => ({
-        documentName: match.documentName || 'Unknown document',
-        validationQuote: (match.validationQuote || 'No quote captured').substring(0, 300) +
-          ((match.validationQuote?.length || 0) > 300 ? '...' : ''),
-        projectId: match.projectId
-      }));
-
       const html = template({
         customerName,
         totalMatches: validMatches.length,
         totalProjects,
         reportTypes: Object.keys(processedMatchesByType),
         matchesByType: processedMatchesByType,
-        allMatches: allMatches,
         processingDate: new Date().toLocaleDateString(),
         dashboardUrl: `${process.env.FRONTEND_URL}/dashboard`
       });
@@ -745,6 +722,7 @@ class EmailService {
           <table style="border-collapse: collapse; width: 100%; margin-bottom: 20px;">
             <thead>
               <tr style="background-color: #f5f5f5;">
+                <th style="border: 1px solid #ddd; padding: 10px; text-align: left;">Project ID</th>
                 <th style="border: 1px solid #ddd; padding: 10px; text-align: left;">File Name</th>
                 <th style="border: 1px solid #ddd; padding: 10px; text-align: left;">FI Type</th>
                 <th style="border: 1px solid #ddd; padding: 10px; text-align: left;">Validation Quote</th>
@@ -753,6 +731,7 @@ class EmailService {
             <tbody>
               ${matches.map(m => `
                 <tr>
+                  <td style="border: 1px solid #ddd; padding: 10px; font-family: monospace; font-size: 12px;">${m.projectId || 'N/A'}</td>
                   <td style="border: 1px solid #ddd; padding: 10px;">${m.fileName}</td>
                   <td style="border: 1px solid #ddd; padding: 10px;">${m.fiType}</td>
                   <td style="border: 1px solid #ddd; padding: 10px; font-style: italic;">"${m.validationQuote}"</td>
