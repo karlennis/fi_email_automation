@@ -8,7 +8,7 @@ const winston = require('winston');
 require('dotenv').config(); // Load environment variables
 
 const logger = winston.createLogger({
-  level: 'info',
+  level: process.env.LOG_LEVEL || 'info', // Set to 'debug' via env var for detailed logging
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.json()
@@ -650,7 +650,12 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
       "further information received", "fi received", "f.i. received",
       "further information has been received",
       "enclosed please find", "attached please find",
-      "please find enclosed", "please find attached"
+      "please find enclosed", "please find attached",
+
+      // DAA permission conditions (Dublin Airport Authority - not FI requests)
+      "daa respectfully requests that, in the event of a grant of permission",
+      "in the event of a grant of permission, a condition is attached requiring",
+      "condition is attached requiring the noise"
 
       // NOTE: Consultation recommendations like "would recommend the applicant submits"
       // are NOT rejected - they indicate future report needs (valuable leads)
@@ -1167,6 +1172,9 @@ Answer with just YES or NO.`;
       const isPhysicalWorkOnly = hasPhysicalWork && !hasDocumentIndicator;
 
       if (hasVerb && hasTerm && !hasResponseIndicator && !isPhysicalWorkOnly) {
+        // DEBUG: Log the matching sentence
+        logger.debug(`📍 Sentence ${i} matches: verb=${hasVerb}, term=${hasTerm}, sentence="${sentence.substring(0, 100)}..."`);
+        
         // Include surrounding sentences for context (up to 4 sentences total)
         const contextStart = Math.max(0, i - 1);  // 1 sentence before
         const contextEnd = Math.min(sentences.length, i + 3);  // 2 sentences after
@@ -1176,8 +1184,13 @@ Answer with just YES or NO.`;
         // CRITICAL: Verify the quote contains the target term
         // Prevents returning quotes that match on verbs but not the actual topic
         const quoteHasTerm = terms.some(t => quote.toLowerCase().includes(t.toLowerCase()));
+        
+        logger.debug(`💬 Quote validation: hasTerm=${quoteHasTerm}, quote="${quote.substring(0, 150)}..."`);
+        
         if (!quoteHasTerm) {
           // This sentence matched, but the expanded context lost the term
+          logger.debug(`⚠️ Expanded context lost the term, trying core sentence only`);
+
           // Try extracting without context expansion
           const coreQuote = sentence.trim();
           const coreHasTerm = terms.some(t => coreQuote.toLowerCase().includes(t.toLowerCase()));
@@ -1185,6 +1198,17 @@ Answer with just YES or NO.`;
             continue; // Skip this match, term not actually in extracted text
           }
           return coreQuote;
+        }
+
+        // EXTRA: For acoustic assessments, validate quote mentions actual noise/acoustic terms
+        // (not just generic terms that could match elsewhere)
+        if (targetReportType.toLowerCase() === "acoustic") {
+          const acousticTerms = ["noise", "sound", "vibration", "acoustic", "db(a)", "dba", "decibel", "laeq", "nir"];
+          const hasAcousticTerm = acousticTerms.some(t => quote.toLowerCase().includes(t));
+          if (!hasAcousticTerm) {
+            logger.debug(`⚠️ Acoustic quote rejected - doesn't mention core acoustic terms (noise/sound/vibration)`);
+            continue; // Skip this, it's not really about acoustics
+          }
         }
 
         // If quote is still very long, truncate intelligently at sentence boundary
@@ -1225,6 +1249,16 @@ Answer with just YES or NO.`;
             continue; // Skip if expanded context lost the term
           }
 
+          // EXTRA: For acoustic assessments, validate quote mentions actual noise/acoustic terms
+          if (targetReportType.toLowerCase() === "acoustic") {
+            const acousticTerms = ["noise", "sound", "vibration", "acoustic", "db(a)", "dba", "decibel", "laeq", "nir"];
+            const hasAcousticTerm = acousticTerms.some(t => quote.toLowerCase().includes(t));
+            if (!hasAcousticTerm) {
+              logger.debug(`⚠️ Acoustic combo quote rejected - doesn't mention core acoustic terms`);
+              continue; // Skip this, it's not really about acoustics
+            }
+          }
+
           if (quote.length > 600) {
             const truncQuote = sentences.slice(i, Math.min(sentences.length, i + 3)).join(' ').trim();
             const truncHasTerm = terms.some(t => truncQuote.toLowerCase().includes(t.toLowerCase()));
@@ -1242,9 +1276,13 @@ Answer with just YES or NO.`;
     // Fallback: Be generous for lead generation
     // Return any mention of the topic that isn't obviously physical work only
     // BUT ensure the returned quote actually contains the target term
+    logger.debug(`💭 Main extraction failed, trying fallback for terms: ${terms.join(', ')}`);
+    
     for (const term of terms) {
       const idx = textLower.indexOf(term);
       if (idx !== -1) {
+        logger.debug(`🔍 Fallback found term "${term}" at position ${idx}`);
+
         // Find sentence boundaries for cleaner quote
         const sentenceStart = this.findSentenceStart(textLower, idx);
         const sentenceEnd = this.findSentenceEnd(textLower, idx);
@@ -1256,6 +1294,7 @@ Answer with just YES or NO.`;
 
         // Skip if it's physical work WITHOUT any document/report reference
         if (hasPhysicalWork && !hasDocumentIndicator) {
+          logger.debug(`⚠️ Skipping physical work term "${term}" (no document indicator)`);
           continue;  // Try next term
         }
 
@@ -1274,12 +1313,24 @@ Answer with just YES or NO.`;
         // CRITICAL: Verify the returned quote actually contains the target term
         // This prevents returning quotes that mention "requests" but not the topic
         if (quote.toLowerCase().includes(term.toLowerCase())) {
+          // EXTRA: For acoustic, ensure quote mentions actual acoustic terms
+          if (targetReportType.toLowerCase() === "acoustic") {
+            const acousticTerms = ["noise", "sound", "vibration", "acoustic", "db(a)", "dba", "decibel", "laeq", "nir"];
+            const hasAcousticTerm = acousticTerms.some(t => quote.toLowerCase().includes(t));
+            if (!hasAcousticTerm) {
+              logger.debug(`⚠️ Fallback acoustic quote rejected - doesn't mention core acoustic terms`);
+              continue; // Try next term
+            }
+          }
+          
+          logger.debug(`✅ FALLBACK SUCCESSFUL - Term: "${term}" | Quote length: ${quote.length} | Quote: "${quote.substring(0, 150)}..."`);
           return quote;
         }
         // If quote doesn't contain the term, try next term
       }
     }
 
+    logger.debug(`❌ FALLBACK EXHAUSTED - No valid quote found for any term. Returning default.`);
     return 'Match confirmed by AI but no specific quote extracted';
   }
 
