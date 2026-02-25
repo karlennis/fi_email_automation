@@ -1097,6 +1097,17 @@ Answer with just YES or NO.`;
       "results section"
     ];
 
+    // Consultee-to-authority patterns - consultee asking planning authority to attach conditions
+    // NOT an FI request to the applicant
+    const consulteeToAuthorityPatterns = [
+      "respectfully requests that, in the event of a grant of permission",
+      "requests that, in the event of a grant of permission, a condition",
+      "in the event of a grant of permission, a condition is attached",
+      "condition is attached requiring",
+      "requests that a condition be attached",
+      "respectfully requests that a condition"
+    ];
+
     // Physical work indicators - these suggest a request for PHYSICAL WORK
     // not a document/report. Reject if these appear WITH topic terms but WITHOUT document terms
     // e.g., "provide noise insulation" = physical work, NOT a noise report request
@@ -1165,16 +1176,17 @@ Answer with just YES or NO.`;
       const hasVerb = requestVerbs.some(v => sentence.includes(v));
       const hasTerm = terms.some(t => sentence.includes(t));
       const hasResponseIndicator = responseIndicators.some(r => sentence.includes(r));
+      const hasConsulteeToAuthority = consulteeToAuthorityPatterns.some(p => sentence.includes(p));
       const hasPhysicalWork = physicalWorkIndicators.some(p => sentence.includes(p));
       const hasDocumentIndicator = documentIndicators.some(d => sentence.includes(d));
 
       // Reject if it's physical work without any document reference
       const isPhysicalWorkOnly = hasPhysicalWork && !hasDocumentIndicator;
 
-      if (hasVerb && hasTerm && !hasResponseIndicator && !isPhysicalWorkOnly) {
+      if (hasVerb && hasTerm && !hasResponseIndicator && !hasConsulteeToAuthority && !isPhysicalWorkOnly) {
         // DEBUG: Log the matching sentence
         logger.debug(`📍 Sentence ${i} matches: verb=${hasVerb}, term=${hasTerm}, sentence="${sentence.substring(0, 100)}..."`);
-        
+
         // Include surrounding sentences for context (up to 4 sentences total)
         const contextStart = Math.max(0, i - 1);  // 1 sentence before
         const contextEnd = Math.min(sentences.length, i + 3);  // 2 sentences after
@@ -1184,9 +1196,9 @@ Answer with just YES or NO.`;
         // CRITICAL: Verify the quote contains the target term
         // Prevents returning quotes that match on verbs but not the actual topic
         const quoteHasTerm = terms.some(t => quote.toLowerCase().includes(t.toLowerCase()));
-        
+
         logger.debug(`💬 Quote validation: hasTerm=${quoteHasTerm}, quote="${quote.substring(0, 150)}..."`);
-        
+
         if (!quoteHasTerm) {
           // This sentence matched, but the expanded context lost the term
           logger.debug(`⚠️ Expanded context lost the term, trying core sentence only`);
@@ -1200,6 +1212,14 @@ Answer with just YES or NO.`;
           return coreQuote;
         }
 
+        // EXTRA: Check if expanded context introduced consultee-to-authority patterns
+        const quoteLower1 = quote.toLowerCase();
+        const quoteHasConsulteeToAuthority = consulteeToAuthorityPatterns.some(p => quoteLower1.includes(p));
+        if (quoteHasConsulteeToAuthority) {
+          logger.debug(`⚠️ Expanded quote contains consultee-to-authority pattern, skipping`);
+          continue; // Try next sentence
+        }
+
         // EXTRA: For acoustic assessments, validate quote mentions actual noise/acoustic terms
         // (not just generic terms that could match elsewhere)
         if (targetReportType.toLowerCase() === "acoustic") {
@@ -1209,6 +1229,22 @@ Answer with just YES or NO.`;
             logger.debug(`⚠️ Acoustic quote rejected - doesn't mention core acoustic terms (noise/sound/vibration)`);
             continue; // Skip this, it's not really about acoustics
           }
+        }
+
+        // FINAL VALIDATION: Ensure the expanded quote STILL contains FI request language
+        // This prevents returning context that lost the request verbs
+        const quoteHasVerb = requestVerbs.some(v => quote.toLowerCase().includes(v));
+        if (!quoteHasVerb) {
+          logger.debug(`⚠️ Expanded quote lost FI request verbs, trying core sentence only`);
+          const coreQuote = sentence.trim();
+          const coreHasVerb = requestVerbs.some(v => coreQuote.toLowerCase().includes(v));
+          const coreHasAcoustic = targetReportType.toLowerCase() !== "acoustic" || 
+            ["noise", "sound", "vibration", "acoustic", "db(a)", "dba", "decibel", "laeq", "nir"].some(t => coreQuote.toLowerCase().includes(t));
+          
+          if (coreHasVerb && coreHasAcoustic) {
+            return coreQuote;
+          }
+          continue; // Skip if even core sentence doesn't work
         }
 
         // If quote is still very long, truncate intelligently at sentence boundary
@@ -1232,11 +1268,12 @@ Answer with just YES or NO.`;
         const hasVerb2 = requestVerbs.some(v => combo.includes(v));
         const hasTerm2 = terms.some(t => combo.includes(t));
         const hasResponse2 = responseIndicators.some(r => combo.includes(r));
+        const hasConsulteeToAuthority2 = consulteeToAuthorityPatterns.some(p => combo.includes(p));
         const hasPhysical2 = physicalWorkIndicators.some(p => combo.includes(p));
         const hasDoc2 = documentIndicators.some(d => combo.includes(d));
         const isPhysicalOnly2 = hasPhysical2 && !hasDoc2;
 
-        if (hasVerb2 && hasTerm2 && !hasResponse2 && !isPhysicalOnly2) {
+        if (hasVerb2 && hasTerm2 && !hasResponse2 && !hasConsulteeToAuthority2 && !isPhysicalOnly2) {
           // Include more context (up to 4 sentences)
           const contextStart = Math.max(0, i - 1);
           const contextEnd = Math.min(sentences.length, i + 4);
@@ -1249,6 +1286,14 @@ Answer with just YES or NO.`;
             continue; // Skip if expanded context lost the term
           }
 
+          // EXTRA: Check if expanded context introduced consultee-to-authority patterns
+          const quoteLower2 = quote.toLowerCase();
+          const quoteHasConsulteeToAuthority = consulteeToAuthorityPatterns.some(p => quoteLower2.includes(p));
+          if (quoteHasConsulteeToAuthority) {
+            logger.debug(`⚠️ Combo quote contains consultee-to-authority pattern, skipping`);
+            continue; // Try next sentence combo
+          }
+
           // EXTRA: For acoustic assessments, validate quote mentions actual noise/acoustic terms
           if (targetReportType.toLowerCase() === "acoustic") {
             const acousticTerms = ["noise", "sound", "vibration", "acoustic", "db(a)", "dba", "decibel", "laeq", "nir"];
@@ -1257,6 +1302,13 @@ Answer with just YES or NO.`;
               logger.debug(`⚠️ Acoustic combo quote rejected - doesn't mention core acoustic terms`);
               continue; // Skip this, it's not really about acoustics
             }
+          }
+
+          // FINAL VALIDATION: Ensure the expanded combo quote STILL contains FI request language
+          const quoteHasVerb = requestVerbs.some(v => quote.toLowerCase().includes(v));
+          if (!quoteHasVerb) {
+            logger.debug(`⚠️ Expanded combo quote lost FI request verbs, skipping`);
+            continue; // Try next combo
           }
 
           if (quote.length > 600) {
@@ -1277,7 +1329,7 @@ Answer with just YES or NO.`;
     // Return any mention of the topic that isn't obviously physical work only
     // BUT ensure the returned quote actually contains the target term
     logger.debug(`💭 Main extraction failed, trying fallback for terms: ${terms.join(', ')}`);
-    
+
     for (const term of terms) {
       const idx = textLower.indexOf(term);
       if (idx !== -1) {
@@ -1291,6 +1343,13 @@ Answer with just YES or NO.`;
         const sentenceText = textLower.substring(sentenceStart, sentenceEnd);
         const hasPhysicalWork = physicalWorkIndicators.some(p => sentenceText.includes(p));
         const hasDocumentIndicator = documentIndicators.some(d => sentenceText.includes(d));
+        const hasConsulteeToAuthority = consulteeToAuthorityPatterns.some(p => sentenceText.includes(p));
+
+        // Skip if it's a consultee-to-authority request (not FI to applicant)
+        if (hasConsulteeToAuthority) {
+          logger.debug(`⚠️ Skipping consultee-to-authority pattern in term "${term}"`);
+          continue;  // Try next term
+        }
 
         // Skip if it's physical work WITHOUT any document/report reference
         if (hasPhysicalWork && !hasDocumentIndicator) {
@@ -1313,6 +1372,14 @@ Answer with just YES or NO.`;
         // CRITICAL: Verify the returned quote actually contains the target term
         // This prevents returning quotes that mention "requests" but not the topic
         if (quote.toLowerCase().includes(term.toLowerCase())) {
+          // Check if expanded quote contains consultee-to-authority patterns
+          const quoteLower3 = quote.toLowerCase();
+          const quoteHasConsulteeToAuthority = consulteeToAuthorityPatterns.some(p => quoteLower3.includes(p));
+          if (quoteHasConsulteeToAuthority) {
+            logger.debug(`⚠️ Expanded quote contains consultee-to-authority pattern, skipping`);
+            continue; // Try next term
+          }
+
           // EXTRA: For acoustic, ensure quote mentions actual acoustic terms
           if (targetReportType.toLowerCase() === "acoustic") {
             const acousticTerms = ["noise", "sound", "vibration", "acoustic", "db(a)", "dba", "decibel", "laeq", "nir"];
@@ -1322,7 +1389,16 @@ Answer with just YES or NO.`;
               continue; // Try next term
             }
           }
-          
+
+          // CRITICAL: Fallback quotes must ALSO contain FI request language
+          // Don't return quotes that just mention the topic without any request context
+          const quoteLower4 = quote.toLowerCase();
+          const quoteHasVerb = requestVerbs.some(v => quoteLower4.includes(v));
+          if (!quoteHasVerb) {
+            logger.debug(`⚠️ Fallback quote rejected - no FI request verbs present`);
+            continue; // Try next term
+          }
+
           logger.debug(`✅ FALLBACK SUCCESSFUL - Term: "${term}" | Quote length: ${quote.length} | Quote: "${quote.substring(0, 150)}..."`);
           return quote;
         }
