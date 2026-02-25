@@ -1173,11 +1173,31 @@ Answer with just YES or NO.`;
         const contextSentences = sentences.slice(contextStart, contextEnd);
         const quote = contextSentences.join(' ').trim();
 
+        // CRITICAL: Verify the quote contains the target term
+        // Prevents returning quotes that match on verbs but not the actual topic
+        const quoteHasTerm = terms.some(t => quote.toLowerCase().includes(t.toLowerCase()));
+        if (!quoteHasTerm) {
+          // This sentence matched, but the expanded context lost the term
+          // Try extracting without context expansion
+          const coreQuote = sentence.trim();
+          const coreHasTerm = terms.some(t => coreQuote.toLowerCase().includes(t.toLowerCase()));
+          if (!coreHasTerm) {
+            continue; // Skip this match, term not actually in extracted text
+          }
+          return coreQuote;
+        }
+
         // If quote is still very long, truncate intelligently at sentence boundary
         if (quote.length > 600) {
           // Keep the core matching sentence + immediate context
           const coreSentences = sentences.slice(i, Math.min(sentences.length, i + 3));
-          return coreSentences.join(' ').trim();
+          const truncQuote = coreSentences.join(' ').trim();
+          // Verify truncated quote still has term
+          const truncHasTerm = terms.some(t => truncQuote.toLowerCase().includes(t.toLowerCase()));
+          if (truncHasTerm) {
+            return truncQuote;
+          }
+          continue; // Skip if truncation loses the term
         }
         return quote;
       }
@@ -1199,10 +1219,22 @@ Answer with just YES or NO.`;
           const contextSentences = sentences.slice(contextStart, contextEnd);
           const quote = contextSentences.join(' ').trim();
 
+          // CRITICAL: Verify combo quote contains target term
+          const comboHasTerm = terms.some(t => quote.toLowerCase().includes(t.toLowerCase()));
+          if (!comboHasTerm) {
+            continue; // Skip if expanded context lost the term
+          }
+
           if (quote.length > 600) {
-            return sentences.slice(i, Math.min(sentences.length, i + 3)).join(' ').trim();
+            const truncQuote = sentences.slice(i, Math.min(sentences.length, i + 3)).join(' ').trim();
+            const truncHasTerm = terms.some(t => truncQuote.toLowerCase().includes(t.toLowerCase()));
+            if (truncHasTerm) {
+              return truncQuote;
+            }
+            continue; // Skip if truncation loses term
           }
           return quote;
+
         }
       }
     }
@@ -1238,7 +1270,7 @@ Answer with just YES or NO.`;
         }
 
         const quote = documentText.substring(start, end).trim();
-        
+
         // CRITICAL: Verify the returned quote actually contains the target term
         // This prevents returning quotes that mention "requests" but not the topic
         if (quote.toLowerCase().includes(term.toLowerCase())) {
