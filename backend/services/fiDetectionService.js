@@ -790,7 +790,7 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
     ];
 
     const isApplicantResponding = applicantSpeakingPatterns.some(p => textLower.includes(p));
-    
+
     if (isApplicantResponding) {
       // This looks like applicant submitting/enclosing documents (response, not request)
       // But allow it through if there's also clear authority language OR recommendation language
@@ -811,7 +811,7 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
       ];
 
       const hasAuthorityOrRecommendation = authorityOrRecommendationLanguage.some(p => textLower.includes(p));
-      
+
       // If applicant is speaking but there's no authority/recommendation language, reject
       if (!hasAuthorityOrRecommendation) {
         return false;
@@ -1027,7 +1027,7 @@ Answer with just YES or NO.`;
 
         // POST-AI VALIDATION: Verify the validation quote mentions the target report type
         // Sanity check: if quote exists, ensure it's about the right topic
-        if (validationQuote && validationQuote !== 'No specific quote extracted' && 
+        if (validationQuote && validationQuote !== 'No specific quote extracted' &&
             validationQuote !== 'Match confirmed by AI but no specific quote extracted') {
           const reportTypeTerms = {
             "acoustic": ["noise", "sound", "acoustic", "decibel", "db", "vibration"],
@@ -1162,7 +1162,7 @@ Answer with just YES or NO.`;
       const hasResponseIndicator = responseIndicators.some(r => sentence.includes(r));
       const hasPhysicalWork = physicalWorkIndicators.some(p => sentence.includes(p));
       const hasDocumentIndicator = documentIndicators.some(d => sentence.includes(d));
-      
+
       // Reject if it's physical work without any document reference
       const isPhysicalWorkOnly = hasPhysicalWork && !hasDocumentIndicator;
 
@@ -1191,7 +1191,7 @@ Answer with just YES or NO.`;
         const hasPhysical2 = physicalWorkIndicators.some(p => combo.includes(p));
         const hasDoc2 = documentIndicators.some(d => combo.includes(d));
         const isPhysicalOnly2 = hasPhysical2 && !hasDoc2;
-        
+
         if (hasVerb2 && hasTerm2 && !hasResponse2 && !isPhysicalOnly2) {
           // Include more context (up to 4 sentences)
           const contextStart = Math.max(0, i - 1);
@@ -1209,6 +1209,7 @@ Answer with just YES or NO.`;
 
     // Fallback: Be generous for lead generation
     // Return any mention of the topic that isn't obviously physical work only
+    // BUT ensure the returned quote actually contains the target term
     for (const term of terms) {
       const idx = textLower.indexOf(term);
       if (idx !== -1) {
@@ -1220,9 +1221,8 @@ Answer with just YES or NO.`;
         const sentenceText = textLower.substring(sentenceStart, sentenceEnd);
         const hasPhysicalWork = physicalWorkIndicators.some(p => sentenceText.includes(p));
         const hasDocumentIndicator = documentIndicators.some(d => sentenceText.includes(d));
-        
-        // Skip only if it's physical work WITHOUT any document/report reference
-        // Otherwise include it even if it's just mentioning the topic (lead generation)
+
+        // Skip if it's physical work WITHOUT any document/report reference
         if (hasPhysicalWork && !hasDocumentIndicator) {
           continue;  // Try next term
         }
@@ -1237,7 +1237,14 @@ Answer with just YES or NO.`;
           end = nextEnd;
         }
 
-        return documentText.substring(start, end).trim();
+        const quote = documentText.substring(start, end).trim();
+        
+        // CRITICAL: Verify the returned quote actually contains the target term
+        // This prevents returning quotes that mention "requests" but not the topic
+        if (quote.toLowerCase().includes(term.toLowerCase())) {
+          return quote;
+        }
+        // If quote doesn't contain the term, try next term
       }
     }
 
