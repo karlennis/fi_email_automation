@@ -982,14 +982,14 @@ class ScanJobProcessor {
                         // Get filters from customer document
                         const customerFilters = customer.customerId.filters || {};
                         const hasFilters = (customerFilters.allowedCounties?.length > 0) || (customerFilters.allowedSectors?.length > 0);
-                        
+
                         // Debug log customer filter setup
                         if (hasFilters) {
                             logger.info(`📋 Customer ${email} loaded with filters - Counties: [${(customerFilters.allowedCounties || []).join(', ')}], Sectors: [${(customerFilters.allowedSectors || []).join(', ')}]`);
                         } else {
                             logger.debug(`📋 Customer ${email} has no subscription filters (receives all matches)`);
                         }
-                        
+
                         customerMatchesMap.set(email, {
                             customerId: customer.customerId._id.toString(), // Store MongoDB _id for FIReport
                             email: email,

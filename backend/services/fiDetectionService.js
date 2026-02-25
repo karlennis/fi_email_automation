@@ -715,15 +715,19 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
       return false;
     }
 
-    // GATE 4: Construction noise rejection
-    const constructionNoisePatterns = [
-      "laeq", "construction phase", "hours monday to friday",
-      "site development works shall be confined", "db(a)",
-      "best practicable means to prevent/minimise noise"
+    // GATE 4: Construction phase rejection (existing plans only)
+    // Reject if it's discussing an EXISTING construction management plan, not requesting one
+    // These patterns indicate an already-submitted construction management plan being discussed
+    const existingConstructionPlanPatterns = [
+      "construction management plan submitted",
+      "cmp submitted", "cmp been submitted",
+      "construction phase management plan",
+      "site development works shall be confined to",
+      "best practicable means to prevent/minimise noise" // Actual sound reduction method, not request
     ];
 
     if (keywordLower === "acoustic" || relatedTerms[keywordLower]?.includes("noise")) {
-      if (constructionNoisePatterns.some(p => textLower.includes(p))) {
+      if (existingConstructionPlanPatterns.some(p => textLower.includes(p))) {
         return false;
       }
     }
@@ -732,7 +736,12 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
     const requestVerbs = [
       "submit", "provide", "prepare", "carry out", "undertake", "produce",
       "supply", "is required to", "is requested to", "should be submitted",
-      "must be provided", "needs to be"
+      "must be provided", "needs to be", "shall submit", "shall provide",
+      "require that", "requires that", "should", "should be",
+      "advise that", "we advise", "we require", "we recommend",
+      "recommend that", "recommends that", "recommend the",
+      "would require", "would recommend", "further information",
+      "clarification is required", "clarification is needed"
     ];
 
     const reportTypeTerms = relatedTerms[keywordLower] || [keywordLower];
@@ -770,20 +779,44 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
       return false;
     }
 
-    // GATE 6: Directionality
-    const authorityToApplicantMarkers = [
-      "the applicant is requested",
-      "you are requested",
-      "please submit",
-      "the planning authority requests",
-      "the planning authority requires",
-      "council requires",
-      "council requests",
+    // GATE 6: Soft Directionality Check
+    // Only reject if it's clearly the APPLICANT responding, not authority requesting
+    // Allow recommendations, variations in phrasing, and let AI judge the nuance
+    const applicantSpeakingPatterns = [
+      "we enclose", "we submit", "we provide",
+      "enclosed please find", "attached please find",
+      "please find enclosed", "please find attached",
+      "we have enclosed", "we have attached"
     ];
 
-    const hasDirectionality = authorityToApplicantMarkers.some(m => textLower.includes(m));
-    if (!hasDirectionality) {
-      return false;
+    const isApplicantResponding = applicantSpeakingPatterns.some(p => textLower.includes(p));
+    
+    if (isApplicantResponding) {
+      // This looks like applicant submitting/enclosing documents (response, not request)
+      // But allow it through if there's also clear authority language OR recommendation language
+      const authorityOrRecommendationLanguage = [
+        "the applicant is requested",
+        "you are requested",
+        "please submit",
+        "the planning authority",
+        "council requires",
+        "council requests",
+        "would recommend",
+        "recommends",
+        "this service",
+        "environmental health",
+        "highways",
+        "further information required",
+        "further information is required"
+      ];
+
+      const hasAuthorityOrRecommendation = authorityOrRecommendationLanguage.some(p => textLower.includes(p));
+      
+      // If applicant is speaking but there's no authority/recommendation language, reject
+      if (!hasAuthorityOrRecommendation) {
+        return false;
+      }
+      // Otherwise, it's a mixed document (might be FI with applicant response) - allow it through
     }
 
     // ACCOUNTABILITY: Store the matching sentence for logging
@@ -992,9 +1025,10 @@ Answer with just YES or NO.`;
       if (result.requestsReportType) {
         validationQuote = this.extractValidationQuote(documentText, targetReportType);
 
-        // POST-AI VALIDATION: Verify the validation quote actually mentions the target report type
-        // This catches false positives where AI says "yes" but can't find actual request text
-        if (validationQuote && validationQuote !== 'No specific quote extracted') {
+        // POST-AI VALIDATION: Verify the validation quote mentions the target report type
+        // Sanity check: if quote exists, ensure it's about the right topic
+        if (validationQuote && validationQuote !== 'No specific quote extracted' && 
+            validationQuote !== 'Match confirmed by AI but no specific quote extracted') {
           const reportTypeTerms = {
             "acoustic": ["noise", "sound", "acoustic", "decibel", "db", "vibration"],
             "transport": ["traffic", "vehicle", "highway", "road", "parking", "transport", "mobility"],
@@ -1010,20 +1044,13 @@ Answer with just YES or NO.`;
           );
 
           if (!quoteContainsReportType) {
-            logger.info(`Post-AI validation failed: Quote doesn't mention ${targetReportType}. Quote: "${validationQuote.substring(0, 100)}..."`);
-            return {
-              matches: false,
-              validationQuote: `Rejected: AI matched but validation quote doesn't mention ${targetReportType}`
-            };
+            logger.info(`Post-AI validation: Quote doesn't mention ${targetReportType}, using fallback. Quote: "${validationQuote.substring(0, 100)}..."`);
+            // Don't reject - AI has already validated, just use generic fallback
+            validationQuote = 'Match confirmed by AI but no specific quote extracted';
           }
-        } else {
-          // No validation quote found - reject
-          logger.info(`Post-AI validation failed: No validation quote found for ${targetReportType}`);
-          return {
-            matches: false,
-            validationQuote: 'Rejected: No validation quote containing request found'
-          };
         }
+        // If no quote or weak quote found, that's ok - AI already validated it as FI request
+
       }
 
       return {
@@ -1046,7 +1073,8 @@ Answer with just YES or NO.`;
       "supply", "required", "requested", "necessary", "should be submitted",
       "must be provided", "needs to be", "please submit", "you are requested",
       "the applicant is requested", "further information", "clarification",
-      "would recommend", "recommends", "recommend that"
+      "would recommend", "recommends", "recommend that", "applicant should",
+      "applicant must", "is required to submit", "shall submit", "shall provide"
     ];
 
     // Response document indicators - if we see these, it's NOT a request
@@ -1064,6 +1092,51 @@ Answer with just YES or NO.`;
       "results section"
     ];
 
+    // Physical work indicators - these suggest a request for PHYSICAL WORK
+    // not a document/report. Reject if these appear WITH topic terms but WITHOUT document terms
+    // e.g., "provide noise insulation" = physical work, NOT a noise report request
+    const physicalWorkIndicators = [
+      "insulation",
+      "glazing",
+      "double glazing",
+      "triple glazing",
+      "acoustic glazing",
+      "sound insulation",
+      "noise barrier",
+      "barrier",
+      "install",
+      "construct",
+      "erect",
+      "build",
+      "fit",
+      "upgrade windows",
+      "upgrade glazing",
+      "protected by",
+      "shall be protected"
+    ];
+
+    // Document type indicators - if present, override physical work rejection
+    // because "noise insulation assessment" IS a valid document request
+    const documentIndicators = [
+      "report",
+      "assessment",
+      "study",
+      "survey",
+      "analysis",
+      "appraisal",
+      "evaluation",
+      "statement",
+      "investigation",
+      "certificate",
+      "audit",
+      "plan",
+      "scheme",
+      "strategy",
+      "specification",
+      "drawing",
+      "calculations"
+    ];
+
     const reportTypeTerms = {
       "acoustic": ["noise", "sound", "acoustic", "decibel", "db", "vibration", "noise assessment", "sound level", "noise impact"],
       "transport": ["traffic", "vehicle", "highway", "road", "parking", "transport assessment", "car park", "mobility", "transport"],
@@ -1079,15 +1152,21 @@ Answer with just YES or NO.`;
     const sentences = this.splitIntoSentences(textLower);
     const terms = reportTypeTerms[targetReportType.toLowerCase()] || [targetReportType.toLowerCase()];
 
-    // Find sentences with both request verbs and report type terms
-    // BUT reject if it contains response/report language
+    // Find sentences with request verbs and report type terms
+    // Reject if it's about physical work (e.g., "provide insulation") but NOT a document
+    // Accept if it has document indicators OR doesn't have physical work indicators
     for (let i = 0; i < sentences.length; i++) {
       const sentence = sentences[i];
       const hasVerb = requestVerbs.some(v => sentence.includes(v));
       const hasTerm = terms.some(t => sentence.includes(t));
       const hasResponseIndicator = responseIndicators.some(r => sentence.includes(r));
+      const hasPhysicalWork = physicalWorkIndicators.some(p => sentence.includes(p));
+      const hasDocumentIndicator = documentIndicators.some(d => sentence.includes(d));
+      
+      // Reject if it's physical work without any document reference
+      const isPhysicalWorkOnly = hasPhysicalWork && !hasDocumentIndicator;
 
-      if (hasVerb && hasTerm && !hasResponseIndicator) {
+      if (hasVerb && hasTerm && !hasResponseIndicator && !isPhysicalWorkOnly) {
         // Include surrounding sentences for context (up to 4 sentences total)
         const contextStart = Math.max(0, i - 1);  // 1 sentence before
         const contextEnd = Math.min(sentences.length, i + 3);  // 2 sentences after
@@ -1109,7 +1188,11 @@ Answer with just YES or NO.`;
         const hasVerb2 = requestVerbs.some(v => combo.includes(v));
         const hasTerm2 = terms.some(t => combo.includes(t));
         const hasResponse2 = responseIndicators.some(r => combo.includes(r));
-        if (hasVerb2 && hasTerm2 && !hasResponse2) {
+        const hasPhysical2 = physicalWorkIndicators.some(p => combo.includes(p));
+        const hasDoc2 = documentIndicators.some(d => combo.includes(d));
+        const isPhysicalOnly2 = hasPhysical2 && !hasDoc2;
+        
+        if (hasVerb2 && hasTerm2 && !hasResponse2 && !isPhysicalOnly2) {
           // Include more context (up to 4 sentences)
           const contextStart = Math.max(0, i - 1);
           const contextEnd = Math.min(sentences.length, i + 4);
@@ -1124,13 +1207,25 @@ Answer with just YES or NO.`;
       }
     }
 
-    // Fallback: return mention of report type with expanded context (up to 400 chars)
+    // Fallback: Be generous for lead generation
+    // Return any mention of the topic that isn't obviously physical work only
     for (const term of terms) {
       const idx = textLower.indexOf(term);
       if (idx !== -1) {
         // Find sentence boundaries for cleaner quote
         const sentenceStart = this.findSentenceStart(textLower, idx);
         const sentenceEnd = this.findSentenceEnd(textLower, idx);
+
+        // Extract the sentence text to check for red flags
+        const sentenceText = textLower.substring(sentenceStart, sentenceEnd);
+        const hasPhysicalWork = physicalWorkIndicators.some(p => sentenceText.includes(p));
+        const hasDocumentIndicator = documentIndicators.some(d => sentenceText.includes(d));
+        
+        // Skip only if it's physical work WITHOUT any document/report reference
+        // Otherwise include it even if it's just mentioning the topic (lead generation)
+        if (hasPhysicalWork && !hasDocumentIndicator) {
+          continue;  // Try next term
+        }
 
         // Expand to include adjacent sentences if not too long
         let start = sentenceStart;

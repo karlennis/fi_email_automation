@@ -122,15 +122,22 @@ Respond in the following JSON format:
   "keyIndicators": ["list of key terms or elements found"]
 }
 
-Consider:
-- Document title and headers
-- Author/consultant name (common acoustic consultants: AWN, AECOM, Arup, Noise Consultants, etc.)
-- Presence of noise measurement data, sound level tables, or acoustic terminology
-- References to BS 4142, ISO 1996, WHO guidelines, or Irish noise guidance
-- Planning authority letterhead requesting acoustic information
+For ACOUSTIC_REPORT, look for:
+- Document title indicating it's a report/assessment
+- Author/consultant name (acoustic consultants: AWN, AECOM, Arup, SoundPLAN, etc.)
+- Presence of noise measurement data, sound level tables, decibel readings, or acoustic terminology
+- References to standards like BS 4142, ISO 1996, WHO guidelines
 - Professional formatting typical of acoustic assessment reports
+- Report structure (methodology, results, conclusions/recommendations)
 
-Be conservative: only classify as ACOUSTIC_REPORT or FI_REQUEST_ACOUSTIC if you have strong evidence.`;
+For FI_REQUEST_ACOUSTIC, look ONLY for:
+- Planning authority letterhead (e.g., "Council Environmental Health", "Planning Authority")
+- EXPLICIT REQUEST LANGUAGE: "must provide", "should submit", "is requested to submit", "further information required", "please provide", "request that applicant"
+- The document MUST be FROM the planning authority TO the applicant
+- Simple context mentions of noise or concerns are NOT FI requests
+- DO NOT classify consultation responses that just mention noise issues as requests
+
+Be VERY STRICT: only classify as FI_REQUEST_ACOUSTIC if the document explicitly asks the applicant to submit information. Simply mentioning noise concerns or impacts does NOT count.`;
   }
 
   /**
