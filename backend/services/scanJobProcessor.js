@@ -391,6 +391,7 @@ class ScanJobProcessor {
                                 job.checkpoint.allMatchDetails = [];
                             }
                             job.checkpoint.allMatchDetails.push({
+                                projectId: document.projectId,
                                 fileName: document.fileName,
                                 fiType: job.documentType,
                                 validationQuote: result.validationQuote || 'No quote captured',
@@ -589,6 +590,7 @@ class ScanJobProcessor {
                 matchesFound: totalMatchesFound,
                 // Include all match details for final summary
                 matches: allMatchDetails.map(m => ({
+                    projectId: m.projectId,
                     fileName: m.fileName,
                     fiType: m.fiType,
                     validationQuote: m.validationQuote?.substring(0, 300) + (m.validationQuote?.length > 300 ? '...' : '')
