@@ -1,12 +1,90 @@
 /**
- * Test Acoustic Quote Validation
+ * Test Acoustic Quote Validation & Evidence Requirements
  * 
- * Verifies that acoustic FI detection returns quotes that actually mention
- * acoustic terms (noise, sound, vibration, etc.) and rejects irrelevant quotes.
+ * Verifies that:
+ * 1. Acoustic FI detection returns quotes with BOTH request language AND acoustic terms
+ * 2. Placeholder quotes are never customer-eligible
+ * 3. Weak evidence (e.g., consultee-to-authority patterns) are rejected
  */
 
 require('dotenv').config();
 const fiDetectionService = require('../services/fiDetectionService');
+
+// Test 1: Evidence validator tests
+console.log('\n' + '='.repeat(80));
+console.log('TEST SUITE 1: Evidence Validator (isValidCustomerEvidence)');
+console.log('='.repeat(80) + '\n');
+
+const evidenceTests = [
+  {
+    name: "PLACEHOLDER: 'Match confirmed by AI' should be INVALID",
+    quote: "Match confirmed by AI but no specific quote extracted",
+    reportType: "acoustic",
+    shouldBeValid: false
+  },
+  {
+    name: "PLACEHOLDER: 'No specific quote extracted' should be INVALID",
+    quote: "No specific quote extracted",
+    reportType: "acoustic",
+    shouldBeValid: false
+  },
+  {
+    name: "WEAK: 'noise insulation' without request verb should be INVALID",
+    quote: "the noise insulation should be provided at no cost",
+    reportType: "acoustic",
+    shouldBeValid: false
+  },
+  {
+    name: "VALID: Request verb + acoustic term should be VALID",
+    quote: "the applicant is requested to submit a noise impact assessment",
+    reportType: "acoustic",
+    shouldBeValid: true
+  },
+  {
+    name: "VALID: Multiple acoustic terms + request should be VALID",
+    quote: "the council requires submission of a revised noise assessment showing sound levels in decibels",
+    reportType: "acoustic",
+    shouldBeValid: true
+  },
+  {
+    name: "INVALID: Recommend without request verb should be INVALID",
+    quote: "the acoustic consultant recommends that noise insulation be added",
+    reportType: "acoustic",
+    shouldBeValid: false
+  },
+  {
+    name: "VALID: 'recommends' with specific request pattern should be VALID",
+    quote: "Environmental Health would recommend the applicant submits a noise impact assessment",
+    reportType: "acoustic",
+    shouldBeValid: true
+  }
+];
+
+let evidencePassed = 0;
+let evidenceFailed = 0;
+
+evidenceTests.forEach((test, idx) => {
+  const isValid = fiDetectionService.isValidCustomerEvidence(test.quote, test.reportType);
+  const testPassed = isValid === test.shouldBeValid;
+  
+  console.log(`${idx + 1}. ${test.name}`);
+  console.log(`   Quote: "${test.quote.substring(0, 80)}..."`);
+  console.log(`   Expected: ${test.shouldBeValid ? '✅ VALID' : '❌ INVALID'} | Got: ${isValid ? '✅ VALID' : '❌ INVALID'}`);
+  console.log(`   Result: ${testPassed ? '✅ PASS' : '❌ FAIL'}\n`);
+  
+  if (testPassed) {
+    evidencePassed++;
+  } else {
+    evidenceFailed++;
+  }
+});
+
+console.log(`Evidence Validator Results: ${evidencePassed}/${evidenceTests.length} passed\n`);
+
+// Test 2: matchFIRequestType integration tests
+console.log('='.repeat(80));
+console.log('TEST SUITE 2: matchFIRequestType Evidence Enforcement');
+console.log('='.repeat(80) + '\n');
 
 // Test cases based on real examples
 const testCases = [

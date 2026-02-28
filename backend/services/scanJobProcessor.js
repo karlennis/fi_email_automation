@@ -916,7 +916,20 @@ class ScanJobProcessor {
                         confidence: 0.95,
                         reasoning: `Document is an FI request asking for ${documentType} report`,
                         needsReview: false,
-                        validationQuote: matchResult.validationQuote || 'No quote captured'
+                        validationQuote: matchResult.validationQuote || 'No quote captured',
+                        hasValidEvidence: matchResult.hasValidEvidence
+                    };
+                } else if (matchResult.aiConfirmedMatchButWeakEvidence) {
+                    // AI said yes but evidence failed - log but don't emit to customer
+                    logger.warn(`⚠️ AI match detected but evidence validation failed for ${fileName} (${documentType})`);
+                    return {
+                        isMatch: false,
+                        stage: 'weak-evidence',
+                        confidence: 0.5,
+                        reasoning: `AI detected ${documentType} request but evidence validation failed`,
+                        needsReview: true, // Flag for internal review
+                        validationQuote: matchResult.validationQuote,
+                        hasValidEvidence: false
                     };
                 } else {
                     return {
@@ -1000,17 +1013,27 @@ class ScanJobProcessor {
                     }
 
                     // Add match with document and project info (including validation quote)
-                    customerMatchesMap.get(email).matches.push({
-                        reportType: job.documentType,
-                        projectId: document.projectId,
-                        documentName: document.fileName,
-                        validationQuote: result.validationQuote || 'No quote captured',
-                        requestingAuthority: 'Planning Authority',
-                        deadline: 'See document for details',
-                        summary: result.reasoning || `FI request detected for ${job.documentType} report`,
-                        specificRequests: result.reasoning || 'See document for specific requirements',
-                        projectMetadata: null // Will be populated below
-                    });
+                    // DEFENSE-IN-DEPTH: Filter weak/placeholder evidence before customer assembly
+                    const validationQuote = result.validationQuote || 'No quote captured';
+                    const isPlaceholder = validationQuote.includes('Match confirmed by AI') ||
+                                          validationQuote.includes('No specific quote extracted') ||
+                                          validationQuote === 'No quote captured';
+                    
+                    if (!isPlaceholder) {
+                        customerMatchesMap.get(email).matches.push({
+                            reportType: job.documentType,
+                            projectId: document.projectId,
+                            documentName: document.fileName,
+                            validationQuote: validationQuote,
+                            requestingAuthority: 'Planning Authority',
+                            deadline: 'See document for details',
+                            summary: result.reasoning || `FI request detected for ${job.documentType} report`,
+                            specificRequests: result.reasoning || 'See document for specific requirements',
+                            projectMetadata: null // Will be populated below
+                        });
+                    } else {
+                        logger.debug(`⏭️ Skipping weak-evidence match for ${document.fileName}: "${validationQuote.substring(0, 80)}..."`);
+                    }
                 }
             }
 

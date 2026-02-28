@@ -406,6 +406,158 @@ class DocumentRegisterService {
     }
   }
 
+  /**
+   * Get ALL project IDs from AWS S3 planning-docs bucket
+   * Performs full scan of all prefixes and exports to CSV
+   */
+  async getAllProjectIdsAndExport() {
+    try {
+      logger.info('🔍 Scanning ALL projects from planning-docs...');
+      logger.info('⚡ This may take a few minutes...');
+
+      const { S3Client, ListObjectsV2Command } = require('@aws-sdk/client-s3');
+
+      // Ensure credentials are available
+      const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+      const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+      const region = process.env.AWS_REGION || 'eu-north-1';
+
+      if (!accessKeyId || !secretAccessKey) {
+        throw new Error('AWS credentials not configured. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables.');
+      }
+
+      const s3Client = new S3Client({
+        region: region,
+        credentials: {
+          accessKeyId: accessKeyId,
+          secretAccessKey: secretAccessKey
+        }
+      });
+      const bucket = process.env.S3_BUCKET || 'planning-documents-2';
+
+      const projectSet = new Set(); // Store unique project IDs
+      const projectDetails = {}; // Store project metadata
+      let continuationToken = null;
+      let objectsScanned = 0;
+      let pagesScanned = 0;
+
+      logger.info('🔍 Scanning all objects in planning-docs/...');
+
+      // Scan ENTIRE bucket
+      while (true) {
+        const command = new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: 'planning-docs/',
+          MaxKeys: 1000,
+          ContinuationToken: continuationToken
+        });
+
+        try {
+          const response = await s3Client.send(command);
+          pagesScanned++;
+
+          if (response.Contents) {
+            response.Contents.forEach(obj => {
+              objectsScanned++;
+              const match = obj.Key.match(/^planning-docs\/([^\/]+)\/(.+)$/);
+              if (match) {
+                const projectId = match[1];
+                const fileName = match[2];
+
+                // Skip empty directories
+                if (fileName && !fileName.endsWith('/') && !fileName.startsWith('.')) {
+                  projectSet.add(projectId);
+
+                  // Track project metadata
+                  if (!projectDetails[projectId]) {
+                    projectDetails[projectId] = {
+                      projectId: projectId,
+                      documentCount: 0,
+                      lastUpdated: null,
+                      mostRecentDocument: null
+                    };
+                  }
+
+                  const project = projectDetails[projectId];
+                  project.documentCount++;
+
+                  if (!project.lastUpdated || new Date(obj.LastModified) > new Date(project.lastUpdated)) {
+                    project.lastUpdated = obj.LastModified;
+                    project.mostRecentDocument = fileName;
+                  }
+                }
+              }
+            });
+          }
+
+          // Progress logging
+          if (objectsScanned % 10000 === 0) {
+            logger.info(`   Progress: Scanned ${objectsScanned.toLocaleString()} objects... (${projectSet.size} unique projects)`);
+          }
+
+          // Continue if there are more results
+          if (!response.IsTruncated) {
+            break;
+          }
+          continuationToken = response.NextContinuationToken;
+
+        } catch (error) {
+          logger.error('S3 API error:', error.message);
+          if (error.$retryable || error.name === 'TimeoutError') {
+            logger.warn('Timeout detected, retrying...');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            continue;
+          }
+          throw error;
+        }
+      }
+
+      logger.info(`\n✅ Scan Complete!`);
+      logger.info(`   📊 Pages Scanned: ${pagesScanned}`);
+      logger.info(`   📦 Objects Scanned: ${objectsScanned.toLocaleString()}`);
+      logger.info(`   🎯 Unique Projects: ${projectSet.size}`);
+
+      // Convert to sorted array
+      const projectsArray = Array.from(projectSet).sort((a, b) => a.localeCompare(b));
+
+      // Export to CSV
+      const csvPath = path.join(this.outputDir, 'all-project-ids.csv');
+      const csvContent = 'project_id\n' + projectsArray.map(id => `"${id}"`).join('\n');
+      fs.writeFileSync(csvPath, csvContent, 'utf-8');
+      logger.info(`\n💾 Exported to CSV: ${csvPath}`);
+
+      // Also export detailed version with metadata
+      const detailedPath = path.join(this.outputDir, 'all-projects-detailed.csv');
+      const detailedContent = 'project_id,document_count,last_updated,most_recent_document\n' +
+        projectsArray
+          .map(id => {
+            const p = projectDetails[id];
+            const date = p.lastUpdated ? new Date(p.lastUpdated).toISOString() : 'N/A';
+            return `"${id}",${p.documentCount},"${date}","${(p.mostRecentDocument || '').replace(/"/g, '""')}"`;
+          })
+          .join('\n');
+      fs.writeFileSync(detailedPath, detailedContent, 'utf-8');
+      logger.info(`📋 Exported detailed version: ${detailedPath}`);
+
+      return {
+        success: true,
+        totalProjects: projectSet.size,
+        totalDocuments: objectsScanned,
+        projectIds: projectsArray,
+        csvFile: csvPath,
+        detailedCsvFile: detailedPath,
+        scanStats: {
+          pagesScanned,
+          objectsScanned
+        }
+      };
+
+    } catch (error) {
+      logger.error('❌ Error getting all projects:', error);
+      throw error;
+    }
+  }
+
   async generateRegister(skipQuickCount = false, targetDate = null) {
     try {
       const isDateSpecific = targetDate !== null;

@@ -1011,7 +1011,9 @@ Answer with just YES or NO.`;
       if (negativeFIIndicators.some(indicator => textLower.includes(indicator))) {
         return {
           matches: false,
-          validationQuote: 'Rejected: Document appears to be a response/decision, not a request'
+          validationQuote: 'Rejected: Document appears to be a response/decision, not a request',
+          hasValidEvidence: false,
+          aiConfirmedMatchButWeakEvidence: false
         };
       }
 
@@ -1049,23 +1051,112 @@ Answer with just YES or NO.`;
           );
 
           if (!quoteContainsReportType) {
-            logger.info(`Post-AI validation: Quote doesn't mention ${targetReportType}, using fallback. Quote: "${validationQuote.substring(0, 100)}..."`);
-            // Don't reject - AI has already validated, just use generic fallback
-            validationQuote = 'Match confirmed by AI but no specific quote extracted';
+            logger.info(`Post-AI validation: Quote doesn't mention ${targetReportType}, marking as no valid evidence. Quote: "${validationQuote.substring(0, 100)}..."`);
+            validationQuote = 'No specific quote extracted';
           }
         }
-        // If no quote or weak quote found, that's ok - AI already validated it as FI request
+      }
 
+      // CRITICAL: Enforce strict evidence validation
+      // If AI says match but quote fails evidence check, reject for customer visibility
+      const hasValidEvidence = this.isValidCustomerEvidence(validationQuote, targetReportType);
+      
+      if (result.requestsReportType && !hasValidEvidence) {
+        logger.warn(`⚠️ AI match detected but evidence validation FAILED for ${targetReportType}. Quote: "${validationQuote.substring(0, 100)}..."`);
+        return {
+          matches: false, // Do NOT emit as customer-eligible
+          validationQuote: validationQuote,
+          hasValidEvidence: false,
+          aiConfirmedMatchButWeakEvidence: true // Flag for internal tracking
+        };
       }
 
       return {
-        matches: result.requestsReportType,
-        validationQuote: validationQuote
+        matches: result.requestsReportType && hasValidEvidence,
+        validationQuote: validationQuote,
+        hasValidEvidence: hasValidEvidence,
+        aiConfirmedMatchButWeakEvidence: !hasValidEvidence && result.requestsReportType
       };
     } catch (error) {
       logger.error('Error matching FI request type:', error);
       throw error;
     }
+  }
+
+  /**
+   * Validate if a quote passes evidence requirements for customer visibility
+   * STRICT: For acoustic, requires BOTH request verb (submit/required/etc) AND acoustic term (noise/sound/etc)
+   * Rejects placeholder quotes outright
+   * Avoids false positives: "provided" in conditions (not a request) vs "applicant to provide" (is a request)
+   * 
+   * @returns {boolean} - true if quote is customer-eligible evidence, false if placeholder/weak
+   */
+  isValidCustomerEvidence(quote, targetReportType = 'acoustic') {
+    if (!quote) return false;
+    
+    // Any placeholder is invalid for customer email
+    if (quote.includes('Match confirmed by AI but no specific quote extracted') ||
+        quote.includes('No specific quote extracted') ||
+        quote.includes('No data rows returned')) {
+      return false;
+    }
+
+    // For acoustic, require BOTH request language AND acoustic terms
+    if (targetReportType.toLowerCase() === 'acoustic') {
+      // Request verbs - be specific to avoid false positives
+      // Focus on: active requests to applicant, or planning authority requirements
+      const requestVerbs = [
+        "submit", "submitted", "submitting",
+        "must submit", "should submit", "shall submit", "is required to submit", "required to submit",
+        "provide", "provided", "providing",
+        "must provide", "should provide", "shall provide", "is required to provide", "required to provide",
+        "prepare", "prepared", "preparing",
+        "carry out", "undertaken", "undertaking", 
+        "produce", "produced", "producing",
+        "further information", "further details", "clarification",
+        "applicant is requested", "applicant should", "applicant must",
+        "applicant to provide", "applicant to submit", "applicant to prepare",
+        "you are requested", "you should", "you must",
+        "requires", "requires that", "required that", "requires the",
+        "would recommend", "recommends", "recommend that", "recommend the applicant",
+        "in relation to"
+      ];
+      
+      const acousticTerms = ["noise", "sound", "vibration", "acoustic", "db", "decibel", "hearing"];
+      
+      const quoteLower = quote.toLowerCase();
+      
+      // Check request verbs - more precise matching
+      const hasRequestVerb = requestVerbs.some(v => {
+        // For multi-word verbs, need exact phrase match
+        if (v.includes(' ')) {
+          return quoteLower.includes(v);
+        }
+        // For single words, check they're part of a request context, not just any occurrence
+        // Avoid false positives like "provided" in "insulation provided by building"
+        if (v === 'provide' || v === 'provided' || v === 'providing') {
+          return /\b(must\s+provide|should\s+provide|shall\s+provide|is\s+required\s+to\s+provide|required\s+to\s+provide|applicant.*provide|submit.*and\s+provide|you.*provide)\b/i.test(quoteLower);
+        }
+        // For other single words, require word boundary
+        return new RegExp(`\\b${v}\\b`).test(quoteLower);
+      });
+      
+      const hasAcousticTerm = acousticTerms.some(t => quoteLower.includes(t));
+      
+      return hasRequestVerb && hasAcousticTerm;
+    }
+
+    // For other report types, just ensure it has the topic term
+    const reportTypeTerms = {
+      "transport": ["traffic", "vehicle", "highway", "road", "parking", "transport", "mobility"],
+      "ecological": ["ecology", "ecological", "habitat", "species", "biodiversity", "wildlife"],
+      "flood": ["flood", "drainage", "suds", "hydrology", "water"],
+      "heritage": ["heritage", "archaeological", "historic", "conservation", "listed"],
+      "lighting": ["lighting", "light", "illumination", "luminaire"]
+    };
+
+    const terms = reportTypeTerms[targetReportType.toLowerCase()] || [targetReportType.toLowerCase()];
+    return terms.some(t => quote.toLowerCase().includes(t));
   }
 
   /**
@@ -1238,9 +1329,9 @@ Answer with just YES or NO.`;
           logger.debug(`⚠️ Expanded quote lost FI request verbs, trying core sentence only`);
           const coreQuote = sentence.trim();
           const coreHasVerb = requestVerbs.some(v => coreQuote.toLowerCase().includes(v));
-          const coreHasAcoustic = targetReportType.toLowerCase() !== "acoustic" || 
+          const coreHasAcoustic = targetReportType.toLowerCase() !== "acoustic" ||
             ["noise", "sound", "vibration", "acoustic", "db(a)", "dba", "decibel", "laeq", "nir"].some(t => coreQuote.toLowerCase().includes(t));
-          
+
           if (coreHasVerb && coreHasAcoustic) {
             return coreQuote;
           }
@@ -1635,8 +1726,14 @@ Answer with just YES or NO.`;
       }
 
       // AI VALIDATION: Step 2 - Does it match the target report type?
-      const matchesTargetType = await this.matchFIRequestType(documentText, targetReportType);
+      const matchResult = await this.matchFIRequestType(documentText, targetReportType);
+      const matchesTargetType = matchResult.matches === true && matchResult.hasValidEvidence === true;
+      
       if (!matchesTargetType) {
+        // If AI detected match but evidence failed, still reject for processFIRequest customer path
+        if (matchResult.aiConfirmedMatchButWeakEvidence) {
+          logger.warn(`📋 processFIRequest: AI match detected but evidence validation failed`);
+        }
         const result = {
           isFIRequest: true,
           matchesTargetType: false,
@@ -1660,7 +1757,7 @@ Answer with just YES or NO.`;
         return result;
       }
 
-      // SUCCESS - Log exact matching phrase
+      // SUCCESS - Log exact matching phrase with validation quote
       const matchingSentence = this._lastMatchingSentence || 'N/A';
       logger.info(`🎯 MATCH | File: ${fileName} | Type: ${targetReportType} | Phrase: "${matchingSentence}"`);
 
@@ -1669,6 +1766,7 @@ Answer with just YES or NO.`;
         matchesTargetType: true,
         extractedInfo,
         matchingSentence, // Include for accountability
+        validationQuote: matchResult.validationQuote,
         detectionMethod: 'ai_full_processing'
       };
 

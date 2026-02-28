@@ -37,6 +37,11 @@ async function main() {
       await showStats();
       break;
 
+    case 'all-projects':
+    case 'export-all':
+      await exportAllProjectIds();
+      break;
+
     case 'help':
     default:
       showHelp();
@@ -194,18 +199,44 @@ async function showCount() {
   }
 }
 
+async function exportAllProjectIds() {
+  try {
+    console.log('🚀 Exporting ALL project IDs from AWS...\n');
+    console.log('⏳ This may take a few minutes (full S3 scan)...\n');
+
+    const result = await documentRegisterService.getAllProjectIdsAndExport();
+
+    console.log('\n✅ Export Complete!\n');
+    console.log(`📊 Statistics:`);
+    console.log(`   Total Projects:  ${result.totalProjects.toLocaleString()}`);
+    console.log(`   Total Documents: ${result.totalDocuments.toLocaleString()}`);
+    console.log(`   Pages Scanned:   ${result.scanStats.pagesScanned}`);
+    console.log(`   Objects Scanned: ${result.scanStats.objectsScanned.toLocaleString()}`);
+    console.log(`\n📁 Output Files:`);
+    console.log(`   Simple CSV: ${result.csvFile}`);
+    console.log(`   Detailed:   ${result.detailedCsvFile}`);
+    console.log('\n✨ Files ready for import into spreadsheet applications!\n');
+  } catch (error) {
+    console.error('❌ Error exporting projects:', error.message);
+    process.exit(1);
+  }
+}
+
 function showHelp() {
   console.log('Usage: node index.js [command]\n');
   console.log('Commands:');
   console.log('  generate, scan  - Generate document register (scan all projects)');
   console.log('  count           - Quick count of projects and documents');
   console.log('  projects        - List first 50 projects with details');
+  console.log('  all-projects    - Export ALL project IDs to CSV (full S3 scan)');
+  console.log('  export-all      - Alias for all-projects');
   console.log('  status          - Show current register status');
   console.log('  stats           - Show detailed statistics');
   console.log('  help            - Show this help message');
   console.log('\nExamples:');
   console.log('  node index.js count');
   console.log('  node index.js projects');
+  console.log('  node index.js all-projects');
   console.log('  node index.js generate');
   console.log('  node index.js status');
   console.log('  node index.js stats');
