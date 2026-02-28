@@ -133,7 +133,12 @@
       </div>
 
       <div class="job-customers">
-        <h4>Customers ({{ job.customers.length || 0 }})</h4>
+        <div class="customers-header">
+          <h4>Customers ({{ job.customers.length || 0 }})</h4>
+          <button class="btn btn-sm btn-success" (click)="openAddCustomersToJobModal(job)" title="Add customers to this job">
+            ➕ Add
+          </button>
+        </div>
         <div class="customer-list" *ngIf="job.customers && job.customers.length > 0">
           <div class="customer-item" *ngFor="let customer of job.customers">
             <div class="customer-info">
@@ -384,6 +389,63 @@
       <button class="btn btn-primary" (click)="executeRunNow()" [disabled]="loading || !runNowTargetDate">
         <span *ngIf="!loading">🚀 Run Scan</span>
         <span *ngIf="loading">Processing...</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Customers to Job Modal -->
+<div class="modal" *ngIf="showAddCustomersToJobModal" (click)="closeAddCustomersToJobModal()">
+  <div class="modal-content" (click)="$event.stopPropagation()">
+    <div class="modal-header">
+      <h2>Add Customers to "{{ selectedJobForAddCustomers?.name }}"</h2>
+      <button class="close-btn" (click)="closeAddCustomersToJobModal()">×</button>
+    </div>
+
+    <div class="modal-body">
+      <p>Select customers to add to this scan job:</p>
+      
+      <input 
+        type="text" 
+        [(ngModel)]="addingToJobSearch" 
+        placeholder="Search by company, email, or project ID..." 
+        class="form-control search-input"
+      >
+
+      <div class="customer-select-list" *ngIf="customersForAddingToJob.length > 0">
+        <div
+          *ngFor="let customer of filteredCustomersForJob"
+          class="customer-select-item"
+          [class.selected]="isCustomerSelectedForJob(customer)"
+          (click)="toggleCustomerForJob(customer)"
+        >
+          <input 
+            type="checkbox" 
+            [checked]="isCustomerSelectedForJob(customer)" 
+            (click)="$event.stopPropagation()"
+          >
+          <div class="customer-select-info">
+            <span class="customer-select-name">{{ customer.company }}</span>
+            <span class="customer-select-detail">{{ customer.email }} • {{ customer.projectId }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="no-customers" *ngIf="customersForAddingToJob.length === 0">
+        <p>All customers are already assigned to this job.</p>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" (click)="closeAddCustomersToJobModal()">
+        Cancel
+      </button>
+      <button 
+        class="btn btn-primary" 
+        (click)="addCustomersToJob()" 
+        [disabled]="selectedCustomersForJob.length === 0"
+      >
+        Add {{ selectedCustomersForJob.length > 0 ? selectedCustomersForJob.length + ' Customer(s)' : 'Customer' }}
       </button>
     </div>
   </div>

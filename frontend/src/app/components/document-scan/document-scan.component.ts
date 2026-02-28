@@ -110,6 +110,13 @@ export class DocumentScanComponent implements OnInit {
   runNowJob: ScanJob | null = null;
   runNowTargetDate: string = '';
 
+  // Add customers to existing job modal
+  showAddCustomersToJobModal = false;
+  selectedJobForAddCustomers: ScanJob | null = null;
+  customersForAddingToJob: Customer[] = [];
+  selectedCustomersForJob: Customer[] = [];
+  addingToJobSearch = '';
+
   // Document register generation
   registerDate: string = '';
   generatingRegister = false;
@@ -412,6 +419,76 @@ export class DocumentScanComponent implements OnInit {
       return customer._id;
     }
     return '';
+  }
+
+  openAddCustomersToJobModal(job: ScanJob) {
+    this.selectedJobForAddCustomers = job;
+    this.showAddCustomersToJobModal = true;
+    this.selectedCustomersForJob = [];
+    this.addingToJobSearch = '';
+
+    // Get list of customers not already in the job
+    const jobCustomerIds = job.customers.map(c => this.getCustomerId(c));
+    this.customersForAddingToJob = this.customers.filter(c => !jobCustomerIds.includes(c._id));
+  }
+
+  closeAddCustomersToJobModal() {
+    this.showAddCustomersToJobModal = false;
+    this.selectedJobForAddCustomers = null;
+    this.selectedCustomersForJob = [];
+    this.addingToJobSearch = '';
+  }
+
+  toggleCustomerForJob(customer: Customer) {
+    const index = this.selectedCustomersForJob.findIndex(c => c._id === customer._id);
+    if (index === -1) {
+      this.selectedCustomersForJob.push(customer);
+    } else {
+      this.selectedCustomersForJob.splice(index, 1);
+    }
+  }
+
+  isCustomerSelectedForJob(customer: Customer): boolean {
+    return this.selectedCustomersForJob.some(c => c._id === customer._id);
+  }
+
+  get filteredCustomersForJob(): Customer[] {
+    if (!this.addingToJobSearch) {
+      return this.customersForAddingToJob;
+    }
+    const search = this.addingToJobSearch.toLowerCase();
+    return this.customersForAddingToJob.filter(c =>
+      c.company.toLowerCase().includes(search) ||
+      c.email.toLowerCase().includes(search) ||
+      c.projectId.toLowerCase().includes(search)
+    );
+  }
+
+  async addCustomersToJob() {
+    if (!this.selectedJobForAddCustomers || this.selectedCustomersForJob.length === 0) {
+      this.error = 'Please select at least one customer';
+      return;
+    }
+
+    try {
+      const payload = {
+        customerIds: this.selectedCustomersForJob.map(c => c._id)
+      };
+
+      await this.http.post(
+        `${this.apiUrl}/jobs/${this.selectedJobForAddCustomers.jobId}/customers`,
+        payload,
+        { headers: this.authService.getAuthHeaders() }
+      ).toPromise();
+
+      this.successMessage = `${this.selectedCustomersForJob.length} customer(s) added to job`;
+      this.closeAddCustomersToJobModal();
+      await this.loadJobs();
+      setTimeout(() => this.successMessage = null, 3000);
+    } catch (err: any) {
+      this.error = err.error?.error || 'Failed to add customers to job';
+      console.error('Error adding customers to job:', err);
+    }
   }
 
   openAddCustomerModal() {
