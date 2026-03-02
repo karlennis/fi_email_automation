@@ -124,17 +124,21 @@ class OptimizedPDFExtractor {
       }
 
       // OCR FALLBACK: If text extraction insufficient, try OCR
-      if (filePath && ocrService.shouldUseOCR(documentText)) {
-        logger.info(`📸 Text extraction insufficient (${documentText.length} chars), attempting OCR fallback...`);
-        try {
-          const ocrText = await ocrService.extractTextViaOCR(filePath);
-          if (ocrText && ocrText.length > documentText.length) {
-            logger.info(`📸 OCR recovered ${ocrText.length} chars (vs ${documentText.length} from PDF extraction)`);
-            documentText = ocrText;
+      if (filePath && documentText.length < 100) {
+        if (ocrService.shouldUseOCR(documentText)) {
+          logger.info(`📸 Text extraction insufficient (${documentText.length} chars), attempting OCR fallback...`);
+          try {
+            const ocrText = await ocrService.extractTextViaOCR(filePath);
+            if (ocrText && ocrText.length > documentText.length) {
+              logger.info(`📸 OCR recovered ${ocrText.length} chars (vs ${documentText.length} from PDF extraction)`);
+              documentText = ocrText;
+            }
+          } catch (ocrError) {
+            logger.debug(`📸 OCR fallback failed: ${ocrError.message}`);
+            // Continue with whatever text we have
           }
-        } catch (ocrError) {
-          logger.debug(`📸 OCR fallback failed: ${ocrError.message}`);
-          // Continue with whatever text we have
+        } else if (documentText.length === 0) {
+          logger.debug(`📸 OCR skipped: pdftoppm not available (scanned PDFs cannot be processed)`);
         }
       }
 

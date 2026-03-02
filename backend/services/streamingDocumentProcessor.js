@@ -1,4 +1,4 @@
-const fs = require('fs').promises;
+const fs = require('fs');
 const path = require('path');
 const winston = require('winston');
 const { Readable } = require('stream');
@@ -61,7 +61,7 @@ class StreamingDocumentProcessor {
       }
 
       // Combine chunks into single buffer
-      const uint8Array = new Uint8Array(Buffer.concat(chunks));
+      let uint8Array = new Uint8Array(Buffer.concat(chunks));
       chunks.length = 0; // Clear chunks array
 
       // Load PDF
@@ -217,19 +217,23 @@ class StreamingDocumentProcessor {
       }
 
       // OCR FALLBACK: If text extraction insufficient, try OCR
-      if (ocrService.shouldUseOCR(fullText)) {
-        logger.info(`📸 Streaming extraction insufficient (${fullText.length} chars), attempting OCR fallback...`);
-        try {
-          const ocrText = await ocrService.extractTextViaOCR(pdfPath);
-          if (ocrText && ocrText.length > fullText.length) {
-            logger.info(`📸 OCR recovered ${ocrText.length} chars (vs ${fullText.length} from PDF streaming)`);
-            fullText = ocrText;
-            if (fullText.length > maxChars) {
-              fullText = fullText.substring(0, maxChars);
+      if (fullText.length < 100) {
+        if (ocrService.shouldUseOCR(fullText)) {
+          logger.info(`📸 Streaming extraction insufficient (${fullText.length} chars), attempting OCR fallback...`);
+          try {
+            const ocrText = await ocrService.extractTextViaOCR(pdfPath);
+            if (ocrText && ocrText.length > fullText.length) {
+              logger.info(`📸 OCR recovered ${ocrText.length} chars (vs ${fullText.length} from PDF streaming)`);
+              fullText = ocrText;
+              if (fullText.length > maxChars) {
+                fullText = fullText.substring(0, maxChars);
+              }
             }
+          } catch (ocrError) {
+            logger.debug(`📸 OCR fallback failed: ${ocrError.message}`);
           }
-        } catch (ocrError) {
-          logger.debug(`📸 OCR fallback failed: ${ocrError.message}`);
+        } else if (fullText.length === 0) {
+          logger.debug(`📸 OCR skipped: pdftoppm not available (scanned PDFs cannot be processed)`);
         }
       }
 
@@ -282,12 +286,12 @@ class StreamingDocumentProcessor {
     const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 
     try {
-      const stat = await fs.stat(pdfPath);
+      const stat = await fs.promises.stat(pdfPath);
       const fileSize = stat.size;
 
       // Only read first few KB for metadata
       const buffer = Buffer.alloc(Math.min(fileSize, 50 * 1024));
-      const fd = await fs.open(pdfPath, 'r');
+      const fd = await fs.promises.open(pdfPath, 'r');
       await fd.read(buffer, 0, buffer.length, 0);
       await fd.close();
 

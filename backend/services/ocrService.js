@@ -14,6 +14,36 @@ class OCRService {
     constructor() {
         this.minCharThreshold = parseInt(process.env.OCR_MIN_CHAR_THRESHOLD || '100');
         this.tesseractPath = process.env.TESSERACT_PATH || 'tesseract';
+        this.pdftoppmAvailable = false;
+        // Check dependencies asynchronously but don't block
+        setImmediate(() => this.checkDependencies());
+    }
+
+    /**
+     * Check if required OCR dependencies are available (non-blocking)
+     */
+    checkDependencies() {
+        try {
+            // Test if pdftoppm is available synchronously to avoid blocking
+            const { execFileSync } = require('child_process');
+            try {
+                execFileSync('pdftoppm', ['-v'], { timeout: 5000, stdio: 'pipe' });
+                this.pdftoppmAvailable = true;
+                logger.info('✅ OCR Service Ready: pdftoppm found (poppler-utils installed)');
+            } catch (error) {
+                this.pdftoppmAvailable = false;
+                logger.warn(
+                    '⚠️ OCR Service Disabled: pdftoppm not found\n' +
+                    '   Scanned PDFs (image-based) will not be processed\n' +
+                    '   To enable OCR, install poppler-utils:\n' +
+                    '   Ubuntu/Debian: sudo apt-get install poppler-utils\n' +
+                    '   Mac: brew install poppler\n' +
+                    '   Windows: choco install poppler (or download from https://github.com/oschwartz10612/poppler-windows/releases/)'
+                );
+            }
+        } catch (error) {
+            logger.error('Error checking OCR dependencies:', error);
+        }
     }
 
     /**
@@ -22,6 +52,7 @@ class OCRService {
      * @returns {boolean} True if OCR should be attempted
      */
     shouldUseOCR(extractedText) {
+        if (!this.pdftoppmAvailable) return false; // OCR not available
         if (!extractedText) return true;
         
         const charCount = extractedText.trim().length;
