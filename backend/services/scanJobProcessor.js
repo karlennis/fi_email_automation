@@ -7,6 +7,7 @@ const s3Service = require('./s3Service');
 const emailService = require('./emailService');
 const buildingInfoService = require('./buildingInfoService');
 const fiReportService = require('./fiReportService');
+const documentIngestionService = require('./documentIngestionService');
 const logger = require('../utils/logger');
 const { enqueueScanJob } = require('./scanJobQueue');
 const optimizedPdfExtractor = require('./optimizedPdfExtractor');
@@ -291,6 +292,8 @@ class ScanJobProcessor {
         let totalProcessed = isResuming ? job.checkpoint.processedCount : 0;
         let totalDocuments = job.checkpoint.totalDocuments; // Use stored count, don't increment
         let skippedNonPdf = 0;
+        let skippedBaseline = 0; // Track documents skipped due to baseline markers
+        const baselineProjectCache = new Map(); // Cache baseline check results per project
         let skipping = isResuming && (job.checkpoint.lastProcessedPath || job.checkpoint.lastProcessedFile);
         const resumePath = job.checkpoint.lastProcessedPath;
         const resumeFile = job.checkpoint.lastProcessedFile;
@@ -329,6 +332,24 @@ class ScanJobProcessor {
                         if (!fileName.endsWith('.pdf') && !fileName.endsWith('.docx')) {
                             skippedNonPdf++;
                             return;
+                        }
+
+                        // Check if project is baselined (first-time ingestion, skip FI scan)
+                        const projectId = document.projectId;
+                        if (projectId) {
+                            // Use cache to avoid repeated S3 checks for same project
+                            if (!baselineProjectCache.has(projectId)) {
+                                const isBaselined = await documentIngestionService.shouldSkipFIScan(projectId);
+                                baselineProjectCache.set(projectId, isBaselined);
+                                if (isBaselined) {
+                                    logger.info(`📌 Project ${projectId} has baseline marker - all documents will be skipped`);
+                                }
+                            }
+                            
+                            if (baselineProjectCache.get(projectId)) {
+                                skippedBaseline++;
+                                return; // Skip this document - project is newly baselined
+                            }
                         }
 
                         if (skipping) {
@@ -538,6 +559,10 @@ class ScanJobProcessor {
 
         if (skippedNonPdf > 0) {
             logger.info(`⏭️  Skipped ${skippedNonPdf} unsupported files`);
+        }
+
+        if (skippedBaseline > 0) {
+            logger.info(`📌 Skipped ${skippedBaseline} documents from ${baselineProjectCache.size} baselined projects (first-time ingestion)`);
         }
 
         if (streamStats && streamStats.totalMatched !== undefined) {

@@ -1,16 +1,19 @@
 #!/usr/bin/env node
 /**
  * Document Register CLI
- * Command-line interface for document register operations
+ * Command-line interface for document register and ingestion operations
  */
 
 // Load environment variables
 require('dotenv').config({ path: require('path').join(__dirname, '../backend/.env') });
 
 const documentRegisterService = require('../backend/services/documentRegisterService');
+const documentIngestionService = require('../backend/services/documentIngestionService');
+const s3Service = require('../backend/services/s3Service');
 const logger = require('../backend/utils/logger');
 
 const command = process.argv[2];
+const arg1 = process.argv[3];
 
 async function main() {
   console.log('📋 Document Register CLI\n');
@@ -40,6 +43,29 @@ async function main() {
     case 'all-projects':
     case 'export-all':
       await exportAllProjectIds();
+      break;
+
+    // === INGESTION COMMANDS ===
+    case 'route':
+      await routeDocuments(arg1);
+      break;
+
+    case 'staged':
+    case 'filter-docs':
+      await showStagedProjects();
+      break;
+
+    case 'baseline-status':
+    case 'baselines':
+      await showBaselineStatus();
+      break;
+
+    case 'cleanup-baselines':
+      await cleanupBaselines();
+      break;
+
+    case 'check-baseline':
+      await checkBaseline(arg1);
       break;
 
     case 'help':
@@ -222,9 +248,171 @@ async function exportAllProjectIds() {
   }
 }
 
+// ============================================
+// INGESTION COMMANDS
+// ============================================
+
+async function routeDocuments(projectId) {
+  try {
+    if (projectId) {
+      // Route a specific project
+      console.log(`🔄 Routing project ${projectId} from filter-docs to planning-docs...\n`);
+
+      const result = await documentIngestionService.routeToPlanning(projectId);
+
+      console.log('\n✅ Routing Complete!\n');
+      console.log(`📊 Results:`);
+      console.log(`   Project: ${result.projectId}`);
+      console.log(`   Status: ${result.isNewProject ? 'NEW (baselined)' : 'EXISTING (merged)'}`);
+      console.log(`   Documents Copied: ${result.documentsCopied}`);
+      console.log(`   Documents Skipped: ${result.documentsSkipped}`);
+      
+      if (result.newDocuments.length > 0) {
+        console.log(`\n📄 New Documents:`);
+        result.newDocuments.slice(0, 10).forEach(doc => console.log(`   - ${doc}`));
+        if (result.newDocuments.length > 10) {
+          console.log(`   ... and ${result.newDocuments.length - 10} more`);
+        }
+      }
+
+      if (result.errors.length > 0) {
+        console.log(`\n⚠️ Errors:`);
+        result.errors.forEach(err => console.log(`   - ${err.fileName || err.error}`));
+      }
+
+    } else {
+      // Route all projects in filter-docs
+      console.log('🔄 Routing ALL projects from filter-docs to planning-docs...\n');
+
+      const stagedProjects = await documentIngestionService.listStagedProjects();
+
+      if (stagedProjects.length === 0) {
+        console.log('📭 No projects found in filter-docs staging area');
+        return;
+      }
+
+      console.log(`📦 Found ${stagedProjects.length} projects to route\n`);
+
+      const results = await documentIngestionService.batchRouteToPlanning(stagedProjects);
+
+      console.log('\n✅ Batch Routing Complete!\n');
+      console.log(`📊 Results:`);
+      console.log(`   Total Projects: ${results.total}`);
+      console.log(`   Successful: ${results.successful}`);
+      console.log(`   Failed: ${results.failed}`);
+      console.log(`   New Projects (baselined): ${results.newProjects}`);
+      console.log(`   Existing Projects (merged): ${results.existingProjects}`);
+      console.log(`   Total Documents Routed: ${results.totalDocumentsRouted}`);
+    }
+
+    console.log('\n');
+  } catch (error) {
+    console.error('❌ Error routing documents:', error.message);
+    process.exit(1);
+  }
+}
+
+async function showStagedProjects() {
+  try {
+    console.log('📦 Listing projects in filter-docs staging area...\n');
+
+    const projects = await documentIngestionService.listStagedProjects();
+
+    if (projects.length === 0) {
+      console.log('📭 No projects found in filter-docs');
+      return;
+    }
+
+    console.log(`✅ Found ${projects.length} staged projects:\n`);
+    
+    // Show first 50
+    const showCount = Math.min(projects.length, 50);
+    console.log(projects.slice(0, showCount).join(', '));
+    
+    if (projects.length > 50) {
+      console.log(`\n... and ${projects.length - 50} more`);
+    }
+
+    console.log('\n');
+  } catch (error) {
+    console.error('❌ Error listing staged projects:', error.message);
+    process.exit(1);
+  }
+}
+
+async function showBaselineStatus() {
+  try {
+    console.log('📌 Checking baseline marker status...\n');
+
+    const summary = await documentIngestionService.getBaselinedProjectsSummary();
+
+    console.log(`📅 Date: ${summary.date}\n`);
+    console.log(`📊 Baselined Today: ${summary.baselinedTodayCount} projects`);
+    
+    if (summary.baselinedTodaySample.length > 0) {
+      console.log('\n📋 Sample of baselined projects:');
+      summary.baselinedTodaySample.forEach(id => console.log(`   - ${id}`));
+    }
+
+    if (summary.note) {
+      console.log(`\nℹ️  ${summary.note}`);
+    }
+
+    console.log('\n');
+  } catch (error) {
+    console.error('❌ Error checking baseline status:', error.message);
+    process.exit(1);
+  }
+}
+
+async function cleanupBaselines() {
+  try {
+    console.log('🧹 Cleaning up old baseline markers...\n');
+
+    const result = await s3Service.cleanupOldBaselineMarkers(1);
+
+    console.log(`✅ Cleanup Complete!\n`);
+    console.log(`   Markers Removed: ${result.deleted}`);
+    console.log('\n');
+  } catch (error) {
+    console.error('❌ Error cleaning up baselines:', error.message);
+    process.exit(1);
+  }
+}
+
+async function checkBaseline(projectId) {
+  if (!projectId) {
+    console.error('❌ Please provide a project ID: node index.js check-baseline <projectId>');
+    process.exit(1);
+  }
+
+  try {
+    console.log(`📌 Checking baseline status for project ${projectId}...\n`);
+
+    const hasBaseline = await s3Service.hasBaselineMarker(projectId);
+    const markers = await s3Service.getBaselineMarkers(projectId);
+
+    console.log(`📊 Results:`);
+    console.log(`   Has Today's Baseline: ${hasBaseline ? 'YES (will skip FI scan)' : 'NO (eligible for FI scan)'}`);
+    
+    if (markers.length > 0) {
+      console.log(`\n📋 All Baseline Markers:`);
+      markers.forEach(m => console.log(`   - ${m.date} (${m.key})`));
+    } else {
+      console.log('\n   No baseline markers found for this project');
+    }
+
+    console.log('\n');
+  } catch (error) {
+    console.error('❌ Error checking baseline:', error.message);
+    process.exit(1);
+  }
+}
+
 function showHelp() {
-  console.log('Usage: node index.js [command]\n');
-  console.log('Commands:');
+  console.log('Usage: node index.js [command] [options]\n');
+  
+  console.log('📋 DOCUMENT REGISTER COMMANDS:');
   console.log('  generate, scan  - Generate document register (scan all projects)');
   console.log('  count           - Quick count of projects and documents');
   console.log('  projects        - List first 50 projects with details');
@@ -232,14 +420,24 @@ function showHelp() {
   console.log('  export-all      - Alias for all-projects');
   console.log('  status          - Show current register status');
   console.log('  stats           - Show detailed statistics');
-  console.log('  help            - Show this help message');
-  console.log('\nExamples:');
+  
+  console.log('\n📦 INGESTION COMMANDS:');
+  console.log('  route           - Route ALL projects from filter-docs to planning-docs');
+  console.log('  route <id>      - Route a specific project');
+  console.log('  staged          - List projects in filter-docs staging area');
+  console.log('  filter-docs     - Alias for staged');
+  console.log('  baseline-status - Show projects with baseline markers (skipped in FI scan)');
+  console.log('  baselines       - Alias for baseline-status');
+  console.log('  check-baseline <id> - Check baseline status for a specific project');
+  console.log('  cleanup-baselines   - Remove old baseline markers');
+  
+  console.log('\n📝 EXAMPLES:');
   console.log('  node index.js count');
-  console.log('  node index.js projects');
-  console.log('  node index.js all-projects');
-  console.log('  node index.js generate');
-  console.log('  node index.js status');
-  console.log('  node index.js stats');
+  console.log('  node index.js route');
+  console.log('  node index.js route 390721');
+  console.log('  node index.js staged');
+  console.log('  node index.js baseline-status');
+  console.log('  node index.js check-baseline 390721');
   console.log('\n');
 }
 

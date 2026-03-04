@@ -616,6 +616,384 @@ class S3Service {
       throw error;
     }
   }
+
+  // ============================================
+  // FILTER-DOCS INGESTION OPERATIONS
+  // ============================================
+
+  /**
+   * Upload a document to S3
+   * @param {Buffer|string} content - File content (Buffer) or local file path
+   * @param {string} s3Key - Destination key in S3
+   * @param {object} metadata - Optional metadata to attach
+   */
+  async uploadDocument(content, s3Key, metadata = {}) {
+    try {
+      let body = content;
+      
+      // If content is a string path, read the file
+      if (typeof content === 'string') {
+        body = await fs.readFile(content);
+      }
+
+      const params = {
+        Bucket: this.bucket,
+        Key: s3Key,
+        Body: body,
+        Metadata: metadata
+      };
+
+      // Set content type based on extension
+      const ext = path.extname(s3Key).toLowerCase();
+      if (ext === '.pdf') {
+        params.ContentType = 'application/pdf';
+      } else if (ext === '.docx') {
+        params.ContentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      } else if (ext === '.txt') {
+        params.ContentType = 'text/plain';
+      } else if (ext === '.json') {
+        params.ContentType = 'application/json';
+      }
+
+      await this.s3.putObject(params).promise();
+      logger.info(`📤 Uploaded document to ${s3Key}`);
+
+      return { key: s3Key, size: body.length };
+    } catch (error) {
+      logger.error(`Error uploading document to ${s3Key}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Copy a document within S3 (same bucket)
+   * @param {string} sourceKey - Source object key
+   * @param {string} destKey - Destination object key
+   */
+  async copyDocument(sourceKey, destKey) {
+    try {
+      const params = {
+        Bucket: this.bucket,
+        CopySource: `${this.bucket}/${sourceKey}`,
+        Key: destKey
+      };
+
+      await this.s3.copyObject(params).promise();
+      logger.info(`📋 Copied ${sourceKey} to ${destKey}`);
+
+      return { sourceKey, destKey };
+    } catch (error) {
+      logger.error(`Error copying ${sourceKey} to ${destKey}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a document from S3
+   * @param {string} s3Key - Object key to delete
+   */
+  async deleteDocument(s3Key) {
+    try {
+      const params = {
+        Bucket: this.bucket,
+        Key: s3Key
+      };
+
+      await this.s3.deleteObject(params).promise();
+      logger.info(`🗑️ Deleted ${s3Key}`);
+
+      return { key: s3Key, deleted: true };
+    } catch (error) {
+      logger.error(`Error deleting ${s3Key}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete multiple documents from S3
+   * @param {string[]} s3Keys - Array of object keys to delete
+   */
+  async deleteDocuments(s3Keys) {
+    try {
+      if (!s3Keys || s3Keys.length === 0) {
+        return { deleted: 0 };
+      }
+
+      // S3 deleteObjects can handle up to 1000 keys at once
+      const batchSize = 1000;
+      let totalDeleted = 0;
+
+      for (let i = 0; i < s3Keys.length; i += batchSize) {
+        const batch = s3Keys.slice(i, i + batchSize);
+        const params = {
+          Bucket: this.bucket,
+          Delete: {
+            Objects: batch.map(key => ({ Key: key })),
+            Quiet: true
+          }
+        };
+
+        await this.s3.deleteObjects(params).promise();
+        totalDeleted += batch.length;
+      }
+
+      logger.info(`🗑️ Deleted ${totalDeleted} documents`);
+      return { deleted: totalDeleted };
+    } catch (error) {
+      logger.error(`Error batch deleting documents:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check if a project folder exists in planning-docs
+   * @param {string} projectId - Project ID to check
+   */
+  async projectExistsInPlanning(projectId) {
+    try {
+      const params = {
+        Bucket: this.bucket,
+        Prefix: `planning-docs/${projectId}/`,
+        MaxKeys: 1
+      };
+
+      const response = await this.s3.listObjectsV2(params).promise();
+      const exists = response.Contents && response.Contents.length > 0;
+      
+      logger.debug(`Project ${projectId} exists in planning-docs: ${exists}`);
+      return exists;
+    } catch (error) {
+      logger.error(`Error checking if project ${projectId} exists:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check if a project folder exists in filter-docs
+   * @param {string} projectId - Project ID to check
+   */
+  async projectExistsInFilter(projectId) {
+    try {
+      const params = {
+        Bucket: this.bucket,
+        Prefix: `filter-docs/${projectId}/`,
+        MaxKeys: 1
+      };
+
+      const response = await this.s3.listObjectsV2(params).promise();
+      return response.Contents && response.Contents.length > 0;
+    } catch (error) {
+      logger.error(`Error checking if project ${projectId} exists in filter-docs:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create a baseline marker for a project (marks it as newly ingested, skip FI scan)
+   * @param {string} projectId - Project ID
+   * @param {Date} date - Date for the baseline marker (defaults to today)
+   */
+  async createBaselineMarker(projectId, date = new Date()) {
+    try {
+      const dateStr = date.toISOString().split('T')[0]; // YYYY-MM-DD
+      const markerKey = `planning-docs/${projectId}/_baseline_${dateStr}`;
+
+      await this.s3.putObject({
+        Bucket: this.bucket,
+        Key: markerKey,
+        Body: JSON.stringify({
+          createdAt: date.toISOString(),
+          projectId: projectId,
+          reason: 'First-time ingestion - baseline snapshot, not eligible for FI scan'
+        }),
+        ContentType: 'application/json'
+      }).promise();
+
+      logger.info(`📌 Created baseline marker for project ${projectId}: ${markerKey}`);
+      return { projectId, markerKey, date: dateStr };
+    } catch (error) {
+      logger.error(`Error creating baseline marker for ${projectId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check if a project has a baseline marker for a specific date
+   * @param {string} projectId - Project ID
+   * @param {Date} date - Date to check (defaults to today)
+   */
+  async hasBaselineMarker(projectId, date = new Date()) {
+    try {
+      const dateStr = date.toISOString().split('T')[0];
+      const markerKey = `planning-docs/${projectId}/_baseline_${dateStr}`;
+
+      return await this.objectExists(markerKey);
+    } catch (error) {
+      logger.error(`Error checking baseline marker for ${projectId}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Get all baseline markers for a project
+   * @param {string} projectId - Project ID
+   */
+  async getBaselineMarkers(projectId) {
+    try {
+      const params = {
+        Bucket: this.bucket,
+        Prefix: `planning-docs/${projectId}/_baseline_`
+      };
+
+      const response = await this.s3.listObjectsV2(params).promise();
+      return (response.Contents || []).map(obj => ({
+        key: obj.Key,
+        date: obj.Key.split('_baseline_')[1],
+        lastModified: obj.LastModified
+      }));
+    } catch (error) {
+      logger.error(`Error getting baseline markers for ${projectId}:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Clean up old baseline markers (remove markers older than specified days)
+   * @param {number} maxAgeDays - Maximum age in days (default: 1, keep only today's markers)
+   */
+  async cleanupOldBaselineMarkers(maxAgeDays = 1) {
+    try {
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - maxAgeDays);
+      const cutoffStr = cutoffDate.toISOString().split('T')[0];
+
+      // List all baseline markers across all projects
+      const params = {
+        Bucket: this.bucket,
+        Prefix: 'planning-docs/'
+      };
+
+      let continuationToken = null;
+      const markersToDelete = [];
+
+      do {
+        if (continuationToken) {
+          params.ContinuationToken = continuationToken;
+        }
+
+        const response = await this.s3.listObjectsV2(params).promise();
+
+        // Find baseline markers older than cutoff
+        for (const obj of response.Contents || []) {
+          if (obj.Key.includes('/_baseline_')) {
+            const markerDate = obj.Key.split('_baseline_')[1];
+            if (markerDate && markerDate < cutoffStr) {
+              markersToDelete.push(obj.Key);
+            }
+          }
+        }
+
+        continuationToken = response.IsTruncated ? response.NextContinuationToken : null;
+      } while (continuationToken);
+
+      // Delete old markers
+      if (markersToDelete.length > 0) {
+        await this.deleteDocuments(markersToDelete);
+        logger.info(`🧹 Cleaned up ${markersToDelete.length} old baseline markers`);
+      } else {
+        logger.info('🧹 No old baseline markers to clean up');
+      }
+
+      return { deleted: markersToDelete.length };
+    } catch (error) {
+      logger.error('Error cleaning up baseline markers:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * List all documents in filter-docs for a project
+   * @param {string} projectId - Project ID
+   */
+  async listFilterDocsProject(projectId) {
+    try {
+      const projectPath = `filter-docs/${projectId}/`;
+      const allDocuments = [];
+      let continuationToken = null;
+
+      do {
+        const params = {
+          Bucket: this.bucket,
+          Prefix: projectPath,
+          MaxKeys: 1000
+        };
+
+        if (continuationToken) {
+          params.ContinuationToken = continuationToken;
+        }
+
+        const response = await this.s3.listObjectsV2(params).promise();
+
+        const documents = (response.Contents || []).map(obj => ({
+          key: obj.Key,
+          fileName: path.basename(obj.Key),
+          size: obj.Size,
+          lastModified: obj.LastModified,
+          projectId: projectId
+        }));
+
+        allDocuments.push(...documents);
+        continuationToken = response.IsTruncated ? response.NextContinuationToken : null;
+      } while (continuationToken);
+
+      return allDocuments;
+    } catch (error) {
+      logger.error(`Error listing filter-docs for project ${projectId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * List all documents in planning-docs for a project (including system files)
+   * @param {string} projectId - Project ID
+   */
+  async listPlanningDocsProject(projectId) {
+    try {
+      const projectPath = `planning-docs/${projectId}/`;
+      const allDocuments = [];
+      let continuationToken = null;
+
+      do {
+        const params = {
+          Bucket: this.bucket,
+          Prefix: projectPath,
+          MaxKeys: 1000
+        };
+
+        if (continuationToken) {
+          params.ContinuationToken = continuationToken;
+        }
+
+        const response = await this.s3.listObjectsV2(params).promise();
+
+        const documents = (response.Contents || []).map(obj => ({
+          key: obj.Key,
+          fileName: path.basename(obj.Key),
+          size: obj.Size,
+          lastModified: obj.LastModified,
+          projectId: projectId
+        }));
+
+        allDocuments.push(...documents);
+        continuationToken = response.IsTruncated ? response.NextContinuationToken : null;
+      } while (continuationToken);
+
+      return allDocuments;
+    } catch (error) {
+      logger.error(`Error listing planning-docs for project ${projectId}:`, error);
+      throw error;
+    }
+  }
 }
 
 module.exports = new S3Service();

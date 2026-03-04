@@ -41,6 +41,27 @@ module.exports = {
       kill_timeout: 5000
     },
     {
+      name: 'fi-email-ingestion',
+      script: './backend/ingestion-worker.js',
+      instances: 1,
+      exec_mode: 'fork',
+      node_args: '--expose-gc --max-old-space-size=512',
+      env: {
+        NODE_ENV: 'production',
+        INGESTION_RUN_ON_STARTUP: 'false'
+      },
+      error_file: '/var/log/fi_email/ingestion-error.log',
+      out_file: '/var/log/fi_email/ingestion-out.log',
+      log_file: '/var/log/fi_email/ingestion-combined.log',
+      time_format: 'YYYY-MM-DD HH:mm:ss Z',
+      max_memory_restart: '500M',
+      autorestart: true,
+      max_restarts: 10,
+      min_uptime: '30s',
+      listen_timeout: 10000,
+      kill_timeout: 5000
+    },
+    {
       name: 'fi-email-frontend',
       script: 'npx',
       args: 'serve -s dist/frontend/browser -l 4000',

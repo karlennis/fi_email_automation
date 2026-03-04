@@ -28,6 +28,7 @@ const runsRoutes = require('./routes/runs');
 
 // Services and schedulers
 const documentRegisterScheduler = require('./services/documentRegisterScheduler');
+// NOTE: ingestionScheduler moved to ingestion-worker.js
 // NOTE: scanJobProcessor moved to worker.js - backend only enqueues jobs
 const dailyRunService = require('./services/dailyRunService');
 const dailyRunWorker = require('./services/dailyRunWorker');
@@ -212,6 +213,9 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/fi-email-
   } catch (error) {
     logger.error('Failed to initialize document register scheduler:', error);
   }
+
+  // NOTE: Ingestion scheduler moved to ingestion-worker.js
+  // It runs at 11:55 PM to route filter-docs → planning-docs
 
   // NOTE: Scan job processor removed from backend - now runs in worker.js
   // The backend API only enqueues jobs to Redis via scanJobQueue
