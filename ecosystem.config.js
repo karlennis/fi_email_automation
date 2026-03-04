@@ -41,7 +41,7 @@ module.exports = {
       kill_timeout: 5000
     },
     {
-      name: 'fi-email-ingestion',
+      name: 'aws-document-ingestion',
       script: './backend/ingestion-worker.js',
       instances: 1,
       exec_mode: 'fork',
@@ -50,9 +50,9 @@ module.exports = {
         NODE_ENV: 'production',
         INGESTION_RUN_ON_STARTUP: 'false'
       },
-      error_file: '/var/log/fi_email/ingestion-error.log',
-      out_file: '/var/log/fi_email/ingestion-out.log',
-      log_file: '/var/log/fi_email/ingestion-combined.log',
+      error_file: '/var/log/fi_email/aws-ingestion-error.log',
+      out_file: '/var/log/fi_email/aws-ingestion-out.log',
+      log_file: '/var/log/fi_email/aws-ingestion-combined.log',
       time_format: 'YYYY-MM-DD HH:mm:ss Z',
       max_memory_restart: '500M',
       autorestart: true,
