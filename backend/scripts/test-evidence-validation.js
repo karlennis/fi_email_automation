@@ -63,6 +63,54 @@ const evidenceTests = [
     quote: "in the event of a grant of permission, a condition is attached requiring the noise sensitive uses to be provided with noise insulation",
     reportType: "acoustic",
     shouldBeValid: false
+  },
+  {
+    name: "HOUSING DEV: 'address site location relative to roads' should be INVALID (transport)",
+    quote: "the application site is located adjacent to the partially completed road objective st kl 1 5 kill - johnstown road (a) to hartwell road (b) and map v the applicant is requested to address the development plan",
+    reportType: "transport",
+    shouldBeValid: false
+  },
+  {
+    name: "VALID: 'requested to submit transport assessment' should be VALID (transport)",
+    quote: "the applicant is requested to submit a transport impact assessment addressing traffic generation and parking provision",
+    reportType: "transport",
+    shouldBeValid: true
+  },
+  {
+    name: "VALID: 'requires ecological survey' should be VALID (ecological)",
+    quote: "the planning authority requires submission of an ecological survey and habitat impact assessment",
+    reportType: "ecological",
+    shouldBeValid: true
+  },
+  {
+    name: "REAL CASE 375099: Site location description should be INVALID",
+    quote: "the application site is located adjacent to the partially completed road objective st kl 1 5 kill - johnstown road (a) to hartwell road (b) and map v of the kill small towns and environs plan",
+    reportType: "acoustic",
+    shouldBeValid: false
+  },
+  {
+    name: "REAL CASE 385584: Noise envelope design ensures compliance - VALID",
+    quote: "the report concludes that the proposed building's envelope and design will ensure internal noise levels are within acceptable limits for future residents notwithstanding the above, we are mindful that the development sits within the contours of the noise abatement objective",
+    reportType: "acoustic",
+    shouldBeValid: true
+  },
+  {
+    name: "REAL CASE 385584: 'shall be required to submit compliance reports' - VALID",
+    quote: "the applicant shall adequately advise prospective purchasers and/or occupiers that the development is located within a noise zone pertaining to dublin airport and thus is subject to higher aviation noise levels. the applicant shall be required to submit compliance reports verify",
+    reportType: "acoustic",
+    shouldBeValid: true
+  },
+  {
+    name: "REAL CASE 391927: 'applicant shall ensure' noise/dust ops - VALID",
+    quote: "During the works the applicant shall ensure that all operations on site are carried out in a manner such that noise or dust emissions do not result in significant impairment of, or significant interference with, amenities or the environment beyond the immediate works areas",
+    reportType: "acoustic",
+    shouldBeValid: true
+  },
+  {
+    name: "REAL CASE 396427: 'applicant shall be requested to provide' details to assess impacts - VALID",
+    quote: "aeration system which could generate new noise and odour disturbances. the applicant shall be requested to provide these further details in addressing the lack of supporting information, to fully assess the potential impacts of the development upon the amenities",
+    reportType: "acoustic",
+    shouldBeValid: true
   }
 ];
 

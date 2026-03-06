@@ -1085,11 +1085,13 @@ Answer with just YES or NO.`;
 
   /**
    * Validate if a quote passes evidence requirements for customer visibility
-   * STRICT: For acoustic, requires BOTH request verb (submit/required/etc) AND acoustic term (noise/sound/etc)
-   * Rejects placeholder quotes outright
-   * Avoids false positives: "provided" in conditions (not a request) vs "applicant to provide" (is a request)
+   * STRICT: Requires explicit request for NEW assessment/report, not just topic term mention
+   * Rejects conditions, existing descriptions, and generic clarifications outright
    * 
-   * @returns {boolean} - true if quote is customer-eligible evidence, false if placeholder/weak
+   * For acoustic: Request pattern (submit/required/conduct) + acoustic term + assessment mention
+   * For others: Request pattern + topic term + assessment/report/survey mention
+   * 
+   * @returns {boolean} - true if quote is customer-eligible evidence, false if weak/placeholder
    */
   isValidCustomerEvidence(quote, targetReportType = 'acoustic') {
     if (!quote) return false;
@@ -1101,52 +1103,47 @@ Answer with just YES or NO.`;
       return false;
     }
 
-    // For acoustic, require BOTH request language AND acoustic terms
+    const quoteLower = quote.toLowerCase();
+
+    // FUTURE REQUEST patterns - explicit FIRs and submission requirements only
+    // Excludes generic conditions/directives; focuses on actual requests
+    const futureRequestPatterns = [
+      // Explicit submission: submit/provide/prepare + assessment/report/survey
+      /\b(submit|provide|prepare|submission)\b.*\b(assessment|report|survey|study|statement|audit)\b/i,
+      // Explicit requirement: required/must/should + submit/provide
+      /\b(is required|must|should|shall be required)\b.*\b(submit|provide|prepare)\b/i,
+      // Conduct/carry out patterns for assessments
+      /\b(conduct|carry out|undertake|commission)\b.*\b(assessment|survey|study|audit|evaluation)\b/i,
+      // Further information requests (explicit FIR indicator)
+      /\bfurther (information|details|clarification|clarity)/i,
+      // Applicant requested/should/must (explicitly requested)
+      /\b(applicant (is requested|should provide|must provide)|applicant to [a-z]+)\b/i,
+      // Authority/council requires submission
+      /\b(council|authority).*\brequires?\b.*\b(submission|submit|provide|prepare)\b/i,
+      // Recommendation to submit/provide
+      /\brecommend(s)?\s+.*\b(submit|provide|prepare|applicant)\b.*\b(assessment|survey|study|report)\b/i
+    ];
+
+    const hasValidRequest = futureRequestPatterns.some(pattern => pattern.test(quote));
+    
+    // For acoustic, check FIR pattern OR directive pattern before rejecting
     if (targetReportType.toLowerCase() === 'acoustic') {
-      // Request verbs - be specific to avoid false positives
-      // Focus on: active requests to applicant, or planning authority requirements
-      const requestVerbs = [
-        "submit", "submitted", "submitting",
-        "must submit", "should submit", "shall submit", "is required to submit", "required to submit",
-        "provide", "provided", "providing",
-        "must provide", "should provide", "shall provide", "is required to provide", "required to provide",
-        "prepare", "prepared", "preparing",
-        "carry out", "undertaken", "undertaking", 
-        "produce", "produced", "producing",
-        "further information", "further details", "clarification",
-        "applicant is requested", "applicant should", "applicant must",
-        "applicant to provide", "applicant to submit", "applicant to prepare",
-        "you are requested", "you should", "you must",
-        "requires", "requires that", "required that", "requires the",
-        "would recommend", "recommends", "recommend that", "recommend the applicant",
-        "in relation to"
-      ];
-      
       const acousticTerms = ["noise", "sound", "vibration", "acoustic", "db", "decibel", "hearing"];
-      
-      const quoteLower = quote.toLowerCase();
-      
-      // Check request verbs - more precise matching
-      const hasRequestVerb = requestVerbs.some(v => {
-        // For multi-word verbs, need exact phrase match
-        if (v.includes(' ')) {
-          return quoteLower.includes(v);
-        }
-        // For single words, check they're part of a request context, not just any occurrence
-        // Avoid false positives like "provided" in "insulation provided by building"
-        if (v === 'provide' || v === 'provided' || v === 'providing') {
-          return /\b(must\s+provide|should\s+provide|shall\s+provide|is\s+required\s+to\s+provide|required\s+to\s+provide|applicant.*provide|submit.*and\s+provide|you.*provide)\b/i.test(quoteLower);
-        }
-        // For other single words, require word boundary
-        return new RegExp(`\\b${v}\\b`).test(quoteLower);
-      });
-      
       const hasAcousticTerm = acousticTerms.some(t => quoteLower.includes(t));
       
-      return hasRequestVerb && hasAcousticTerm;
-    }
+      if (!hasAcousticTerm) return false;
 
-    // For other report types, just ensure it has the topic term
+      // Accept if: FIR pattern match OR applicant directive + acoustic term
+      if (hasValidRequest) return true;
+      
+      const hasApplicantDirective = /\b(applicant|applicants|design|development)\s+(shall|must|should|will)\s+(ensure|provide|comply|demonstrate)\b/i.test(quote);
+      return hasApplicantDirective;
+    }
+    
+    // For non-acoustic, FIR pattern is required
+    if (!hasValidRequest) return false;
+
+    // For other report types
     const reportTypeTerms = {
       "transport": ["traffic", "vehicle", "highway", "road", "parking", "transport", "mobility"],
       "ecological": ["ecology", "ecological", "habitat", "species", "biodiversity", "wildlife"],
@@ -1155,8 +1152,16 @@ Answer with just YES or NO.`;
       "lighting": ["lighting", "light", "illumination", "luminaire"]
     };
 
-    const terms = reportTypeTerms[targetReportType.toLowerCase()] || [targetReportType.toLowerCase()];
-    return terms.some(t => quote.toLowerCase().includes(t));
+    const topicTerms = reportTypeTerms[targetReportType.toLowerCase()] || [targetReportType.toLowerCase()];
+    const hasTopicTerm = topicTerms.some(t => quoteLower.includes(t.toLowerCase()));
+
+    if (!hasTopicTerm) return false;
+
+    // For non-acoustic, verify assessment/report is mentioned (avoid "address location" matches)
+    const assessmentTerms = ["assessment", "survey", "report", "study", "audit", "evaluation", "statement"];
+    const mentionsAssessment = assessmentTerms.some(t => quoteLower.includes(t));
+
+    return mentionsAssessment;
   }
 
   /**
