@@ -932,8 +932,9 @@ class ScanJobProcessor {
 
                 // Check if it specifically requests the target report type (e.g., acoustic)
                 const matchResult = await fiDetectionService.matchFIRequestType(documentText, documentType);
+                const isValidatedMatch = matchResult.matches === true && matchResult.hasValidEvidence === true;
 
-                if (matchResult.matches) {
+                if (isValidatedMatch) {
                     logger.info(`✅ FI REQUEST MATCH: ${fileName} requests ${documentType} report`);
                     return {
                         isMatch: true,
@@ -942,7 +943,7 @@ class ScanJobProcessor {
                         reasoning: `Document is an FI request asking for ${documentType} report`,
                         needsReview: false,
                         validationQuote: matchResult.validationQuote || 'No quote captured',
-                        hasValidEvidence: matchResult.hasValidEvidence
+                        hasValidEvidence: true
                     };
                 } else if (matchResult.aiConfirmedMatchButWeakEvidence) {
                     // AI said yes but evidence failed - log but don't emit to customer

@@ -1174,7 +1174,7 @@ async function simulateLocalFIDetection(documents, reportTypes) {
           // Step 5: Check if FI request matches the report type
           const matchesType = await detector.matchFIRequestType(text, reportType);
 
-          if (matchesType) {
+          if (matchesType?.matches === true && matchesType?.hasValidEvidence === true) {
             // Step 6: Extract FI details
             const fiDetails = await detector.extractFIRequestInfo(text, doc.fileName);
 
@@ -1408,7 +1408,7 @@ async function simulateFIDetection(documents, reportTypes) {
           // Step 5: Check if FI request matches the report type
           const matchesType = await detector.matchFIRequestType(text, reportType);
 
-          if (matchesType) {
+          if (matchesType?.matches === true && matchesType?.hasValidEvidence === true) {
             // Step 6: Extract FI details
             const fiDetails = await detector.extractFIRequestInfo(text, doc.fileName);
 

@@ -161,14 +161,14 @@ class DailyRunWorker {
           const isFIRequest = await fiDetectionService.detectFIRequest(documentText);
 
           if (isFIRequest) {
-            detectionResult.detected = true;
-            detectionResult.method = 'fi-detection';
-            detectionResult.confidence = 0.8;
-
-            // Try to match specific FI types
+            // Only mark detected when we have a validated report-type match
             for (const docType of ['acoustic', 'transport', 'flood', 'contamination', 'ecology', 'arboricultural']) {
               const matchResult = await fiDetectionService.matchFIRequestType(documentText, docType);
-              if (matchResult.matches) {
+              const isValidatedMatch = matchResult.matches === true && matchResult.hasValidEvidence === true;
+
+              if (isValidatedMatch) {
+                detectionResult.detected = true;
+                detectionResult.method = 'fi-detection';
                 detectionResult.documentType = docType;
                 detectionResult.confidence = 0.95;
                 break;

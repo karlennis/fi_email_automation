@@ -1284,7 +1284,9 @@ Answer with just YES or NO.`;
         logger.debug(`📍 Sentence ${i} matches: verb=${hasVerb}, term=${hasTerm}, sentence="${sentence.substring(0, 100)}..."`);
 
         // Include surrounding sentences for context (up to 4 sentences total)
-        const contextStart = Math.max(0, i - 1);  // 1 sentence before
+        // For acoustic, anchor at the matching sentence to avoid unrelated lead-in text
+        const includePreviousSentence = targetReportType.toLowerCase() !== "acoustic";
+        const contextStart = includePreviousSentence ? Math.max(0, i - 1) : i;
         const contextEnd = Math.min(sentences.length, i + 3);  // 2 sentences after
         const contextSentences = sentences.slice(contextStart, contextEnd);
         const quote = contextSentences.join(' ').trim();
@@ -1369,9 +1371,22 @@ Answer with just YES or NO.`;
         const hasDoc2 = documentIndicators.some(d => combo.includes(d));
         const isPhysicalOnly2 = hasPhysical2 && !hasDoc2;
 
+        // For acoustic, avoid combo early-return when the next sentence alone is a full match.
+        // This prevents road/location preamble from being prepended to customer-facing quote text.
+        if (targetReportType.toLowerCase() === "acoustic") {
+          const nextSentence = sentences[i + 1] || "";
+          const nextHasVerb = requestVerbs.some(v => nextSentence.includes(v));
+          const nextHasTerm = terms.some(t => nextSentence.includes(t));
+          if (nextHasVerb && nextHasTerm) {
+            continue;
+          }
+        }
+
         if (hasVerb2 && hasTerm2 && !hasResponse2 && !hasConsulteeToAuthority2 && !isPhysicalOnly2) {
           // Include more context (up to 4 sentences)
-          const contextStart = Math.max(0, i - 1);
+          // For acoustic, anchor at the matching sentence to avoid unrelated lead-in text
+          const includePreviousSentence = targetReportType.toLowerCase() !== "acoustic";
+          const contextStart = includePreviousSentence ? Math.max(0, i - 1) : i;
           const contextEnd = Math.min(sentences.length, i + 4);
           const contextSentences = sentences.slice(contextStart, contextEnd);
           const quote = contextSentences.join(' ').trim();
