@@ -48,7 +48,9 @@ module.exports = {
       node_args: '--expose-gc --max-old-space-size=512',
       env: {
         NODE_ENV: 'production',
-        INGESTION_RUN_ON_STARTUP: 'false'
+        INGESTION_RUN_ON_STARTUP: 'false',
+        INGESTION_SCHEDULER_ENABLED: 'true',
+        INGESTION_CLEANUP_FILTER_DOCS: 'true'
       },
       error_file: '/var/log/fi_email/aws-ingestion-error.log',
       out_file: '/var/log/fi_email/aws-ingestion-out.log',
