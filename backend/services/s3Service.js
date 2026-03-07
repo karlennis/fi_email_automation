@@ -617,6 +617,34 @@ class S3Service {
     }
   }
 
+  /**
+   * Ensure root filter-docs sentinel exists so the prefix remains visible
+   */
+  async ensureFilterDocsRootKeep() {
+    const keepKey = 'filter-docs/.keep';
+
+    try {
+      const exists = await this.objectExists(keepKey);
+
+      if (exists) {
+        logger.info('✅ filter-docs root keep file already exists');
+        return { key: keepKey, created: false };
+      }
+
+      await this.uploadDocument(
+        Buffer.from('keep\n', 'utf8'),
+        keepKey,
+        { sentinel: 'true', purpose: 'preserve-prefix' }
+      );
+
+      logger.info('✅ Created filter-docs root keep file');
+      return { key: keepKey, created: true };
+    } catch (error) {
+      logger.error('❌ Failed to ensure filter-docs root keep file:', error);
+      throw error;
+    }
+  }
+
   // ============================================
   // FILTER-DOCS INGESTION OPERATIONS
   // ============================================

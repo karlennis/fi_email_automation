@@ -32,6 +32,8 @@ const CONFIG = {
   BATCH_DELAY: 100
 };
 
+const KEEP_FILE_NAME = '.keep';
+
 class DocumentIngestionService {
   constructor() {
     this.stats = {
@@ -158,7 +160,8 @@ class DocumentIngestionService {
       result.isNewProject = !existsInPlanning;
 
       // Step 2: Get documents from filter-docs
-      const filterDocs = await s3Service.listFilterDocsProject(projectId);
+      const filterDocs = (await s3Service.listFilterDocsProject(projectId))
+        .filter(doc => doc.fileName !== KEEP_FILE_NAME);
       
       if (filterDocs.length === 0) {
         logger.warn(`No documents found in filter-docs/${projectId}/`);
@@ -257,12 +260,13 @@ class DocumentIngestionService {
   async cleanupFilterDocs(projectId) {
     try {
       const filterDocs = await s3Service.listFilterDocsProject(projectId);
+      const deleteCandidates = filterDocs.filter(doc => doc.fileName !== KEEP_FILE_NAME);
       
-      if (filterDocs.length === 0) {
+      if (deleteCandidates.length === 0) {
         return { projectId, deleted: 0 };
       }
 
-      const keys = filterDocs.map(d => d.key);
+      const keys = deleteCandidates.map(d => d.key);
       const result = await s3Service.deleteDocuments(keys);
       
       logger.info(`🧹 Cleaned up ${result.deleted} documents from filter-docs/${projectId}/`);
@@ -282,7 +286,8 @@ class DocumentIngestionService {
    * @returns {object} Full pipeline result
    */
   async ingestAndRoute(projectId, documents, options = {}) {
-    const { cleanupAfter = true } = options;
+    const cleanupEnabledByEnv = process.env.INGESTION_CLEANUP_FILTER_DOCS === 'true';
+    const { cleanupAfter = cleanupEnabledByEnv } = options;
     
     const pipelineResult = {
       projectId,

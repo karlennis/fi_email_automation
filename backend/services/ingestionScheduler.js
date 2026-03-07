@@ -89,17 +89,23 @@ class IngestionScheduler {
       // Route all projects
       const results = await documentIngestionService.batchRouteToPlanning(stagedProjects);
 
-      // Clean up successfully routed projects from filter-docs
+      const shouldCleanupFilterDocs = process.env.INGESTION_CLEANUP_FILTER_DOCS === 'true';
+
+      // Clean up successfully routed projects from filter-docs (opt-in)
       let cleanedUp = 0;
-      for (const result of results.projectResults) {
-        if (result.errors && result.errors.length === 0) {
-          try {
-            await documentIngestionService.cleanupFilterDocs(result.projectId);
-            cleanedUp++;
-          } catch (error) {
-            logger.warn(`Failed to clean up filter-docs for ${result.projectId}:`, error.message);
+      if (shouldCleanupFilterDocs) {
+        for (const result of results.projectResults) {
+          if (result.errors && result.errors.length === 0) {
+            try {
+              await documentIngestionService.cleanupFilterDocs(result.projectId);
+              cleanedUp++;
+            } catch (error) {
+              logger.warn(`Failed to clean up filter-docs for ${result.projectId}:`, error.message);
+            }
           }
         }
+      } else {
+        logger.info('⏭️ Skipping filter-docs cleanup (INGESTION_CLEANUP_FILTER_DOCS is not true)');
       }
 
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);
@@ -109,7 +115,7 @@ class IngestionScheduler {
       logger.info(`   - New projects (baselined): ${results.newProjects}`);
       logger.info(`   - Existing projects (updated): ${results.existingProjects}`);
       logger.info(`   - Documents routed: ${results.totalDocumentsRouted}`);
-      logger.info(`   - Filter-docs cleaned: ${cleanedUp}`);
+      logger.info(`   - Filter-docs cleaned: ${cleanedUp}${shouldCleanupFilterDocs ? '' : ' (cleanup disabled)'}`);
       logger.info(`   - Duration: ${duration}s`);
 
       this.lastRunDate = today;

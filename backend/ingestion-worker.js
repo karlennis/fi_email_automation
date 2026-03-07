@@ -7,8 +7,8 @@
  * - Cleans up old baseline markers
  * 
  * Schedule:
- * - 11:55 PM: Route filter-docs → planning-docs
- * - 12:00 AM: Clean up old baseline markers
+ * - 11:00 PM: Route filter-docs → planning-docs
+ * - 12:05 AM: Clean up old baseline markers
  * 
  * This runs BEFORE the FI scan (12:10 AM) to ensure documents
  * are properly placed and baselined.
@@ -57,12 +57,23 @@ async function verifyS3Connection() {
   }
 }
 
+async function ensureFilterDocsRootKeep() {
+  try {
+    await s3Service.ensureFilterDocsRootKeep();
+    return true;
+  } catch (error) {
+    logger.error('❌ Could not ensure filter-docs root keep file:', error.message);
+    return false;
+  }
+}
+
 async function main() {
   logger.info('🚀 Starting Ingestion Worker...');
   logger.info(`   Bucket: ${s3Service.bucket}`);
   logger.info('   Schedule:');
-  logger.info('     - 11:55 PM: Route filter-docs → planning-docs');
-  logger.info('     - 12:00 AM: Cleanup old baseline markers');
+  logger.info('     - 11:00 PM: Route filter-docs → planning-docs');
+  logger.info('     - 12:05 AM: Cleanup old baseline markers');
+  logger.info(`   Filter-docs deletion after routing: ${process.env.INGESTION_CLEANUP_FILTER_DOCS === 'true' ? 'ENABLED' : 'DISABLED'}`);
 
   // Connect to MongoDB (optional)
   await connectMongoDB();
@@ -71,6 +82,12 @@ async function main() {
   const s3Ok = await verifyS3Connection();
   if (!s3Ok) {
     logger.error('❌ Cannot start ingestion worker without S3 access');
+    process.exit(1);
+  }
+
+  const filterDocsRootOk = await ensureFilterDocsRootKeep();
+  if (!filterDocsRootOk) {
+    logger.error('❌ Cannot start ingestion worker without filter-docs root keep file');
     process.exit(1);
   }
 
