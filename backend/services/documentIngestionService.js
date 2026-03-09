@@ -406,22 +406,37 @@ class DocumentIngestionService {
 
   /**
    * List all projects currently in filter-docs (staging area)
+   * Uses pagination to handle >1000 projects
    * @returns {string[]} Array of project IDs
    */
   async listStagedProjects() {
     try {
-      const params = {
-        Bucket: s3Service.bucket,
-        Prefix: 'filter-docs/',
-        Delimiter: '/'
-      };
+      const projectIds = [];
+      let continuationToken = null;
 
-      const response = await s3Service.s3.listObjectsV2(params).promise();
-      
-      const projectIds = (response.CommonPrefixes || [])
-        .map(prefix => prefix.Prefix.replace('filter-docs/', '').replace('/', ''))
-        .filter(id => id);
+      do {
+        const params = {
+          Bucket: s3Service.bucket,
+          Prefix: 'filter-docs/',
+          Delimiter: '/'
+        };
 
+        if (continuationToken) {
+          params.ContinuationToken = continuationToken;
+        }
+
+        const response = await s3Service.s3.listObjectsV2(params).promise();
+        
+        const ids = (response.CommonPrefixes || [])
+          .map(prefix => prefix.Prefix.replace('filter-docs/', '').replace('/', ''))
+          .filter(id => id);
+
+        projectIds.push(...ids);
+        continuationToken = response.IsTruncated ? response.NextContinuationToken : null;
+
+      } while (continuationToken);
+
+      logger.info(`📋 Found ${projectIds.length} projects in filter-docs`);
       return projectIds;
     } catch (error) {
       logger.error('Error listing staged projects:', error);
