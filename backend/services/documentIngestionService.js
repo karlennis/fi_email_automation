@@ -1,6 +1,6 @@
 /**
  * Document Ingestion Service
- * 
+ *
  * Handles the filter-docs first ingestion architecture:
  * 1. All scraped documents first land in filter-docs/
  * 2. Documents are then routed to planning-docs/ based on project status
@@ -90,7 +90,7 @@ class DocumentIngestionService {
   /**
    * Ingest documents to filter-docs for a project
    * This is the first stage - raw scrape, no filtering
-   * 
+   *
    * @param {string} projectId - Project ID
    * @param {Array} documents - Array of {buffer, fileName} or {localPath, fileName}
    * @returns {object} Ingestion result
@@ -109,7 +109,7 @@ class DocumentIngestionService {
       try {
         const s3Key = `filter-docs/${projectId}/${doc.fileName}`;
         const content = doc.buffer || doc.localPath;
-        
+
         const result = await s3Service.uploadDocument(content, s3Key);
         results.successful.push({
           fileName: doc.fileName,
@@ -136,7 +136,7 @@ class DocumentIngestionService {
    * Route documents from filter-docs to planning-docs
    * This is the core routing logic that handles new vs existing projects
    * Uses parallel processing for high throughput (50 concurrent copies)
-   * 
+   *
    * @param {string} projectId - Project ID to route
    * @returns {object} Routing result with details
    */
@@ -162,7 +162,7 @@ class DocumentIngestionService {
       // Step 2: Get documents from filter-docs
       const filterDocs = (await s3Service.listFilterDocsProject(projectId))
         .filter(doc => doc.fileName !== KEEP_FILE_NAME);
-      
+
       if (filterDocs.length === 0) {
         logger.warn(`No documents found in filter-docs/${projectId}/`);
         return result;
@@ -253,7 +253,7 @@ class DocumentIngestionService {
 
   /**
    * Clean up filter-docs after successful routing
-   * 
+   *
    * @param {string} projectId - Project ID to clean up
    * @returns {object} Cleanup result
    */
@@ -261,14 +261,14 @@ class DocumentIngestionService {
     try {
       const filterDocs = await s3Service.listFilterDocsProject(projectId);
       const deleteCandidates = filterDocs.filter(doc => doc.fileName !== KEEP_FILE_NAME);
-      
+
       if (deleteCandidates.length === 0) {
         return { projectId, deleted: 0 };
       }
 
       const keys = deleteCandidates.map(d => d.key);
       const result = await s3Service.deleteDocuments(keys);
-      
+
       logger.info(`🧹 Cleaned up ${result.deleted} documents from filter-docs/${projectId}/`);
       return { projectId, deleted: result.deleted };
     } catch (error) {
@@ -279,7 +279,7 @@ class DocumentIngestionService {
 
   /**
    * Full ingestion pipeline: ingest → route → cleanup
-   * 
+   *
    * @param {string} projectId - Project ID
    * @param {Array} documents - Documents to ingest
    * @param {object} options - Pipeline options
@@ -288,7 +288,7 @@ class DocumentIngestionService {
   async ingestAndRoute(projectId, documents, options = {}) {
     const cleanupEnabledByEnv = process.env.INGESTION_CLEANUP_FILTER_DOCS === 'true';
     const { cleanupAfter = cleanupEnabledByEnv } = options;
-    
+
     const pipelineResult = {
       projectId,
       ingestion: null,
@@ -300,7 +300,7 @@ class DocumentIngestionService {
     try {
       // Step 1: Ingest to filter-docs
       pipelineResult.ingestion = await this.ingestToFilterDocs(projectId, documents);
-      
+
       if (pipelineResult.ingestion.successful.length === 0) {
         logger.warn(`No documents successfully ingested for ${projectId}`);
         return pipelineResult;
@@ -327,7 +327,7 @@ class DocumentIngestionService {
   /**
    * Route multiple projects from filter-docs to planning-docs
    * Uses parallel processing: 5 projects at a time, 50 docs per project concurrent
-   * 
+   *
    * @param {string[]} projectIds - Array of project IDs to route
    * @returns {object} Batch routing results
    */
@@ -339,6 +339,8 @@ class DocumentIngestionService {
       newProjects: 0,
       existingProjects: 0,
       totalDocumentsRouted: 0,
+      docsSkippingFIScan: 0,    // Documents from baselined projects (will NOT be scanned)
+      docsEligibleForFIScan: 0, // Documents from existing projects (WILL be scanned)
       projectResults: [],
       durationMs: 0
     };
@@ -368,8 +370,10 @@ class DocumentIngestionService {
 
         if (routeResult.isNewProject) {
           results.newProjects++;
+          results.docsSkippingFIScan += routeResult.documentsCopied;
         } else {
           results.existingProjects++;
+          results.docsEligibleForFIScan += routeResult.documentsCopied;
         }
 
         results.totalDocumentsRouted += routeResult.documentsCopied;
@@ -383,13 +387,16 @@ class DocumentIngestionService {
     logger.info(`✅ Batch routing complete: ${results.successful}/${results.total} successful (${(results.durationMs / 1000).toFixed(1)}s)`);
     logger.info(`   New projects: ${results.newProjects}, Existing: ${results.existingProjects}`);
     logger.info(`   Total documents routed: ${results.totalDocumentsRouted} (${docsPerSecond.toFixed(0)} docs/sec)`);
+    logger.info(`   📊 FI Scan eligibility:`);
+    logger.info(`      - Skipping FI scan (baselined): ${results.docsSkippingFIScan} docs`);
+    logger.info(`      - Eligible for FI scan (new on existing): ${results.docsEligibleForFIScan} docs`);
 
     return results;
   }
 
   /**
    * Check if a project should be skipped in FI scan (has baseline marker for today)
-   * 
+   *
    * @param {string} projectId - Project ID to check
    * @returns {boolean} True if project should be skipped
    */
@@ -426,7 +433,7 @@ class DocumentIngestionService {
         }
 
         const response = await s3Service.s3.listObjectsV2(params).promise();
-        
+
         const ids = (response.CommonPrefixes || [])
           .map(prefix => prefix.Prefix.replace('filter-docs/', '').replace('/', ''))
           .filter(id => id);
@@ -453,7 +460,7 @@ class DocumentIngestionService {
       // This is a simplified version - for full implementation,
       // we'd need to scan planning-docs for _baseline_* files
       const today = new Date().toISOString().split('T')[0];
-      
+
       // Get projects from planning-docs and check for today's markers
       const projects = await s3Service.listPlanningDocsProjects();
       const baselinedToday = [];

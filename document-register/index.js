@@ -280,6 +280,13 @@ async function routeDocuments(projectId) {
         result.errors.forEach(err => console.log(`   - ${err.fileName || err.error}`));
       }
 
+      // Cleanup filter-docs for this project
+      if (result.errors.length === 0) {
+        console.log(`\n🧹 Cleaning up filter-docs/${projectId}...`);
+        const cleanup = await documentIngestionService.cleanupFilterDocs(projectId);
+        console.log(`   Deleted ${cleanup.deleted} files`);
+      }
+
     } else {
       // Route all projects in filter-docs
       console.log('🔄 Routing ALL projects from filter-docs to planning-docs...\n');
@@ -303,6 +310,28 @@ async function routeDocuments(projectId) {
       console.log(`   New Projects (baselined): ${results.newProjects}`);
       console.log(`   Existing Projects (merged): ${results.existingProjects}`);
       console.log(`   Total Documents Routed: ${results.totalDocumentsRouted}`);
+      console.log(`\n📈 FI Scan Eligibility:`);
+      console.log(`   Skipping FI scan (baselined): ${results.docsSkippingFIScan || 0} docs`);
+      console.log(`   Eligible for FI scan (new on existing): ${results.docsEligibleForFIScan || 0} docs`);
+
+      // Cleanup filter-docs for successful projects
+      const successfulProjects = results.projectResults
+        .filter(r => !r.error && r.errors?.length === 0)
+        .map(r => r.projectId);
+
+      if (successfulProjects.length > 0) {
+        console.log(`\n🧹 Cleaning up ${successfulProjects.length} projects from filter-docs...`);
+        let totalDeleted = 0;
+        for (const pid of successfulProjects) {
+          try {
+            const cleanup = await documentIngestionService.cleanupFilterDocs(pid);
+            totalDeleted += cleanup.deleted;
+          } catch (err) {
+            console.error(`   ⚠️ Failed to cleanup ${pid}: ${err.message}`);
+          }
+        }
+        console.log(`   ✅ Deleted ${totalDeleted} files total`);
+      }
     }
 
     console.log('\n');

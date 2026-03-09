@@ -117,6 +117,9 @@ class IngestionScheduler {
       logger.info(`   - Documents routed: ${results.totalDocumentsRouted}`);
       logger.info(`   - Filter-docs cleaned: ${cleanedUp}${shouldCleanupFilterDocs ? '' : ' (cleanup disabled)'}`);
       logger.info(`   - Duration: ${duration}s`);
+      logger.info(`   📊 FI Scan Eligibility:`);
+      logger.info(`   - Skipping FI scan (baselined projects): ${results.docsSkippingFIScan} docs`);
+      logger.info(`   - Eligible for FI scan (existing projects): ${results.docsEligibleForFIScan} docs`);
 
       this.lastRunDate = today;
 
