@@ -846,16 +846,28 @@ class S3Service {
   }
 
   /**
-   * Check if a project has a baseline marker for a specific date
+   * Check if a project has a baseline marker (any recent marker within last 24 hours)
+   * This handles the timing gap where routing runs at 11PM but FI scan runs at 12:10AM next day
    * @param {string} projectId - Project ID
-   * @param {Date} date - Date to check (defaults to today)
+   * @param {Date} date - Date to check from (defaults to now)
    */
   async hasBaselineMarker(projectId, date = new Date()) {
     try {
-      const dateStr = date.toISOString().split('T')[0];
-      const markerKey = `planning-docs/${projectId}/_baseline_${dateStr}`;
+      // Check for today's marker
+      const todayStr = date.toISOString().split('T')[0];
+      const todayKey = `planning-docs/${projectId}/_baseline_${todayStr}`;
 
-      return await this.objectExists(markerKey);
+      if (await this.objectExists(todayKey)) {
+        return true;
+      }
+
+      // Also check yesterday's marker (handles 11PM routing → 12:10AM scan edge case)
+      const yesterday = new Date(date);
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = yesterday.toISOString().split('T')[0];
+      const yesterdayKey = `planning-docs/${projectId}/_baseline_${yesterdayStr}`;
+
+      return await this.objectExists(yesterdayKey);
     } catch (error) {
       logger.error(`Error checking baseline marker for ${projectId}:`, error);
       return false;
