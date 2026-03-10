@@ -31,7 +31,7 @@ class S3Service {
     this.mainFoldersCache = null;
     this.mainFoldersCacheExpiry = null;
     this.CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
-    
+
     // Singleflight lock to prevent concurrent duplicate S3 calls
     this.inFlightPromise = null;
 
@@ -226,7 +226,7 @@ class S3Service {
         logger.info('✅ Returning cached main folders (avoiding S3 call)');
         return this.mainFoldersCache;
       }
-      
+
       // Singleflight: if already in progress, wait for it
       if (this.inFlightPromise) {
         logger.info('⏳ S3 call already in progress, waiting for result...');
@@ -234,10 +234,10 @@ class S3Service {
       }
 
       logger.info('🚀 Starting S3 call to list main folders:', this.bucket);
-      
+
       // Create the in-flight promise
       this.inFlightPromise = this._doListMainFolders();
-      
+
       try {
         const result = await this.inFlightPromise;
         return result;
@@ -249,7 +249,7 @@ class S3Service {
       throw error;
     }
   }
-  
+
   async _doListMainFolders() {
     try {
       const now = Date.now(); // Define 'now' for cache expiry calculation
@@ -274,12 +274,12 @@ class S3Service {
         .filter(folder => folder.name); // Filter out empty names
 
       logger.info('Processed folders:', folders);
-      
+
       // Cache the result
       this.mainFoldersCache = folders;
       this.mainFoldersCacheExpiry = now + this.CACHE_TTL;
       logger.info(`📦 Cached main folders for ${this.CACHE_TTL / 1000}s`);
-      
+
       return folders;
 
     } catch (error) {
@@ -658,7 +658,7 @@ class S3Service {
   async uploadDocument(content, s3Key, metadata = {}) {
     try {
       let body = content;
-      
+
       // If content is a string path, read the file
       if (typeof content === 'string') {
         body = await fs.readFile(content);
@@ -787,7 +787,7 @@ class S3Service {
 
       const response = await this.s3.listObjectsV2(params).promise();
       const exists = response.Contents && response.Contents.length > 0;
-      
+
       logger.debug(`Project ${projectId} exists in planning-docs: ${exists}`);
       return exists;
     } catch (error) {
@@ -857,7 +857,9 @@ class S3Service {
       const todayStr = date.toISOString().split('T')[0];
       const todayKey = `planning-docs/${projectId}/_baseline_${todayStr}`;
 
-      if (await this.objectExists(todayKey)) {
+      const todayExists = await this.objectExists(todayKey);
+      if (todayExists) {
+        logger.debug(`📌 Found today's baseline marker for project ${projectId}: ${todayKey}`);
         return true;
       }
 
@@ -867,7 +869,13 @@ class S3Service {
       const yesterdayStr = yesterday.toISOString().split('T')[0];
       const yesterdayKey = `planning-docs/${projectId}/_baseline_${yesterdayStr}`;
 
-      return await this.objectExists(yesterdayKey);
+      const yesterdayExists = await this.objectExists(yesterdayKey);
+      if (yesterdayExists) {
+        logger.debug(`📌 Found yesterday's baseline marker for project ${projectId}: ${yesterdayKey}`);
+        return true;
+      }
+
+      return false;
     } catch (error) {
       logger.error(`Error checking baseline marker for ${projectId}:`, error);
       return false;

@@ -132,13 +132,19 @@
         <div class="progress-section">
             <h3 style="margin-top: 0;">📈 Progress Statistics</h3>
             <div class="stat">
-                <span class="stat-label">Documents Processed:</span>
+                <span class="stat-label">Documents Scanned:</span>
                 <span class="stat-value">{{processedCount}} / {{totalDocuments}}</span>
             </div>
             <div class="stat">
                 <span class="stat-label">Remaining:</span>
                 <span class="stat-value">{{remainingCount}}</span>
             </div>
+            {{#if skippedBaseline}}
+            <div class="stat">
+                <span class="stat-label">Baselined Projects Skipped:</span>
+                <span class="stat-value" style="color: #1976d2;">{{skippedBaseline}} docs from {{baselinedProjects}} projects</span>
+            </div>
+            {{/if}}
             <div class="stat">
                 <span class="stat-label">Matches Found:</span>
                 <span class="stat-value matches">{{matchesFound}}</span>

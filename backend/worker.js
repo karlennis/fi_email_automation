@@ -8,6 +8,7 @@ const mongoose = require('mongoose');
 const logger = require('./utils/logger');
 const { startScanWorker } = require('./services/scanJobWorker');
 const scanJobProcessor = require('./services/scanJobProcessor');
+const diskCleanupService = require('./services/diskCleanupService');
 
 const MONGODB_URI = process.env.MONGODB_URI;
 
@@ -19,6 +20,9 @@ if (!MONGODB_URI) {
 mongoose.connect(MONGODB_URI)
   .then(async () => {
     logger.info('✅ Worker connected to MongoDB');
+
+    // Initialize disk cleanup service (runs every 30 minutes)
+    await diskCleanupService.initialize();
 
     // Initialize scan job processor scheduler (runs daily at 12:10 AM)
     await scanJobProcessor.initialize();

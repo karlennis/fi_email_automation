@@ -659,13 +659,15 @@ class EmailService {
         matchesFound: progressData.matchesFound || 0,
         lastProcessedFile: progressData.lastProcessedFile || 'N/A',
         progressPercentage: progressPercentage,
-        isCheckpoint: progressData.isCheckpoint
+        isCheckpoint: progressData.isCheckpoint,
+        skippedBaseline: progressData.skippedBaseline || 0,
+        baselinedProjects: progressData.baselinedProjects || 0
       });
 
       const mailOptions = {
         from: process.env.SMTP_USER,
         to: toEmails.join(', '),
-        subject: `Scan Progress: ${processedCount.toLocaleString()}/${totalDocs > 0 ? totalDocs.toLocaleString() : '?'} documents processed`,
+        subject: `Scan Progress: ${processedCount.toLocaleString()}/${totalDocs > 0 ? totalDocs.toLocaleString() : '?'} docs scanned`,
         html: htmlContent
       };
 
@@ -729,7 +731,25 @@ class EmailService {
         return { success: false, reason: 'Email service not configured' };
       }
 
-      const { jobName, documentType, startTime, endTime, duration, processedCount, totalDocuments, matchesFound, matches } = summaryData;
+      const { jobName, documentType, startTime, endTime, duration, processedCount, totalDocuments, totalDocumentsRaw, matchesFound, matches, skippedBaseline, baselinedProjects } = summaryData;
+
+      // Build baseline info section if applicable
+      let baselineInfoHtml = '';
+      if (skippedBaseline && skippedBaseline > 0) {
+        baselineInfoHtml = `
+          <div style="background-color: #e3f2fd; border-left: 4px solid #1976d2; padding: 15px; margin: 20px 0;">
+            <strong>📌 Baseline Projects Skipped</strong>
+            <p style="margin: 5px 0 0 0; color: #333;">
+              ${skippedBaseline.toLocaleString()} documents from ${baselinedProjects || 0} newly-ingested projects were skipped.<br>
+              <span style="color: #666; font-size: 13px;">These projects were first-time ingestions and are excluded from FI scanning until new documents are added.</span>
+            </p>
+            <p style="margin: 10px 0 0 0; font-size: 13px; color: #666;">
+              Total documents in date range: ${(totalDocumentsRaw || totalDocuments + skippedBaseline).toLocaleString()} | 
+              Eligible for scanning: ${totalDocuments.toLocaleString()}
+            </p>
+          </div>
+        `;
+      }
 
       // Build HTML content for summary email
       let matchesHtml = '';
@@ -791,7 +811,7 @@ class EmailService {
               <div class="stats">
                 <div class="stat-box">
                   <div class="stat-value">${processedCount.toLocaleString()}</div>
-                  <div class="stat-label">Documents Processed</div>
+                  <div class="stat-label">Documents Scanned</div>
                 </div>
                 <div class="stat-box">
                   <div class="stat-value">${matchesFound}</div>
@@ -802,6 +822,8 @@ class EmailService {
                   <div class="stat-label">Duration</div>
                 </div>
               </div>
+
+              ${baselineInfoHtml}
 
               <p><strong>Start Time:</strong> ${new Date(startTime).toLocaleString()}</p>
               <p><strong>End Time:</strong> ${new Date(endTime).toLocaleString()}</p>

@@ -8,6 +8,7 @@ const emailService = require('./emailService');
 const buildingInfoService = require('./buildingInfoService');
 const fiReportService = require('./fiReportService');
 const documentIngestionService = require('./documentIngestionService');
+const diskCleanupService = require('./diskCleanupService');
 const logger = require('../utils/logger');
 const { enqueueScanJob } = require('./scanJobQueue');
 const optimizedPdfExtractor = require('./optimizedPdfExtractor');
@@ -298,6 +299,14 @@ class ScanJobProcessor {
         const resumePath = job.checkpoint.lastProcessedPath;
         const resumeFile = job.checkpoint.lastProcessedFile;
 
+        // Log baseline check date range for debugging
+        const today = new Date().toISOString().split('T')[0];
+        const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        logger.info(`📌 Baseline check enabled - will skip projects with markers from ${yesterday} or ${today}`);
+
+        // Helper to calculate actual eligible documents (excluding baselined)
+        const getEligibleCount = () => totalDocuments - skippedBaseline;
+
         let streamStats;
         try {
             streamStats = await fastS3Scanner.streamDocumentsSince(
@@ -364,7 +373,8 @@ class ScanJobProcessor {
                         await new Promise(resolve => setImmediate(resolve));
 
                         totalProcessed++;
-                        logger.info(`🔍 [${totalProcessed}/${totalDocuments}] Processing: ${document.fileName}`);
+                        const eligibleCount = getEligibleCount();
+                        logger.info(`🔍 [${totalProcessed}/${eligibleCount}] Processing: ${document.fileName}${skippedBaseline > 0 ? ` (${skippedBaseline} baselined skipped)` : ''}`);
 
                         // Additional yield before heavy processing
                         await new Promise(resolve => setImmediate(resolve));
@@ -500,10 +510,12 @@ class ScanJobProcessor {
                                 documentType: job.documentType,
                                 startTime: job.checkpoint.scanStartTime,
                                 processedCount: totalProcessed,
-                                totalDocuments: totalDocuments,
+                                totalDocuments: getEligibleCount(), // Use eligible count (excluding baselined)
                                 matchesFound: job.checkpoint.matchesFound || 0,
                                 lastProcessedFile: document.fileName,
                                 isCheckpoint: true,
+                                skippedBaseline: skippedBaseline, // Include baseline skip count for transparency
+                                baselinedProjects: baselineProjectCache.size,
                                 // Include match details for visibility
                                 recentMatches: recentMatches.map(m => ({
                                     fileName: m.fileName,
@@ -563,6 +575,10 @@ class ScanJobProcessor {
 
         if (skippedBaseline > 0) {
             logger.info(`📌 Skipped ${skippedBaseline} documents from ${baselineProjectCache.size} baselined projects (first-time ingestion)`);
+        } else if (totalProcessed > 0 && baselineProjectCache.size === 0) {
+            logger.warn(`⚠️  No baseline markers found - all ${totalProcessed} documents were scanned. Check if routing job ran successfully.`);
+        } else {
+            logger.info(`📌 Baseline check completed - ${baselineProjectCache.size} projects checked, none had recent baseline markers`);
         }
 
         if (streamStats && streamStats.totalMatched !== undefined) {
@@ -571,7 +587,18 @@ class ScanJobProcessor {
 
         // Use job.checkpoint.matchesFound for accurate count (matches array gets cleared after each checkpoint email)
         const totalMatchesFound = job.checkpoint.matchesFound || 0;
-        logger.info(`✅ Job ${job.jobId} complete: ${totalMatchesFound} matches found from ${totalProcessed} documents`);
+        const eligibleDocuments = getEligibleCount();
+        
+        // Log clear breakdown of document processing
+        logger.info(`\n📊 ===== SCAN SUMMARY =====`);
+        logger.info(`   Total documents in date range: ${totalDocuments}`);
+        if (skippedBaseline > 0) {
+            logger.info(`   Baselined projects skipped: ${baselineProjectCache.size} projects, ${skippedBaseline} documents`);
+        }
+        logger.info(`   Eligible documents scanned: ${eligibleDocuments}`);
+        logger.info(`   Documents actually processed: ${totalProcessed}`);
+        logger.info(`   FI matches found: ${totalMatchesFound}`);
+        logger.info(`✅ Job ${job.jobId} complete: ${totalMatchesFound} matches from ${totalProcessed}/${eligibleDocuments} eligible documents`);
 
         // Print validation quotes for any remaining matches (only those since last checkpoint)
         if (matches.length > 0) {
@@ -611,8 +638,11 @@ class ScanJobProcessor {
                 endTime: new Date(),
                 duration: duration,
                 processedCount: totalProcessed,
-                totalDocuments: totalDocuments,
+                totalDocuments: getEligibleCount(), // Use eligible count (excluding baselined)
+                totalDocumentsRaw: totalDocuments, // Include raw count for reference
                 matchesFound: totalMatchesFound,
+                skippedBaseline: skippedBaseline, // Documents skipped due to baseline markers
+                baselinedProjects: baselineProjectCache.size, // Number of baselined projects
                 // Include all match details for final summary
                 matches: allMatchDetails.map(m => ({
                     projectId: m.projectId,
@@ -642,6 +672,9 @@ class ScanJobProcessor {
         };
 
         await job.save();
+
+        // Cleanup temp files after job completion to prevent disk filling up
+        await diskCleanupService.runCleanup();
 
         const duration = ((Date.now() - startTime) / 1000).toFixed(2);
         logger.info(`⏱️ Job ${job.jobId} completed in ${duration}s - status reset to ACTIVE`);

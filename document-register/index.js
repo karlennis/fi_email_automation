@@ -68,6 +68,11 @@ async function main() {
       await checkBaseline(arg1);
       break;
 
+    case 'cleanup-disk':
+    case 'clear-temp':
+      await cleanupDisk();
+      break;
+
     case 'help':
     default:
       showHelp();
@@ -438,6 +443,34 @@ async function checkBaseline(projectId) {
   }
 }
 
+async function cleanupDisk() {
+  try {
+    console.log('🧹 Running disk cleanup...\n');
+
+    const diskCleanupService = require('../backend/services/diskCleanupService');
+    
+    // Get stats before
+    const beforeStats = await diskCleanupService.getDiskStats();
+    console.log(`📊 Before cleanup:`);
+    console.log(`   Temp files: ${beforeStats.tempFiles} (${beforeStats.tempSizeMB}MB)`);
+    console.log(`   Log files: ${beforeStats.logSizeMB}MB\n`);
+
+    // Force cleanup
+    await diskCleanupService.forceCleanup();
+
+    // Get stats after
+    const afterStats = await diskCleanupService.getDiskStats();
+    console.log(`\n📊 After cleanup:`);
+    console.log(`   Temp files: ${afterStats.tempFiles} (${afterStats.tempSizeMB}MB)`);
+    console.log(`   Log files: ${afterStats.logSizeMB}MB`);
+
+    console.log('\n✅ Cleanup complete!\n');
+  } catch (error) {
+    console.error('❌ Error during cleanup:', error.message);
+    process.exit(1);
+  }
+}
+
 function showHelp() {
   console.log('Usage: node index.js [command] [options]\n');
   
@@ -460,6 +493,10 @@ function showHelp() {
   console.log('  check-baseline <id> - Check baseline status for a specific project');
   console.log('  cleanup-baselines   - Remove old baseline markers');
   
+  console.log('\n🧹 MAINTENANCE COMMANDS:');
+  console.log('  cleanup-disk    - Clear temp files and truncate large logs');
+  console.log('  clear-temp      - Alias for cleanup-disk');
+  
   console.log('\n📝 EXAMPLES:');
   console.log('  node index.js count');
   console.log('  node index.js route');
@@ -467,6 +504,7 @@ function showHelp() {
   console.log('  node index.js staged');
   console.log('  node index.js baseline-status');
   console.log('  node index.js check-baseline 390721');
+  console.log('  node index.js cleanup-disk');
   console.log('\n');
 }
 

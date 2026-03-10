@@ -1,9 +1,9 @@
 /**
  * Ingestion Scheduler Service
- * 
+ *
  * Handles scheduled routing of documents from filter-docs to planning-docs
  * Runs before the FI scan to ensure all documents are properly placed
- * 
+ *
  * Schedule:
  * - 11:00 PM: Route filter-docs → planning-docs (70 mins before FI scan)
  * - 12:05 AM: Clean up old baseline markers (after FI scan starts)
