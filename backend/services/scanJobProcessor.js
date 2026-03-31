@@ -1,6 +1,7 @@
 const schedule = require('node-schedule');
 const ScanJob = require('../models/ScanJob');
 const Customer = require('../models/Customer');
+const ScanJobDailyResult = require('../models/ScanJobDailyResult');
 const fastS3Scanner = require('./fastS3Scanner');
 const fiDetectionService = require('./fiDetectionService');
 const s3Service = require('./s3Service');
@@ -185,8 +186,12 @@ class ScanJobProcessor {
             scanEndDate = new Date(job.checkpoint.scanEndDate);
             logger.info(`🔄 RESUMING: Original scan dates ${scanStartDate.toISOString().split('T')[0]} to ${scanEndDate.toISOString().split('T')[0]}`);
         } else {
-            // 3. SCHEDULED DAILY RUN: Use lookback period (default: yesterday)
-            const lookbackDays = job.schedule?.lookbackDays || 1; // Default to 1 day if not specified
+            // First run: bootstrap the delivery window by scanning the full lookback period.
+            // Subsequent runs: always scan only yesterday (1 day) so results accumulate incrementally.
+            const dailyScanLookback = !job.statistics.lastScanDate
+                ? (job.schedule?.lookbackDays || 1)
+                : 1;
+            const lookbackDays = dailyScanLookback;
 
             // End date: yesterday (don't include today's partial data)
             scanEndDate = new Date();
@@ -497,6 +502,12 @@ class ScanJobProcessor {
                         } else if (matches.length > 0 && !autoProcess) {
                             logger.warn(`⚠️ Found ${matches.length} matches but autoProcess is disabled - skipping match emails`);
                         }
+                        // Clear local match buffer — matches are persisted in allMatchDetails (checkpoint)
+                        // and will be delivered on the configured delivery day via deliverResultsForJob()
+                        if (matches.length > 0) {
+                            logger.info(`📦 ${matches.length} matches accumulated at checkpoint — buffered for delivery day`);
+                            matches = [];
+                        }
 
                         // Send progress email to admin (internal progress update)
                         const triggeredByEmail = job.checkpoint.triggeredBy?.email || adminEmail;
@@ -612,12 +623,8 @@ class ScanJobProcessor {
             logger.info('\n========================================\n');
         }
 
-        // Send emails for matches
-        // Default autoProcess to true if undefined (for backward compatibility with existing jobs)
-        const autoProcess = job.config.autoProcess !== false;
-        if (matches.length > 0 && autoProcess) {
-            await this.sendMatchEmails(matches, job);
-        }
+        // Clear remaining local match buffer (all matches already in allMatchDetails via checkpoint)
+        matches = [];
 
         // Update job statistics - use checkpoint.matchesFound for accurate count
         job.statistics.totalScans = (job.statistics.totalScans || 0) + 1;
@@ -654,6 +661,30 @@ class ScanJobProcessor {
             logger.info(`📧 Final summary email sent to ${triggeredByEmail}`);
         } else {
             logger.warn(`⚠️ No triggeredBy email found, skipping final summary email`);
+        }
+
+        // Reset job status back to ACTIVE after completion (don't leave it as RUNNING)
+        // SAVE TODAY'S SCAN RESULT (crash-safe — persisted independently per day)
+        const scanDateKey = new Date(scanEndDate);
+        scanDateKey.setHours(0, 0, 0, 0);
+        await this.saveDailyScanResult(job, {
+            scanDate: scanDateKey,
+            scanStartDate,
+            scanEndDate,
+            matches: job.checkpoint.allMatchDetails || [],
+            processedCount: totalProcessed,
+            eligibleCount: getEligibleCount(),
+            skippedBaseline,
+            baselinedProjects: baselineProjectCache.size
+        });
+
+        // CUSTOMER DELIVERY — only on configured delivery day
+        const autoProcess = job.config.autoProcess !== false;
+        if (autoProcess && this.isDeliveryDay(job, today)) {
+            logger.info(`📬 Today is a delivery day for job ${job.jobId} — aggregating and delivering results`);
+            await this.deliverResultsForJob(job, today);
+        } else {
+            logger.info(`📦 Results saved for job ${job.jobId} — not a delivery day (${job.schedule?.type || 'DAILY'})`);
         }
 
         // Reset job status back to ACTIVE after completion (don't leave it as RUNNING)
@@ -1354,6 +1385,142 @@ class ScanJobProcessor {
             default:
                 // Default to daily
                 return lastScanDateStr !== today;
+        }
+    }
+
+    /**
+     * Get processor status
+     */
+    /**
+     * Check if today is a delivery day for the given job.
+     * schedule.type now refers to delivery frequency only — all jobs scan daily.
+     */
+    isDeliveryDay(job, today) {
+        const scheduleType = job.schedule?.type || 'DAILY';
+        const date = new Date(today);
+
+        switch (scheduleType) {
+            case 'DAILY':
+            case 'CUSTOM':
+                return true;
+
+            case 'WEEKLY': {
+                // daysOfWeek[0] is the persisted value; dayOfWeek is accepted as a fallback from UI payloads.
+                const deliveryDow = job.schedule?.daysOfWeek?.[0] ?? job.schedule?.dayOfWeek ?? 1;
+                return date.getDay() === deliveryDow;
+            }
+
+            case 'MONTHLY': {
+                // dayOfMonth = day of month for delivery (1-31). Default: 1st
+                const deliveryDom = job.schedule?.dayOfMonth ?? 1;
+                return date.getDate() === deliveryDom;
+            }
+
+            default:
+                return true;
+        }
+    }
+
+    /**
+     * Persist a single day's scan results to MongoDB (crash-safe, one record per job per day).
+     */
+    async saveDailyScanResult(job, { scanDate, scanStartDate, scanEndDate, matches, processedCount, eligibleCount, skippedBaseline, baselinedProjects }) {
+        try {
+            const scanDateNormalized = new Date(scanDate);
+            scanDateNormalized.setHours(0, 0, 0, 0);
+
+            await ScanJobDailyResult.findOneAndUpdate(
+                { jobId: job.jobId, scanDate: scanDateNormalized },
+                {
+                    jobId: job.jobId,
+                    scanDate: scanDateNormalized,
+                    scanStartDate,
+                    scanEndDate,
+                    matches,
+                    processedCount,
+                    eligibleCount,
+                    skippedBaseline,
+                    baselinedProjects,
+                    delivered: false
+                },
+                { upsert: true, new: true, setDefaultsOnInsert: true }
+            );
+
+            logger.info(`💾 Daily result saved for job ${job.jobId} on ${scanDateNormalized.toISOString().split('T')[0]}: ${matches.length} matches`);
+        } catch (error) {
+            logger.error(`❌ Failed to save daily scan result for job ${job.jobId}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Aggregate stored daily results across the lookback window and deliver to customers.
+     * Deduplicates matches by projectId+fileName to prevent double-counting.
+     */
+    async deliverResultsForJob(job, today) {
+        try {
+            const lookbackDays = job.schedule?.lookbackDays || 1;
+
+            const windowEnd = new Date(today);
+            windowEnd.setHours(23, 59, 59, 999);
+
+            const windowStart = new Date(today);
+            windowStart.setDate(windowStart.getDate() - lookbackDays + 1);
+            windowStart.setHours(0, 0, 0, 0);
+
+            const dailyResults = await ScanJobDailyResult.find({
+                jobId: job.jobId,
+                scanDate: { $gte: windowStart, $lte: windowEnd }
+            });
+
+            if (dailyResults.length === 0) {
+                logger.info(`📭 No stored results for job ${job.jobId} in window ${windowStart.toISOString().split('T')[0]} → ${today}`);
+                return;
+            }
+
+            // Flatten and deduplicate by projectId+fileName
+            const seen = new Set();
+            const allMatches = [];
+            for (const daily of dailyResults) {
+                for (const m of (daily.matches || [])) {
+                    const key = `${m.projectId}::${m.fileName}`;
+                    if (!seen.has(key)) {
+                        seen.add(key);
+                        allMatches.push(m);
+                    }
+                }
+            }
+
+            logger.info(`📬 Delivering ${allMatches.length} deduplicated matches for job ${job.jobId} (${dailyResults.length} day(s) in window)`);
+
+            if (allMatches.length > 0) {
+                // Reconstruct matches in the format sendMatchEmails expects
+                const reconstructedMatches = allMatches.map(m => ({
+                    document: { projectId: m.projectId, fileName: m.fileName, filePath: m.filePath || '' },
+                    result: {
+                        isMatch: true,
+                        validationQuote: m.validationQuote || 'No quote captured',
+                        confidence: m.confidence || 0.95,
+                        reasoning: `FI request for ${m.fiType || job.documentType} detected`
+                    },
+                    customers: job.customers
+                }));
+
+                await this.sendMatchEmails(reconstructedMatches, job);
+            } else {
+                logger.info(`📭 No matches to deliver for job ${job.jobId} in this window`);
+            }
+
+            // Mark daily results as delivered
+            await ScanJobDailyResult.updateMany(
+                { jobId: job.jobId, scanDate: { $gte: windowStart, $lte: windowEnd } },
+                { $set: { delivered: true, deliveredAt: new Date() } }
+            );
+
+            logger.info(`✅ Marked ${dailyResults.length} daily result(s) as delivered for job ${job.jobId}`);
+        } catch (error) {
+            logger.error(`❌ Failed to deliver results for job ${job.jobId}:`, error);
+            throw error;
         }
     }
 

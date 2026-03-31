@@ -111,7 +111,7 @@
         <div class="config-grid">
           <div class="config-item">
             <span class="config-label">Schedule:</span>
-            <span class="config-value">{{ job.schedule?.type || 'DAILY' }} ({{ job.schedule?.lookbackDays || 1 }} days lookback)</span>
+            <span class="config-value">{{ job.schedule?.type || 'DAILY' }} delivery ({{ job.schedule?.lookbackDays || 1 }}-day window)</span>
           </div>
           <div class="config-item">
             <span class="config-label">Confidence Threshold:</span>
@@ -222,19 +222,48 @@
         </div>
 
         <div class="form-group">
-          <label>Schedule Configuration</label>
+          <label>Delivery Configuration</label>
           <div class="config-inputs">
             <div class="input-row">
-              <label>Scan Frequency</label>
+              <label>Delivery Frequency</label>
               <select [(ngModel)]="newJob.schedule.type" class="form-control">
                 <option value="DAILY">Daily</option>
                 <option value="WEEKLY">Weekly</option>
                 <option value="MONTHLY">Monthly</option>
               </select>
-              <small class="form-hint">How often this job should run</small>
+              <small class="form-hint">
+                Documents are scanned every day. Results are compiled and delivered on this schedule.
+              </small>
             </div>
+
+            <div class="input-row" *ngIf="newJob.schedule.type === 'WEEKLY'">
+              <label>Delivery Day</label>
+              <select [(ngModel)]="newJob.schedule.dayOfWeek" class="form-control">
+                <option [value]="1">Monday</option>
+                <option [value]="2">Tuesday</option>
+                <option [value]="3">Wednesday</option>
+                <option [value]="4">Thursday</option>
+                <option [value]="5">Friday</option>
+                <option [value]="6">Saturday</option>
+                <option [value]="0">Sunday</option>
+              </select>
+              <small class="form-hint">Day of the week when accumulated results are emailed to customers</small>
+            </div>
+
+            <div class="input-row" *ngIf="newJob.schedule.type === 'MONTHLY'">
+              <label>Day of Month</label>
+              <input
+                type="number"
+                [(ngModel)]="newJob.schedule.dayOfMonth"
+                min="1"
+                max="28"
+                class="form-control"
+              />
+              <small class="form-hint">Day of the month when accumulated results are delivered (1–28 recommended)</small>
+            </div>
+
             <div class="input-row">
-              <label>Lookback Period (days)</label>
+              <label>Delivery Window (days)</label>
               <input
                 type="number"
                 [(ngModel)]="newJob.schedule.lookbackDays"
@@ -243,7 +272,7 @@
                 class="form-control"
               />
               <small class="form-hint">
-                How many days of documents to scan each time
+                How many days of accumulated results to include in each delivery
                 <span *ngIf="newJob.schedule.type === 'DAILY'">(Recommended: 1)</span>
                 <span *ngIf="newJob.schedule.type === 'WEEKLY'">(Recommended: 7)</span>
                 <span *ngIf="newJob.schedule.type === 'MONTHLY'">(Recommended: 30)</span>

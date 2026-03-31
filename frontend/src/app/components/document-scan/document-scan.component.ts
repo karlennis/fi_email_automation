@@ -20,10 +20,12 @@ interface ScanJob {
   schedule?: {
     type: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'CUSTOM';
     lookbackDays: number;
+    dayOfWeek?: number;
+    dayOfMonth?: number;
   };
   customers: {
     customerId: string;
-    _id?: string; // MongoDB _id when populated
+    _id?: string;
     email: string;
     company: string;
   }[];
@@ -85,8 +87,10 @@ export class DocumentScanComponent implements OnInit {
       enableVisionAPI: true
     },
     schedule: {
-      type: 'DAILY',
-      lookbackDays: 1
+      type: 'DAILY' as 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'CUSTOM',
+      lookbackDays: 1,
+      dayOfWeek: 1,
+      dayOfMonth: 1
     }
   };
 
@@ -194,8 +198,10 @@ export class DocumentScanComponent implements OnInit {
         enableVisionAPI: true
       },
       schedule: {
-        type: 'DAILY',
-        lookbackDays: 1
+        type: 'DAILY' as 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'CUSTOM',
+        lookbackDays: 1,
+        dayOfWeek: 1,
+        dayOfMonth: 1
       }
     };
   }

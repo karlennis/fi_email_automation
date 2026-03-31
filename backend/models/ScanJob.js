@@ -93,11 +93,20 @@ const ScanJobSchema = new mongoose.Schema({
       type: Number,
       default: 1, // Default: scan documents from yesterday
       min: 1,
-      max: 365    },
+      max: 365
+    },
     // Store original target date for manual jobs (YYYY-MM-DD format)
     targetDate: {
       type: String,
-      default: null    }
+      default: null
+    },
+    // Day of month for MONTHLY delivery (1-31; capped at 28 in UI to work every month)
+    dayOfMonth: {
+      type: Number,
+      min: 1,
+      max: 31,
+      default: 1
+    }
   },
   statistics: {
     totalScans: {

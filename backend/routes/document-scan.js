@@ -41,6 +41,12 @@ router.get('/jobs', authenticate, async (req, res) => {
 router.post('/jobs', authenticate, requireAdmin, async (req, res) => {
   try {
     const { name, documentType, customers, config, schedule } = req.body;
+    const normalizedSchedule = schedule
+      ? {
+          ...schedule,
+          ...(schedule.dayOfWeek !== undefined ? { daysOfWeek: [Number(schedule.dayOfWeek)] } : {})
+        }
+      : {};
 
     logger.info('📝 Creating new scan job', {
       name,
@@ -53,7 +59,7 @@ router.post('/jobs', authenticate, requireAdmin, async (req, res) => {
       documentType,
       customers: customers || [],
       config: config || {},
-      schedule: schedule || {},
+      schedule: normalizedSchedule,
       createdBy: {
         userId: req.user._id,
         email: req.user.email,
@@ -96,6 +102,12 @@ router.put('/jobs/:jobId', authenticate, requireAdmin, async (req, res) => {
   try {
     const { jobId } = req.params;
     const updates = req.body;
+    const normalizedSchedule = updates.schedule
+      ? {
+          ...updates.schedule,
+          ...(updates.schedule.dayOfWeek !== undefined ? { daysOfWeek: [Number(updates.schedule.dayOfWeek)] } : {})
+        }
+      : null;
 
     logger.info(`📝 Updating scan job: ${jobId}`, {
       user: req.user.email
@@ -113,7 +125,7 @@ router.put('/jobs/:jobId', authenticate, requireAdmin, async (req, res) => {
     // Update allowed fields
     if (updates.name) job.name = updates.name;
     if (updates.config) job.config = { ...job.config, ...updates.config };
-    if (updates.schedule) job.schedule = { ...job.schedule, ...updates.schedule };
+    if (normalizedSchedule) job.schedule = { ...job.schedule, ...normalizedSchedule };
     if (updates.customers) job.customers = updates.customers;
 
     job.lastModifiedBy = {
