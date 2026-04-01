@@ -1349,10 +1349,10 @@ class ScanJobProcessor {
     }
 
     /**
-     * Check if a job should run based on its schedule frequency
+     * Check if a job should run today.
+     * Recurring jobs scan daily; delivery frequency is handled by isDeliveryDay().
      */
     shouldJobRun(job, today) {
-        const scheduleType = job.schedule?.type || 'DAILY';
         const lastScanDate = job.statistics.lastScanDate
             ? new Date(job.statistics.lastScanDate)
             : null;
@@ -1363,29 +1363,9 @@ class ScanJobProcessor {
         }
 
         const lastScanDateStr = lastScanDate.toISOString().split('T')[0];
-        const daysSinceLastScan = Math.floor((new Date(today) - lastScanDate) / (1000 * 60 * 60 * 24));
 
-        switch (scheduleType) {
-            case 'DAILY':
-                // Run if not already run today
-                return lastScanDateStr !== today;
-
-            case 'WEEKLY':
-                // Run if it's been 7+ days since last scan
-                return daysSinceLastScan >= 7;
-
-            case 'MONTHLY':
-                // Run if it's been 30+ days since last scan
-                return daysSinceLastScan >= 30;
-
-            case 'CUSTOM':
-                // For custom schedules, check if already run today
-                return lastScanDateStr !== today;
-
-            default:
-                // Default to daily
-                return lastScanDateStr !== today;
-        }
+        // Scan once per day for all recurring schedule types.
+        return lastScanDateStr !== today;
     }
 
     /**
