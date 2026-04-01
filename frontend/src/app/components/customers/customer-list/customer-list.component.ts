@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
-import { CustomerService, Customer, CustomerHistory } from '../../../services/customer.service';
+import { CustomerService, Customer, CustomerHistory, CustomerRequest } from '../../../services/customer.service';
 import { ApiFilteringService, DropdownData } from '../../../services/api-filtering.service';
 import { ToastrService } from 'ngx-toastr';
 import { environment } from '../../../../environments/environment';
@@ -18,7 +18,7 @@ import { environment } from '../../../../environments/environment';
       <div class="page-header">
         <h1>Customer Management</h1>
         <div class="header-actions">
-          <button class="btn btn-primary" (click)="showAddCustomer = true">
+          <button class="btn btn-primary" (click)="openAddCustomerModal()">
             <span class="btn-icon">➕</span>
             Add Customer
           </button>
@@ -176,7 +176,7 @@ import { environment } from '../../../../environments/environment';
             <div class="no-customers-icon">👥</div>
             <h3>No Customers Found</h3>
             <p>Start by adding customers to manage FI email notifications.</p>
-            <button class="btn btn-primary" (click)="showAddCustomer = true">Add First Customer</button>
+            <button class="btn btn-primary" (click)="openAddCustomerModal()">Add First Customer</button>
           </div>
         </div>
       </div>
@@ -268,19 +268,101 @@ import { environment } from '../../../../environments/environment';
       </div>
     </div>
 
-    <!-- Add Customer Modal (simplified) -->
-    <div class="modal" *ngIf="showAddCustomer" (click)="showAddCustomer = false">
+    <!-- Add Customer Modal -->
+    <div class="modal" *ngIf="showAddCustomer" (click)="closeAddCustomerModal()">
       <div class="modal-content" (click)="$event.stopPropagation()">
         <div class="modal-header">
           <h2>Add New Customer</h2>
-          <button class="close-btn" (click)="showAddCustomer = false">×</button>
+          <button class="close-btn" (click)="closeAddCustomerModal()">×</button>
         </div>
         <div class="modal-body">
-          <p>Customer management functionality will be implemented here.</p>
-          <p>For now, customers can be managed through the backend API directly.</p>
+          <div class="form-group">
+            <label for="new-name">Name *</label>
+            <input
+              id="new-name"
+              type="text"
+              class="form-control"
+              [(ngModel)]="newCustomer.name"
+              placeholder="Enter customer name"
+              [disabled]="isCreatingCustomer"
+            >
+          </div>
+
+          <div class="form-group">
+            <label for="new-email">Email *</label>
+            <input
+              id="new-email"
+              type="email"
+              class="form-control"
+              [(ngModel)]="newCustomer.email"
+              placeholder="Enter email address"
+              [disabled]="isCreatingCustomer"
+            >
+          </div>
+
+          <div class="form-group">
+            <label for="new-company">Company</label>
+            <input
+              id="new-company"
+              type="text"
+              class="form-control"
+              [(ngModel)]="newCustomer.company"
+              placeholder="Enter company name (optional)"
+              [disabled]="isCreatingCustomer"
+            >
+          </div>
+
+          <div class="form-group">
+            <label for="new-phone">Phone</label>
+            <input
+              id="new-phone"
+              type="text"
+              class="form-control"
+              [(ngModel)]="newCustomer.phone"
+              placeholder="Enter phone number (optional)"
+              [disabled]="isCreatingCustomer"
+            >
+          </div>
+
+          <div class="form-group">
+            <label for="new-project-id">Project ID</label>
+            <input
+              id="new-project-id"
+              type="text"
+              class="form-control"
+              [(ngModel)]="newCustomer.projectId"
+              placeholder="Enter project ID (optional)"
+              [disabled]="isCreatingCustomer"
+            >
+          </div>
+
+          <div class="form-group">
+            <label>Report Types *</label>
+            <p class="filter-help">Select at least one report type this customer should receive.</p>
+            <div class="filter-chips">
+              <button
+                *ngFor="let reportType of availableReportTypes"
+                type="button"
+                class="filter-chip"
+                [class.selected]="isNewCustomerReportTypeSelected(reportType.value)"
+                (click)="toggleNewCustomerReportType(reportType.value)"
+                [disabled]="isCreatingCustomer"
+              >
+                {{ reportType.label }}
+              </button>
+            </div>
+          </div>
+
+          <p class="filter-help">County and sector filters can be configured after creation from the Edit dialog.</p>
         </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" (click)="showAddCustomer = false">Close</button>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" (click)="closeAddCustomerModal()" [disabled]="isCreatingCustomer">
+            Cancel
+          </button>
+          <button class="btn btn-primary" (click)="createCustomer()" [disabled]="!canCreateCustomer() || isCreatingCustomer">
+            <span *ngIf="isCreatingCustomer">Creating...</span>
+            <span *ngIf="!isCreatingCustomer">Create Customer</span>
+          </button>
         </div>
       </div>
     </div>
@@ -1425,7 +1507,26 @@ export class CustomerListComponent implements OnInit {
   customers: Customer[] = [];
   isLoading = false;
   isUpdating = false;
+  isCreatingCustomer = false;
   showAddCustomer = false;
+  availableReportTypes = [
+    { value: 'acoustic', label: 'Acoustic' },
+    { value: 'transport', label: 'Transport' },
+    { value: 'ecological', label: 'Ecological' },
+    { value: 'flood', label: 'Flood' },
+    { value: 'heritage', label: 'Heritage' },
+    { value: 'arboricultural', label: 'Arboricultural' },
+    { value: 'waste', label: 'Waste' },
+    { value: 'lighting', label: 'Lighting' }
+  ];
+  newCustomer: CustomerRequest = {
+    name: '',
+    email: '',
+    company: '',
+    phone: '',
+    projectId: '',
+    reportTypes: ['acoustic']
+  };
 
   // Search and filtering
   searchQuery = '';
@@ -1625,6 +1726,77 @@ export class CustomerListComponent implements OnInit {
   closeQuickSelectModal() {
     this.showQuickSelectModal = false;
     this.quickSelectedCustomer = null;
+  }
+
+  openAddCustomerModal() {
+    this.showAddCustomer = true;
+  }
+
+  closeAddCustomerModal() {
+    this.showAddCustomer = false;
+    this.isCreatingCustomer = false;
+    this.newCustomer = {
+      name: '',
+      email: '',
+      company: '',
+      phone: '',
+      projectId: '',
+      reportTypes: ['acoustic']
+    };
+  }
+
+  toggleNewCustomerReportType(reportType: string) {
+    const reportTypes = this.newCustomer.reportTypes || [];
+    const index = reportTypes.indexOf(reportType);
+
+    if (index === -1) {
+      reportTypes.push(reportType);
+    } else {
+      reportTypes.splice(index, 1);
+    }
+
+    this.newCustomer.reportTypes = reportTypes;
+  }
+
+  isNewCustomerReportTypeSelected(reportType: string): boolean {
+    return (this.newCustomer.reportTypes || []).includes(reportType);
+  }
+
+  canCreateCustomer(): boolean {
+    return !!this.newCustomer.name?.trim() &&
+      !!this.newCustomer.email?.trim() &&
+      !!this.newCustomer.reportTypes?.length;
+  }
+
+  createCustomer() {
+    if (!this.canCreateCustomer()) {
+      this.toastr.error('Name, email, and at least one report type are required');
+      return;
+    }
+
+    const payload: CustomerRequest = {
+      name: this.newCustomer.name.trim(),
+      email: this.newCustomer.email.trim().toLowerCase(),
+      company: this.newCustomer.company?.trim() || undefined,
+      phone: this.newCustomer.phone?.trim() || undefined,
+      projectId: this.newCustomer.projectId?.trim().toUpperCase() || undefined,
+      reportTypes: [...(this.newCustomer.reportTypes || [])]
+    };
+
+    this.isCreatingCustomer = true;
+
+    this.customerService.createCustomer(payload).subscribe({
+      next: (customer) => {
+        this.toastr.success(`Customer "${customer.name}" created successfully`);
+        this.closeAddCustomerModal();
+        this.loadCustomers();
+      },
+      error: (error) => {
+        this.isCreatingCustomer = false;
+        this.toastr.error(error.error?.error || error.error?.message || 'Failed to create customer');
+        console.error('Error creating customer:', error);
+      }
+    });
   }
 
   formatDate(date: Date | string): string {

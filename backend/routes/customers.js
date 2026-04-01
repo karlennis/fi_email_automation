@@ -3,6 +3,7 @@ const router = express.Router();
 const Customer = require('../models/Customer');
 const emailService = require('../services/emailService');
 const Joi = require('joi');
+const { authenticate } = require('../middleware/auth');
 
 // Validation schemas
 const customerSchema = Joi.object({
@@ -45,6 +46,8 @@ const updateCustomerSchema = Joi.object({
     weeklyDigest: Joi.boolean()
   })
 });
+
+router.use(authenticate);
 
 /**
  * GET /api/customers
@@ -154,34 +157,6 @@ router.get('/statistics', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to retrieve statistics',
-      message: error.message
-    });
-  }
-});
-
-/**
- * GET /api/customers/:id
- * Get specific customer
- */
-router.get('/:id', async (req, res) => {
-  try {
-    const customer = await Customer.findById(req.params.id);
-
-    if (!customer) {
-      return res.status(404).json({
-        success: false,
-        error: 'Customer not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      data: customer
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to retrieve customer',
       message: error.message
     });
   }
@@ -563,6 +538,34 @@ router.get('/email-suggestions', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to get email suggestions',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/customers/:id
+ * Get specific customer
+ */
+router.get('/:id', async (req, res) => {
+  try {
+    const customer = await Customer.findById(req.params.id);
+
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        error: 'Customer not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: customer
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve customer',
       message: error.message
     });
   }

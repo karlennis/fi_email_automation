@@ -9,6 +9,7 @@ export interface Customer {
   _id: string;
   name: string;
   email: string;
+  projectId?: string;
   phone?: string;
   company?: string;
   reportTypes: string[];
@@ -73,6 +74,7 @@ export interface EmailSuggestion {
 export interface CustomerRequest {
   name: string;
   email: string;
+  projectId?: string;
   phone?: string;
   company?: string;
   reportTypes?: string[];
