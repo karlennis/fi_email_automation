@@ -186,12 +186,9 @@ class ScanJobProcessor {
             scanEndDate = new Date(job.checkpoint.scanEndDate);
             logger.info(`🔄 RESUMING: Original scan dates ${scanStartDate.toISOString().split('T')[0]} to ${scanEndDate.toISOString().split('T')[0]}`);
         } else {
-            // First run: bootstrap the delivery window by scanning the full lookback period.
-            // Subsequent runs: always scan only yesterday (1 day) so results accumulate incrementally.
-            const dailyScanLookback = !job.statistics.lastScanDate
-                ? (job.schedule?.lookbackDays || 1)
-                : 1;
-            const lookbackDays = dailyScanLookback;
+            // Scheduled recurring runs always scan only yesterday.
+            // Delivery uses lookbackDays to aggregate recent daily results on delivery day.
+            const lookbackDays = 1;
 
             // End date: yesterday (don't include today's partial data)
             scanEndDate = new Date();
@@ -359,7 +356,7 @@ class ScanJobProcessor {
                                     logger.info(`📌 Project ${projectId} has baseline marker - all documents will be skipped`);
                                 }
                             }
-                            
+
                             if (baselineProjectCache.get(projectId)) {
                                 skippedBaseline++;
                                 return; // Skip this document - project is newly baselined
@@ -599,7 +596,7 @@ class ScanJobProcessor {
         // Use job.checkpoint.matchesFound for accurate count (matches array gets cleared after each checkpoint email)
         const totalMatchesFound = job.checkpoint.matchesFound || 0;
         const eligibleDocuments = getEligibleCount();
-        
+
         // Log clear breakdown of document processing
         logger.info(`\n📊 ===== SCAN SUMMARY =====`);
         logger.info(`   Total documents in date range: ${totalDocuments}`);
@@ -1108,7 +1105,7 @@ class ScanJobProcessor {
                     const isPlaceholder = validationQuote.includes('Match confirmed by AI') ||
                                           validationQuote.includes('No specific quote extracted') ||
                                           validationQuote === 'No quote captured';
-                    
+
                     if (!isPlaceholder) {
                         customerMatchesMap.get(email).matches.push({
                             reportType: job.documentType,
