@@ -117,12 +117,22 @@ AWS_REGION=eu-north-1
 S3_BUCKET=planning-documents-2
 S3_REGION=eu-north-1
 
-# Email (SMTP)
+# Email (SMTP) - Google Workspace
+# Steps to generate app password:
+# 1. Go to https://myaccount.google.com/security
+# 2. Enable 2-Step Verification (if not already done)
+# 3. Scroll to "App passwords" and select Mail + Your device
+# 4. Copy the 16-character password below
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_SECURE=false
-SMTP_USER=your-email@gmail.com
-SMTP_PASS=your-app-password
+SMTP_USER=intel@buildinginfo.com
+SMTP_PASS=abcd efgh ijkl mnop
+
+# Email sender configuration (use env vars instead of hardcoding)
+FROM_EMAIL=intel@buildinginfo.com
+FROM_NAME=Building Information Ireland
+REPLY_TO_EMAIL=support@buildinginfo.com
 
 # OpenAI
 OPENAI_API_KEY=your_openai_api_key

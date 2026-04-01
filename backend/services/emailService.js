@@ -25,6 +25,22 @@ class EmailService {
   }
 
   /**
+   * Get FROM address from environment variables with fallback
+   */
+  getFromAddress() {
+    const fromEmail = process.env.FROM_EMAIL || process.env.SMTP_USER;
+    const fromName = process.env.FROM_NAME || 'Building Info Team';
+    return `"${fromName}" <${fromEmail}>`;
+  }
+
+  /**
+   * Get REPLY_TO email from environment variables with fallback
+   */
+  getReplyToEmail() {
+    return process.env.REPLY_TO_EMAIL || process.env.SMTP_USER;
+  }
+
+  /**
    * Initialize nodemailer transporter
    */
   initializeTransporter() {
@@ -34,10 +50,16 @@ class EmailService {
       return;
     }
 
+    // Determine if connection should use TLS (secure: false) or SSL (secure: true)
+    // Default: false for port 587 (STARTTLS), true for port 465 (implicit SSL)
+    const smtpPort = parseInt(process.env.SMTP_PORT) || 587;
+    const shouldSecure = process.env.SMTP_SECURE === 'true' ||
+                        (process.env.SMTP_SECURE !== 'false' && smtpPort === 465);
+
     this.transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT) || 587,
-      secure: false, // true for 465, false for other ports
+      port: smtpPort,
+      secure: shouldSecure,
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
@@ -392,7 +414,7 @@ class EmailService {
           // Truncate validation quote for display
           const truncatedQuote = (match.validationQuote || 'No quote captured').substring(0, 350) +
             ((match.validationQuote?.length || 0) > 350 ? '...' : '');
-          
+
           // Map project metadata fields to template-expected names
           const projectData = {
             ...match,
@@ -432,8 +454,8 @@ class EmailService {
       const subject = `FI Requests Detected - ${Object.keys(processedMatchesByType).join(', ')}`;
 
       const mailOptions = {
-        from: `"Building Info Team" <noreply@buildinginfo.com>`,
-        replyTo: process.env.SMTP_USER,
+        from: this.getFromAddress(),
+        replyTo: this.getReplyToEmail(),
         to: customerEmail,
         subject: subject,
         html: html
@@ -495,8 +517,8 @@ class EmailService {
       });
 
       const mailOptions = {
-        from: `"Building Info Team" <noreply@buildinginfo.com>`,
-        replyTo: process.env.SMTP_USER,
+        from: this.getFromAddress(),
+        replyTo: this.getReplyToEmail(),
         to: customerEmail,
         subject: `FI Request Detected: ${fiData.reportType} - ${projectTitle}`,
         html: html
@@ -539,8 +561,8 @@ class EmailService {
       });
 
       const mailOptions = {
-        from: `"Building Info Team" <noreply@buildinginfo.com>`,
-        replyTo: process.env.SMTP_USER,
+        from: this.getFromAddress(),
+        replyTo: this.getReplyToEmail(),
         to: customerEmail,
         subject: 'Welcome to FI Email Automation',
         html: html
@@ -644,8 +666,8 @@ class EmailService {
       // Safely handle totalDocuments - prevent division by zero
       const totalDocs = progressData.totalDocuments || 0;
       const processedCount = progressData.processedCount || 0;
-      const progressPercentage = totalDocs > 0 
-        ? Math.round((processedCount / totalDocs) * 100) 
+      const progressPercentage = totalDocs > 0
+        ? Math.round((processedCount / totalDocs) * 100)
         : 0;
       const remainingCount = totalDocs > 0 ? totalDocs - processedCount : 0;
 
@@ -665,7 +687,8 @@ class EmailService {
       });
 
       const mailOptions = {
-        from: process.env.SMTP_USER,
+        from: this.getFromAddress(),
+        replyTo: this.getReplyToEmail(),
         to: toEmails.join(', '),
         subject: `Scan Progress: ${processedCount.toLocaleString()}/${totalDocs > 0 ? totalDocs.toLocaleString() : '?'} docs scanned`,
         html: htmlContent
@@ -693,7 +716,8 @@ class EmailService {
   async sendTestEmail(toEmail) {
     try {
       const mailOptions = {
-        from: process.env.SMTP_USER,
+        from: this.getFromAddress(),
+        replyTo: this.getReplyToEmail(),
         to: toEmail,
         subject: 'FI Email Automation - Test Email',
         html: `
@@ -744,7 +768,7 @@ class EmailService {
               <span style="color: #666; font-size: 13px;">These projects were first-time ingestions and are excluded from FI scanning until new documents are added.</span>
             </p>
             <p style="margin: 10px 0 0 0; font-size: 13px; color: #666;">
-              Total documents in date range: ${(totalDocumentsRaw || totalDocuments + skippedBaseline).toLocaleString()} | 
+              Total documents in date range: ${(totalDocumentsRaw || totalDocuments + skippedBaseline).toLocaleString()} |
               Eligible for scanning: ${totalDocuments.toLocaleString()}
             </p>
           </div>
@@ -842,7 +866,8 @@ class EmailService {
       `;
 
       const mailOptions = {
-        from: process.env.SMTP_USER,
+        from: this.getFromAddress(),
+        replyTo: this.getReplyToEmail(),
         to: toEmail,
         subject: `Scan Complete: ${jobName} - ${matchesFound} FI request${matchesFound !== 1 ? 's' : ''} found (${processedCount.toLocaleString()} docs)`,
         html: htmlContent

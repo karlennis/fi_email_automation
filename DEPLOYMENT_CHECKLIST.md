@@ -24,10 +24,13 @@
 - [ ] AWS_SECRET_ACCESS_KEY - your AWS credentials
 - [ ] OPENAI_API_KEY - from OpenAI platform
 - [ ] SMTP_HOST - SMTP server (e.g., smtp.gmail.com)
-- [ ] SMTP_PORT - SMTP port (587 or 465)
-- [ ] SMTP_SECURE - false for 587, true for 465
-- [ ] SMTP_USER - your email address
-- [ ] SMTP_PASS - email app password
+- [ ] SMTP_PORT - SMTP port (587 for TLS, 465 for SSL)
+- [ ] SMTP_SECURE - false for port 587, true for port 465
+- [ ] SMTP_USER - your company email address
+- [ ] SMTP_PASS - email app password (16 characters from Google Account)
+- [ ] FROM_EMAIL - email address that will appear as sender
+- [ ] FROM_NAME - display name for sender (e.g., "Building Information Ireland")
+- [ ] REPLY_TO_EMAIL - where customer replies will be directed
 - [ ] BUILDING_INFO_API_BASE_URL - your building info API base URL
 - [ ] BUILDING_INFO_API_KEY - your building info API key
 - [ ] BUILDING_INFO_API_UKEY - your building info API ukey
