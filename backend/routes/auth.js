@@ -14,8 +14,8 @@ const registerSchema = Joi.object({
     .pattern(/@buildinginfo\.com$/i)
     .message('Only @buildinginfo.com email addresses are allowed'),
   password: Joi.string().required().min(8).max(128)
-    .pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/)
-    .message('Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character'),
+    .pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{}|;':",./<>?~])[A-Za-z\d!@#$%^&*()_+\-=\[\]{}|;':",./<>?~]/)
+    .message('Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character'),  
   role: Joi.string().valid('admin', 'operator').default('operator'),
   department: Joi.string().optional().trim().max(50),
   jobTitle: Joi.string().optional().trim().max(50)
@@ -490,7 +490,7 @@ router.post('/change-password', authenticate, async (req, res) => {
     const { currentPassword, newPassword } = req.body;
 
     // Validate new password strength
-    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{}|;':",./<>?~])[A-Za-z\d!@#$%^&*()_+\-=\[\]{}|;':",./<>?~]{8,}$/;
     if (!passwordRegex.test(newPassword)) {
       return res.status(400).json({
         success: false,

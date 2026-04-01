@@ -807,7 +807,7 @@ export class UserManagementComponent implements OnInit {
     this.userForm = this.fb.group({
       name: ['', [Validators.required, Validators.minLength(2)]],
       email: ['', [Validators.required, Validators.email, Validators.pattern(/@buildinginfo\.com$/)]],
-      password: ['', [Validators.required, Validators.pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/)]],
+      password: ['', [Validators.required, Validators.pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{}|;':",.\/<>?~])[A-Za-z\d!@#$%^&*()_+\-=\[\]{}|;':",.\/<>?~]{8,}$/)]],  
       role: ['operator', Validators.required],
       department: [''],
       jobTitle: [''],
@@ -816,7 +816,7 @@ export class UserManagementComponent implements OnInit {
 
     this.passwordForm = this.fb.group({
       currentPassword: ['', Validators.required],
-      newPassword: ['', [Validators.required, Validators.pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/)]],
+      newPassword: ['', [Validators.required, Validators.pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{}|;':",.\/<>?~])[A-Za-z\d!@#$%^&*()_+\-=\[\]{}|;':",.\/<>?~]{8,}$/)]],  
       confirmPassword: ['', Validators.required]
     }, { validators: this.passwordMatchValidator });
   }
