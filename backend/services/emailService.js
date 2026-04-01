@@ -329,7 +329,7 @@ class EmailService {
           <div class="content">
             <p>Dear {{customerName}},</p>
 
-            <p>Welcome to our Further Information Email Automation system! You will now receive automated notifications when FI requests related to your subscribed report types are detected.</p>
+            <p>Welcome to our Further Information Email Automation system. You will now receive automated notifications whenever FI requests are detected for your selected report types.</p>
 
             <p><strong>Your subscription details:</strong></p>
             <ul>
@@ -337,8 +337,6 @@ class EmailService {
               <li>{{this}}</li>
               {{/each}}
             </ul>
-
-            <p>You can manage your subscription and view the dashboard at: <a href="{{dashboardUrl}}">{{dashboardUrl}}</a></p>
 
             <p>Best regards,<br><strong>Building Info Team</strong></p>
           </div>
@@ -556,8 +554,7 @@ class EmailService {
 
       const html = template({
         customerName,
-        reportTypes,
-        dashboardUrl: `${process.env.FRONTEND_URL}/dashboard`
+        reportTypes
       });
 
       const mailOptions = {
