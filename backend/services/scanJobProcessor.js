@@ -679,7 +679,8 @@ class ScanJobProcessor {
         const autoProcess = job.config.autoProcess !== false;
         if (autoProcess && this.isDeliveryDay(job, today)) {
             logger.info(`📬 Today is a delivery day for job ${job.jobId} — aggregating and delivering results`);
-            await this.deliverResultsForJob(job, today);
+            // Deliver based on the latest fully scanned day (yesterday for scheduled runs).
+            await this.deliverResultsForJob(job, scanDateKey);
         } else {
             logger.info(`📦 Results saved for job ${job.jobId} — not a delivery day (${job.schedule?.type || 'DAILY'})`);
         }
@@ -1434,16 +1435,18 @@ class ScanJobProcessor {
      * Aggregate stored daily results across the lookback window and deliver to customers.
      * Deduplicates matches by projectId+fileName to prevent double-counting.
      */
-    async deliverResultsForJob(job, today) {
+    async deliverResultsForJob(job, deliveryAnchorDate) {
         try {
             const lookbackDays = job.schedule?.lookbackDays || 1;
 
-            const windowEnd = new Date(today);
+            const windowEnd = new Date(deliveryAnchorDate);
             windowEnd.setHours(23, 59, 59, 999);
 
-            const windowStart = new Date(today);
+            const windowStart = new Date(deliveryAnchorDate);
             windowStart.setDate(windowStart.getDate() - lookbackDays + 1);
             windowStart.setHours(0, 0, 0, 0);
+
+            const windowEndStr = windowEnd.toISOString().split('T')[0];
 
             const dailyResults = await ScanJobDailyResult.find({
                 jobId: job.jobId,
@@ -1451,7 +1454,7 @@ class ScanJobProcessor {
             });
 
             if (dailyResults.length === 0) {
-                logger.info(`📭 No stored results for job ${job.jobId} in window ${windowStart.toISOString().split('T')[0]} → ${today}`);
+                logger.info(`📭 No stored results for job ${job.jobId} in window ${windowStart.toISOString().split('T')[0]} → ${windowEndStr}`);
                 return;
             }
 
