@@ -475,30 +475,8 @@ class ScanJobProcessor {
                     if (totalProcessed % CHECKPOINT_INTERVAL === 0) {
                         logger.info(`💾 Checkpoint saved at ${totalProcessed} documents`);
 
-                        // Send match emails for all matches found in this batch
-                        // Default autoProcess to true if undefined (for backward compatibility with existing jobs)
-                        const autoProcess = job.config.autoProcess !== false; // true if undefined or true, false only if explicitly false
-                        logger.info(`🔍 Match email check: matches.length=${matches.length}, autoProcess=${autoProcess} (raw: ${job.config.autoProcess})`);
-
-                        if (matches.length > 0 && autoProcess) {
-                            logger.info(`📧 Sending match emails for ${matches.length} matches found so far...`);
-
-                            // Log validation quotes at checkpoint (sanity check)
-                            logger.info(`\n📋 ===== CHECKPOINT VALIDATION QUOTES (${totalProcessed} docs) =====`);
-                            matches.forEach((match, idx) => {
-                                const fileName = match.document.fileName;
-                                const quote = match.result.validationQuote || 'No quote captured';
-                                logger.info(`[${idx + 1}] ${fileName}`);
-                                logger.info(`    Quote: "${quote.substring(0, 200)}${quote.length > 200 ? '...' : ''}"`);
-                            });
-                            logger.info(`=================================================\n`);
-
-                            await this.sendMatchEmails(matches, job);
-                            logger.info(`✅ Match emails sent for checkpoint at ${totalProcessed} documents`);
-                            matches = []; // Clear matches after sending to avoid duplicates
-                        } else if (matches.length > 0 && !autoProcess) {
-                            logger.warn(`⚠️ Found ${matches.length} matches but autoProcess is disabled - skipping match emails`);
-                        }
+                        // Never send customer emails at checkpoint milestones.
+                        // Matches are persisted in checkpoint/allMatchDetails and delivered on delivery day.
                         // Clear local match buffer — matches are persisted in allMatchDetails (checkpoint)
                         // and will be delivered on the configured delivery day via deliverResultsForJob()
                         if (matches.length > 0) {
