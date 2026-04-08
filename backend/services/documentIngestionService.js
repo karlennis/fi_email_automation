@@ -155,24 +155,37 @@ class DocumentIngestionService {
     const startTime = Date.now();
 
     try {
-      // Step 1: Check if project already exists in planning-docs
-      const existsInPlanning = await s3Service.projectExistsInPlanning(projectId);
-      result.isNewProject = !existsInPlanning;
+      // Step 1: Classify current planning-docs project state.
+      // Treat projects with only docfiles/system files as effectively new.
+      const planningProfile = await s3Service.getPlanningProjectContentProfile(projectId);
+      result.isNewProject = !planningProfile.exists || planningProfile.hasOnlyDocfilesOrSystem;
 
       // Step 2: Get documents from filter-docs
       const filterDocs = (await s3Service.listFilterDocsProject(projectId))
         .filter(doc => doc.fileName !== KEEP_FILE_NAME);
+
+      const incomingBaselineTriggerCount = filterDocs.filter(doc =>
+        !s3Service.isSystemOrDocfilesFile(doc.fileName)
+      ).length;
 
       if (filterDocs.length === 0) {
         logger.warn(`No documents found in filter-docs/${projectId}/`);
         return result;
       }
 
-      logger.info(`🔄 Routing ${filterDocs.length} documents for project ${projectId} (${result.isNewProject ? 'NEW' : 'EXISTING'} project)`);
+      if (result.isNewProject && planningProfile.exists && planningProfile.hasOnlyDocfilesOrSystem) {
+        logger.info(
+          `🔄 Routing ${filterDocs.length} documents for project ${projectId} (NEW project semantics: docfiles/system-only in planning-docs, sourceDocCount=${planningProfile.sourceDocCount}, docfilesCount=${planningProfile.docfilesCount})`
+        );
+      } else {
+        logger.info(`🔄 Routing ${filterDocs.length} documents for project ${projectId} (${result.isNewProject ? 'NEW' : 'EXISTING'} project)`);
+      }
 
       if (result.isNewProject) {
-        // NEW PROJECT: Copy everything in parallel and create baseline marker
-        result.isBaselined = true;
+        // NEW PROJECT SEMANTICS: Copy everything in parallel.
+        // Baseline marker is created only when the incoming batch contains
+        // any non-docfiles/system file.
+        result.isBaselined = false;
         this.stats.newProjects++;
 
         // Parallel copy all documents
@@ -194,9 +207,14 @@ class DocumentIngestionService {
           }
         }
 
-        // Create baseline marker to prevent FI scan
-        await s3Service.createBaselineMarker(projectId);
-        logger.info(`📌 Project ${projectId} baselined with ${result.documentsCopied} documents (will skip FI scan)`);
+        // Create baseline marker to prevent FI scan only for first non-docfiles ingestion.
+        if (incomingBaselineTriggerCount > 0) {
+          await s3Service.createBaselineMarker(projectId);
+          result.isBaselined = true;
+          logger.info(`📌 Project ${projectId} baselined with ${result.documentsCopied} documents (non-docfiles files in batch: ${incomingBaselineTriggerCount}, will skip FI scan)`);
+        } else {
+          logger.info(`ℹ️ Project ${projectId} routed with NEW semantics but no non-docfiles files in batch (docfiles/system-only); baseline marker not created yet`);
+        }
 
       } else {
         // EXISTING PROJECT: Only copy genuinely new documents
@@ -370,7 +388,14 @@ class DocumentIngestionService {
 
         if (routeResult.isNewProject) {
           results.newProjects++;
-          results.docsSkippingFIScan += routeResult.documentsCopied;
+
+          if (routeResult.isBaselined) {
+            results.docsSkippingFIScan += routeResult.documentsCopied;
+          } else {
+            // NEW semantics with no source docs copied (docfiles/system-only).
+            // Not FI-eligible yet, but also not baseline-markered.
+            results.docsEligibleForFIScan += 0;
+          }
         } else {
           results.existingProjects++;
           results.docsEligibleForFIScan += routeResult.documentsCopied;

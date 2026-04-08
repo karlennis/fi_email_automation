@@ -1042,6 +1042,73 @@ class S3Service {
       throw error;
     }
   }
+
+  /**
+   * Check whether a planning-docs file is a scan-eligible source document.
+   * Source documents are the primary files we scan for FI (PDF/DOCX).
+   * @param {string} fileName - File name to evaluate
+   * @returns {boolean}
+   */
+  isSourceDocumentFile(fileName) {
+    if (!fileName) return false;
+    const lower = fileName.toLowerCase();
+    return lower.endsWith('.pdf') || lower.endsWith('.docx');
+  }
+
+  /**
+   * Check whether a planning-docs file is a system/non-source file.
+   * @param {string} fileName - File name to evaluate
+   * @returns {boolean}
+   */
+  isSystemOrDocfilesFile(fileName) {
+    if (!fileName) return true;
+
+    const lower = fileName.toLowerCase();
+    return (
+      lower === 'docfiles.txt' ||
+      lower === '.keep' ||
+      fileName.startsWith('_baseline_') ||
+      fileName.startsWith('.')
+    );
+  }
+
+  /**
+   * Get planning-docs content profile for baseline decisions.
+   *
+    * A project with only docfiles/system files should be treated as
+    * effectively non-existent for first-ingestion baseline semantics.
+   *
+   * @param {string} projectId - Project ID
+   * @returns {object} Content profile
+   */
+  async getPlanningProjectContentProfile(projectId) {
+    try {
+      const planningDocs = await this.listPlanningDocsProject(projectId);
+
+      // Remove folder marker rows and empty basenames.
+      const files = planningDocs.filter(doc => !!doc.fileName);
+      const sourceDocs = files.filter(doc => this.isSourceDocumentFile(doc.fileName));
+      const docfilesEntries = files.filter(doc => doc.fileName.toLowerCase() === 'docfiles.txt');
+      const nonSystemNonSourceFiles = files.filter(
+        doc => !this.isSystemOrDocfilesFile(doc.fileName) && !this.isSourceDocumentFile(doc.fileName)
+      );
+
+      const hasSourceDocs = sourceDocs.length > 0;
+      const hasOnlyDocfilesOrSystem = files.length > 0 && !hasSourceDocs && nonSystemNonSourceFiles.length === 0;
+
+      return {
+        exists: files.length > 0,
+        hasSourceDocs,
+        hasOnlyDocfilesOrSystem,
+        sourceDocCount: sourceDocs.length,
+        docfilesCount: docfilesEntries.length,
+        nonSystemNonSourceCount: nonSystemNonSourceFiles.length
+      };
+    } catch (error) {
+      logger.error(`Error building planning-docs content profile for ${projectId}:`, error);
+      throw error;
+    }
+  }
 }
 
 module.exports = new S3Service();
