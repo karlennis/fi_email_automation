@@ -23,6 +23,7 @@ class ScanJobProcessor {
     constructor() {
         this.isRunning = false;
         this.scheduledJob = null;
+        this.deliverySweepJob = null;
         this.lastProcessedDate = null; // Track last processed date to run once per day
     }
 
@@ -42,7 +43,13 @@ class ScanJobProcessor {
                 await this.processActiveJobs();
             });
 
+            // Sweep pending deliveries every minute so deferred sends fire at configured time.
+            this.deliverySweepJob = schedule.scheduleJob('*/1 * * * *', async () => {
+                await this.processPendingDeliveries();
+            });
+
             logger.info(`✅ Scan Job Processor initialized - runs daily at 12:10 AM`);
+            logger.info(`✅ Delivery sweeper initialized - checks pending sends every minute`);
 
             // Check if we should run on startup (if we haven't run today yet)
             const today = new Date().toISOString().split('T')[0];
@@ -50,6 +57,9 @@ class ScanJobProcessor {
                 logger.info('🚀 Running initial scan on startup...');
                 setTimeout(() => this.processActiveJobs(), 5000);
             }
+
+            // Also check any pending deferred deliveries on startup.
+            setTimeout(() => this.processPendingDeliveries(), 10000);
 
         } catch (error) {
             logger.error('❌ Failed to initialize Scan Job Processor:', error);
@@ -656,9 +666,22 @@ class ScanJobProcessor {
         // CUSTOMER DELIVERY — only on configured delivery day
         const autoProcess = job.config.autoProcess !== false;
         if (autoProcess && this.isDeliveryDay(job, today)) {
-            logger.info(`📬 Today is a delivery day for job ${job.jobId} — aggregating and delivering results`);
-            // Deliver based on the latest fully scanned day (yesterday for scheduled runs).
-            await this.deliverResultsForJob(job, scanDateKey);
+            if (!this.shouldApplyDeliveryTimeGate(job)) {
+                logger.info(`📬 Delivery day reached for job ${job.jobId} — sending immediately (no time gate for ${job.schedule?.type || 'DAILY'})`);
+                await this.deliverResultsForJob(job, scanDateKey);
+                this.markDeliverySent(job, today);
+            } else if (job.deliveryState?.sentForDate === today) {
+                logger.info(`⏭️ Delivery already completed today for job ${job.jobId} (${today}), skipping duplicate send`);
+            } else if (this.hasReachedDeliveryTime(job, new Date())) {
+                logger.info(`📬 Delivery day/time reached for job ${job.jobId} — aggregating and delivering now`);
+                // Deliver based on the latest fully scanned day (yesterday for scheduled runs).
+                await this.deliverResultsForJob(job, scanDateKey);
+                this.markDeliverySent(job, today);
+            } else {
+                const anchorDateStr = scanDateKey.toISOString().split('T')[0];
+                this.markDeliveryPending(job, today, anchorDateStr);
+                logger.info(`⏳ Delivery deferred for job ${job.jobId} until ${this.getDeliveryTimeParts(job).timeLabel} (server local time)`);
+            }
         } else {
             logger.info(`📦 Results saved for job ${job.jobId} — not a delivery day (${job.schedule?.type || 'DAILY'})`);
         }
@@ -1320,8 +1343,11 @@ class ScanJobProcessor {
     stop() {
         if (this.scheduledJob) {
             this.scheduledJob.cancel();
-            logger.info('🛑 Scan Job Processor stopped');
         }
+        if (this.deliverySweepJob) {
+            this.deliverySweepJob.cancel();
+        }
+        logger.info('🛑 Scan Job Processor stopped');
     }
 
     /**
@@ -1374,6 +1400,134 @@ class ScanJobProcessor {
 
             default:
                 return true;
+        }
+    }
+
+    /**
+     * Parse configured delivery time from schedule.timeOfDay (HH:mm).
+     * Falls back to 09:00 for invalid/missing values.
+     */
+    getDeliveryTimeParts(job) {
+        const timeOfDay = job.schedule?.timeOfDay || '09:00';
+        const match = /^(\d{1,2}):(\d{2})$/.exec(timeOfDay);
+
+        if (!match) {
+            return { hour: 9, minute: 0, timeLabel: '09:00' };
+        }
+
+        const hour = parseInt(match[1], 10);
+        const minute = parseInt(match[2], 10);
+
+        if (Number.isNaN(hour) || Number.isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+            return { hour: 9, minute: 0, timeLabel: '09:00' };
+        }
+
+        return {
+            hour,
+            minute,
+            timeLabel: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+        };
+    }
+
+    /**
+     * Check if current server-local time has reached configured delivery time.
+     */
+    hasReachedDeliveryTime(job, now = new Date()) {
+        const { hour, minute } = this.getDeliveryTimeParts(job);
+        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+        const deliveryMinutes = hour * 60 + minute;
+        return currentMinutes >= deliveryMinutes;
+    }
+
+    /**
+     * Apply delivery-time gating only to schedules that have a selected delivery day.
+     */
+    shouldApplyDeliveryTimeGate(job) {
+        const scheduleType = job.schedule?.type || 'DAILY';
+        return scheduleType === 'WEEKLY' || scheduleType === 'MONTHLY';
+    }
+
+    /**
+     * Mark a job as pending deferred delivery for a specific delivery day.
+     */
+    markDeliveryPending(job, deliveryDateStr, anchorDateStr) {
+        if (!job.deliveryState) {
+            job.deliveryState = {};
+        }
+        job.deliveryState.pendingForDate = deliveryDateStr;
+        job.deliveryState.pendingAnchorDate = anchorDateStr;
+        job.deliveryState.readyAt = new Date();
+        job.deliveryState.lastAttemptAt = new Date();
+    }
+
+    /**
+     * Mark a delivery as sent and clear pending flags.
+     */
+    markDeliverySent(job, deliveryDateStr) {
+        if (!job.deliveryState) {
+            job.deliveryState = {};
+        }
+        job.deliveryState.pendingForDate = null;
+        job.deliveryState.pendingAnchorDate = null;
+        job.deliveryState.sentForDate = deliveryDateStr;
+        job.deliveryState.sentAt = new Date();
+        job.deliveryState.lastAttemptAt = new Date();
+    }
+
+    /**
+     * Process deferred deliveries once configured delivery time has been reached.
+     */
+    async processPendingDeliveries() {
+        try {
+            const now = new Date();
+            const today = now.toISOString().split('T')[0];
+
+            const pendingJobs = await ScanJob.find({
+                status: { $in: ['ACTIVE', 'RUNNING'] },
+                'deliveryState.pendingForDate': today
+            });
+
+            if (!pendingJobs.length) {
+                return;
+            }
+
+            for (const job of pendingJobs) {
+                try {
+                    // If delivery was already sent for today, clear stale pending state and skip.
+                    if (job.deliveryState?.sentForDate === today) {
+                        this.markDeliverySent(job, today);
+                        await job.save();
+                        continue;
+                    }
+
+                    // Don't send while the scan is still running; completion path will send if past time.
+                    if (job.status === 'RUNNING') {
+                        continue;
+                    }
+
+                    if (!this.hasReachedDeliveryTime(job, now)) {
+                        continue;
+                    }
+
+                    const anchorDateStr = job.deliveryState?.pendingAnchorDate || today;
+                    const anchorDate = new Date(anchorDateStr);
+                    anchorDate.setHours(0, 0, 0, 0);
+
+                    logger.info(`⏰ Pending delivery trigger fired for job ${job.jobId} at configured time (${job.schedule?.timeOfDay || '09:00'})`);
+                    await this.deliverResultsForJob(job, anchorDate);
+                    this.markDeliverySent(job, today);
+                    await job.save();
+                } catch (error) {
+                    logger.error(`❌ Failed pending delivery for job ${job.jobId}:`, error);
+                    if (!job.deliveryState) {
+                        job.deliveryState = {};
+                    }
+                    job.deliveryState.lastAttemptAt = new Date();
+                    await job.save();
+                }
+            }
+        } catch (error) {
+            logger.error('❌ Error processing pending deliveries:', error);
         }
     }
 

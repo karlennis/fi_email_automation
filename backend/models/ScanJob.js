@@ -128,6 +128,23 @@ const ScanJobSchema = new mongoose.Schema({
     lastScanDate: Date,
     lastMatchDate: Date
   },
+  deliveryState: {
+    pendingForDate: {
+      type: String,
+      default: null
+    },
+    pendingAnchorDate: {
+      type: String,
+      default: null
+    },
+    readyAt: Date,
+    sentForDate: {
+      type: String,
+      default: null
+    },
+    sentAt: Date,
+    lastAttemptAt: Date
+  },
   createdBy: {
     userId: String,
     email: String,
