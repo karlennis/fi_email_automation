@@ -1485,7 +1485,7 @@ class ScanJobProcessor {
             const pendingJobs = await ScanJob.find({
                 status: { $in: ['ACTIVE', 'RUNNING'] },
                 'deliveryState.pendingForDate': today
-            });
+            }).populate('customers.customerId', 'email company name filters');
 
             if (!pendingJobs.length) {
                 return;
