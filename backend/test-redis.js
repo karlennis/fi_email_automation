@@ -1,7 +1,7 @@
 const Bull = require('bull');
 
 // Your Upstash Redis URL from .env
-const redisUrl = process.env.REDIS_URL || 'rediss://default:AXM7AAIncDFlODk4M2ViY2M0Njc0ZGJiODhhMWJkM2I5NTBiMDBmMnAxMjk0OTk@frank-toad-29499.upstash.io:6379';
+const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 
 console.log('🔍 Testing Redis connection...');
 console.log('URL format:', redisUrl.split('@')[1] || 'localhost');

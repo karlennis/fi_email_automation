@@ -12,7 +12,7 @@ SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_SECURE=false
 SMTP_USER=intel@buildinginfo.com
-SMTP_PASS=iamr uvsv kfxy nzib
+SMTP_PASS=your-16-character-app-password
 FROM_EMAIL=intel@buildinginfo.com
 FROM_NAME=Building Information Ireland
 REPLY_TO_EMAIL=support@buildinginfo.com
@@ -56,7 +56,7 @@ SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_SECURE=false
 SMTP_USER=intel@buildinginfo.com
-SMTP_PASS=iamr uvsv kfxy nzib
+SMTP_PASS=your-16-character-app-password
 FROM_EMAIL=intel@buildinginfo.com
 FROM_NAME=Building Information Ireland
 REPLY_TO_EMAIL=support@buildinginfo.com
@@ -84,7 +84,7 @@ Instead of storing credentials in a file, use PM2's environment system:
 ```bash
 # Set env vars in PM2
 pm2 set app:SMTP_USER intel@buildinginfo.com
-pm2 set app:SMTP_PASS "iamr uvsv kfxy nzib"
+pm2 set app:SMTP_PASS "your-16-character-app-password"
 pm2 set app:FROM_EMAIL intel@buildinginfo.com
 pm2 set app:FROM_NAME "Building Information Ireland"
 pm2 set app:REPLY_TO_EMAIL support@buildinginfo.com
@@ -98,7 +98,7 @@ env: {
   SMTP_PORT: 587,
   SMTP_SECURE: false,
   SMTP_USER: 'intel@buildinginfo.com',
-  SMTP_PASS: 'iamr uvsv kfxy nzib',
+  SMTP_PASS: 'your-16-character-app-password',
   FROM_EMAIL: 'intel@buildinginfo.com',
   FROM_NAME: 'Building Information Ireland',
   REPLY_TO_EMAIL: 'support@buildinginfo.com'
@@ -117,7 +117,7 @@ aws ssm put-parameter \
 
 aws ssm put-parameter \
   --name /fi-email/smtp-pass \
-  --value "iamr uvsv kfxy nzib" \
+  --value "your-16-character-app-password" \
   --type SecureString
 ```
 
