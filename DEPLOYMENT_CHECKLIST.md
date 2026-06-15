@@ -9,7 +9,7 @@
 
 ## MongoDB Atlas Setup
 
-- [ ] Create MongoDB Atlas account at https://www.mongodb.com/cloud/atlas
+- [ ] Create MongoDB Atlas account at <https://www.mongodb.com/cloud/atlas>
 - [ ] Create a new cluster (free tier is fine)
 - [ ] Create database user with password
 - [ ] Configure network access (0.0.0.0/0 or specific Render IPs)
@@ -17,7 +17,8 @@
 
 ## Required Environment Variables
 
-### Backend (Critical - App won''t work without these):
+### Backend (Critical - App won't work without these)
+
 - [ ] MONGODB_URI - from MongoDB Atlas
 - [ ] JWT_SECRET - generate random 32+ character string
 - [ ] AWS_ACCESS_KEY_ID - your AWS credentials
@@ -40,7 +41,8 @@
 - [ ] QUEUE_CONCURRENCY - 3 (default)
 - [ ] LOG_LEVEL - info (default)
 
-### Frontend:
+### Frontend
+
 - [ ] API_URL - backend service URL (set after backend deploys)
 
 ## GitHub Repository
@@ -51,13 +53,14 @@
 
 ## Render Account Setup
 
-- [ ] Create account at https://render.com
+- [ ] Create account at <https://render.com>
 - [ ] Connect GitHub account
 - [ ] Add payment method (required even for free tier)
 
 ## Deployment Steps
 
 ### Option 1: Blueprint Deployment (Easier)
+
 1. [ ] Go to Render Dashboard
 2. [ ] Click "New"  "Blueprint"
 3. [ ] Select your GitHub repository
@@ -67,14 +70,15 @@
 7. [ ] Wait for initial deployment (~10 minutes)
 
 ### Option 2: Manual Service Creation
+
 1. [ ] Create backend service manually
 2. [ ] Create frontend service manually
 3. [ ] Configure build/start commands for each
 
 ## Post-Deployment Configuration
 
-1. [ ] Note backend URL: https://fi-email-automation-backend.onrender.com
-2. [ ] Note frontend URL: https://fi-email-automation-frontend.onrender.com
+1. [ ] Note backend URL: <https://fi-email-automation-backend.onrender.com>
+2. [ ] Note frontend URL: <https://fi-email-automation-frontend.onrender.com>
 3. [ ] Update FRONTEND_URL in backend environment variables
 4. [ ] Update API_URL in frontend environment variables
 5. [ ] Redeploy both services if URLs changed
@@ -88,8 +92,8 @@
 
 ## Verification
 
-- [ ] Backend health check: https://fi-email-automation-backend.onrender.com/health
-- [ ] Frontend loads: https://fi-email-automation-frontend.onrender.com
+- [ ] Backend health check: <https://fi-email-automation-backend.onrender.com/health>
+- [ ] Frontend loads: <https://fi-email-automation-frontend.onrender.com>
 - [ ] Can login with admin credentials
 - [ ] Can view projects/documents
 - [ ] Can create scan jobs
@@ -99,6 +103,7 @@
 ## Troubleshooting
 
 If deployment fails:
+
 - [ ] Check build logs in Render dashboard
 - [ ] Verify all environment variables are set correctly
 - [ ] Check MongoDB connection string format
@@ -106,6 +111,7 @@ If deployment fails:
 - [ ] Check CORS configuration includes actual Render URLs
 
 If services are slow:
+
 - [ ] Consider upgrading to Starter plan ($7/month per service)
 - [ ] Free tier spins down after 15 minutes of inactivity
 
@@ -117,10 +123,11 @@ If services are slow:
 - [ ] Configure automated backups for MongoDB
 - [ ] Set up CI/CD pipeline (automatic deploys on push)
 
-## Deployment Complete!
+## Deployment Complete
 
 Your FI Email Automation system should now be live and accessible at:
-- Frontend: https://fi-email-automation-frontend.onrender.com
-- Backend API: https://fi-email-automation-backend.onrender.com
+
+- Frontend: <https://fi-email-automation-frontend.onrender.com>
+- Backend API: <https://fi-email-automation-backend.onrender.com>
 
 For detailed instructions, see RENDER_DEPLOYMENT.md

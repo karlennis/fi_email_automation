@@ -42,7 +42,14 @@ function getScanQueue() {
         host: url.hostname,
         port: parseInt(url.port || '6379', 10),
         password: url.password || undefined,
-        tls: url.protocol === 'rediss:' ? {} : undefined
+        tls: url.protocol === 'rediss:' ? {} : undefined,
+        // Required for Bull + cloud Redis (Upstash): prevents "ERR caller gone"
+        // when the blocking BRPOPLPUSH connection is dropped and ioredis reconnects
+        maxRetriesPerRequest: null,
+        enableReadyCheck: false,
+        connectTimeout: 10000,
+        keepAlive: 5000,
+        retryStrategy: (times) => Math.min(times * 500, 10000)
       };
     } else {
       // Fallback to URL string (ioredis will parse it)
@@ -69,7 +76,14 @@ function getScanQueue() {
     });
 
     scanQueue.on('error', (err) => {
-      logger.error('❌ Scan queue error:', err);
+      // "ERR caller gone" is a transient ioredis reconnect event (BRPOPLPUSH
+      // interrupted when the Redis connection drops). Bull recovers automatically;
+      // log as warn to avoid false-alarm alerts.
+      if (err.message && err.message.includes('caller gone')) {
+        logger.warn('⚠️ Scan queue: Redis connection dropped and reconnecting (ERR caller gone)');
+      } else {
+        logger.error('❌ Scan queue error:', err);
+      }
     });
   }
 
@@ -85,7 +99,7 @@ async function enqueueScanJob(jobId, options = {}) {
     // Check the state of the existing job
     const state = await existing.getState();
     const progress = await existing.progress();
-    
+
     logger.info(`📋 Job already exists: ${jobId} (state: ${state}, progress: ${progress})`);
 
     // If job is waiting or active, don't re-queue

@@ -63,7 +63,11 @@ async function startScanWorker() {
   });
 
   queue.on('error', (err) => {
-    logger.error(`❌ Queue error:`, err);
+    if (err.message && err.message.includes('caller gone')) {
+      logger.warn('⚠️ Queue: Redis connection dropped and reconnecting (ERR caller gone)');
+    } else {
+      logger.error(`❌ Queue error:`, err);
+    }
   });
 
   logger.info(`✅ Scan worker started with event listeners`);
