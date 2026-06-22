@@ -1,6 +1,6 @@
-const Redis = require('./backend/node_modules/ioredis');
+const Redis = require('ioredis');
 const path = require('path');
-require('./backend/node_modules/dotenv').config({ path: path.join(__dirname, 'backend', '.env') });
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 if (!process.env.REDIS_URL) {
   console.error('❌ REDIS_URL not found in environment variables');

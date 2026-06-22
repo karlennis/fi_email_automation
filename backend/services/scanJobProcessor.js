@@ -450,7 +450,9 @@ class ScanJobProcessor {
                         job.checkpoint.lastProcessedFile = document.fileName;
                         job.checkpoint.lastProcessedPath = document.filePath;
                         job.checkpoint.processedCount = totalProcessed;
-                        job.checkpoint.totalDocuments = totalDocuments;
+                        // Store eligible count (excludes baselined/new-project docs) so progress denominator is accurate
+                        job.checkpoint.totalDocuments = getEligibleCount();
+                        job.checkpoint.totalDocumentsRaw = totalDocuments;
 
                         const shouldSave = totalProcessed <= 100 ||
                                          totalProcessed % SAVE_INTERVAL === 0 ||
@@ -540,7 +542,9 @@ class ScanJobProcessor {
                         job.checkpoint.lastProcessedFile = document.fileName;
                         job.checkpoint.lastProcessedPath = document.filePath;
                         job.checkpoint.processedCount = totalProcessed;
-                        job.checkpoint.totalDocuments = totalDocuments;
+                        // Store eligible count (excludes baselined/new-project docs) so progress denominator is accurate
+                        job.checkpoint.totalDocuments = getEligibleCount();
+                        job.checkpoint.totalDocumentsRaw = totalDocuments;
                         job.checkpoint.isResuming = true;
                         await job.save();
 
@@ -578,7 +582,9 @@ class ScanJobProcessor {
         }
 
         if (streamStats && streamStats.totalMatched !== undefined) {
-            job.checkpoint.totalDocuments = totalDocuments;
+            // Store eligible count (excludes baselined/new-project docs) so progress denominator is accurate
+            job.checkpoint.totalDocuments = getEligibleCount();
+            job.checkpoint.totalDocumentsRaw = totalDocuments;
         }
 
         // Use job.checkpoint.matchesFound for accurate count (matches array gets cleared after each checkpoint email)
