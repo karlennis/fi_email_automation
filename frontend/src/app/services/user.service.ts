@@ -97,7 +97,7 @@ export class UserService {
    * Create new user (Admin only)
    */
   createUser(userData: CreateUserRequest): Observable<any> {
-    return this.http.post(`${this.apiUrl}/register`, userData);
+    return this.http.post(`${this.apiUrl}/users`, userData);
   }
 
   /**

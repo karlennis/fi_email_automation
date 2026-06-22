@@ -21,23 +21,7 @@ const ScanJobSchema = new mongoose.Schema({
     default: 'PAUSED'
   },
   config: {
-    confidenceThreshold: {
-      type: Number,
-      default: 0.8,
-      min: 0,
-      max: 1
-    },
-    reviewThreshold: {
-      type: Number,
-      default: 0.5,
-      min: 0,
-      max: 1
-    },
     autoProcess: {
-      type: Boolean,
-      default: true
-    },
-    enableVisionAPI: {
       type: Boolean,
       default: true
     },

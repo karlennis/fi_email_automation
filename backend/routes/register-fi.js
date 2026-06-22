@@ -271,10 +271,7 @@ router.post('/scan/acoustic/schedule', authenticate, requireAdmin, async (req, r
       config: {
         reportTypes: ['acoustic'],
         registerScan: {
-          confidenceThreshold: config?.confidenceThreshold || 0.8,
-          reviewThreshold: config?.reviewThreshold || 0.5,
-          autoProcess: config?.autoProcess !== false,
-          enableVisionAPI: config?.enableVisionAPI !== false
+          autoProcess: config?.autoProcess !== false
         }
       },
       createdBy: {

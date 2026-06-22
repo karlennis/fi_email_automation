@@ -7,11 +7,12 @@ import { CustomerService, Customer, CustomerHistory, CustomerRequest } from '../
 import { ApiFilteringService, DropdownData } from '../../../services/api-filtering.service';
 import { ToastrService } from 'ngx-toastr';
 import { environment } from '../../../../environments/environment';
+import { IconComponent } from '../../shared/icon/icon.component';
 
 @Component({
   selector: 'app-customer-list',
   standalone: true,
-  imports: [CommonModule, RouterModule, FormsModule],
+  imports: [CommonModule, RouterModule, FormsModule, IconComponent],
   styleUrls: ['./customer-list.component.css'],
   template: `
     <div class="customers-container">
@@ -19,40 +20,39 @@ import { environment } from '../../../../environments/environment';
         <h1>Customer Management</h1>
         <div class="header-actions">
           <button class="btn btn-primary" (click)="openAddCustomerModal()">
-            <span class="btn-icon">➕</span>
+            <app-icon name="plus" [size]="15"></app-icon>
             Add Customer
           </button>
         </div>
       </div>
 
       <div class="search-filters">
-        <div class="search-bar">
+        <div class="search-box">
+          <app-icon name="search" [size]="16"></app-icon>
           <input
             type="text"
-            placeholder="Search customers by name, email, or company..."
+            placeholder="Search by name, email, or company…"
             [(ngModel)]="searchQuery"
             (input)="onSearchChange()"
             class="search-input"
           >
         </div>
-        <div class="filters">
-          <select [(ngModel)]="selectedReportType" (change)="onFilterChange()" class="filter-select">
-            <option value="">All Report Types</option>
-            <option value="acoustic">Acoustic</option>
-            <option value="transport">Transport</option>
-            <option value="ecological">Ecological</option>
-            <option value="flood">Flood</option>
-            <option value="heritage">Heritage</option>
-            <option value="arboricultural">Arboricultural</option>
-            <option value="waste">Waste</option>
-            <option value="lighting">Lighting</option>
-          </select>
-          <select [(ngModel)]="selectedStatus" (change)="onFilterChange()" class="filter-select">
-            <option value="">All Statuses</option>
-            <option value="true">Active Only</option>
-            <option value="false">Inactive Only</option>
-          </select>
-        </div>
+        <select [(ngModel)]="selectedReportType" (change)="onFilterChange()" class="filter-select">
+          <option value="">All Report Types</option>
+          <option value="acoustic">Acoustic</option>
+          <option value="transport">Transport</option>
+          <option value="ecological">Ecological</option>
+          <option value="flood">Flood</option>
+          <option value="heritage">Heritage</option>
+          <option value="arboricultural">Arboricultural</option>
+          <option value="waste">Waste</option>
+          <option value="lighting">Lighting</option>
+        </select>
+        <select [(ngModel)]="selectedStatus" (change)="onFilterChange()" class="filter-select">
+          <option value="">All Statuses</option>
+          <option value="true">Active Only</option>
+          <option value="false">Inactive Only</option>
+        </select>
       </div>
 
       <div class="customers-section">
@@ -61,119 +61,95 @@ import { environment } from '../../../../environments/environment';
           <p>Loading customers...</p>
         </div>
 
-        <div class="customers-list" *ngIf="!isLoading && customers.length > 0">
-          <div class="customer-card" *ngFor="let customer of customers">
-            <div class="card-header">
-              <div class="customer-info">
-                <h3>{{ customer.name }}</h3>
-                <span class="customer-email">{{ customer.email }}</span>
-              </div>
-              <div class="customer-status">
-                <span class="status-badge" [class]="customer.isActive ? 'status-active' : 'status-inactive'">
-                  {{ customer.isActive ? 'Active' : 'Inactive' }}
-                </span>
-              </div>
+        <div class="customers-table-wrap" *ngIf="!isLoading && customers.length > 0">
+          <div class="table-toolbar">
+            <span class="result-count">{{ customers.length }} customer{{ customers.length === 1 ? '' : 's' }}</span>
+            <div class="page-size">
+              <label>Rows per page</label>
+              <select [(ngModel)]="pageSize" (ngModelChange)="onPageSizeChange()" class="filter-select sm">
+                <option [ngValue]="25">25</option>
+                <option [ngValue]="50">50</option>
+                <option [ngValue]="100">100</option>
+              </select>
             </div>
+          </div>
 
-            <div class="card-body">
-              <div class="customer-details">
-                <div class="detail-item" *ngIf="customer.phone">
-                  <span class="detail-label">Phone:</span>
-                  <span class="detail-value">{{ customer.phone }}</span>
-                </div>
-                <div class="detail-item" *ngIf="customer.company">
-                  <span class="detail-label">Company:</span>
-                  <span class="detail-value">{{ customer.company }}</span>
-                </div>
-              </div>
-
-              <div class="report-types" *ngIf="customer.reportTypes && customer.reportTypes.length > 0">
-                <h4>Report Types ({{ customer.reportTypes.length }})</h4>
-                <div class="report-type-list">
-                  <span class="report-type-tag" *ngFor="let type of customer.reportTypes">
-                    {{ formatReportType(type) }}
-                  </span>
-                </div>
-              </div>
-
-              <div class="subscription-filters" *ngIf="hasFilters(customer)">
-                <h4>Subscription Filters</h4>
-                <div class="filter-badges">
-                  <div class="filter-group" *ngIf="customer.filters?.allowedCounties?.length">
-                    <span class="filter-label">Counties:</span>
-                    <span class="filter-badge county" *ngFor="let county of customer.filters!.allowedCounties">
-                      {{ county }}
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Customer</th>
+                  <th class="col-hide-sm">Company</th>
+                  <th>Report Types</th>
+                  <th class="col-hide-sm">Coverage</th>
+                  <th class="num">Sent</th>
+                  <th>Status</th>
+                  <th class="actions-col">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let customer of pagedCustomers">
+                  <td class="cell-primary">
+                    <span class="cust-name">{{ customer.name }}</span>
+                    <span class="cust-email">{{ customer.email }}</span>
+                  </td>
+                  <td class="cell-muted col-hide-sm">{{ customer.company || '—' }}</td>
+                  <td>
+                    <div class="chip-row" *ngIf="customer.reportTypes?.length; else noTypes">
+                      <span class="chip" *ngFor="let type of customer.reportTypes!.slice(0, 2)">{{ formatReportType(type) }}</span>
+                      <span class="chip more" *ngIf="customer.reportTypes!.length > 2" [title]="customer.reportTypes!.join(', ')">+{{ customer.reportTypes!.length - 2 }}</span>
+                    </div>
+                    <ng-template #noTypes><span class="cell-muted">—</span></ng-template>
+                  </td>
+                  <td class="col-hide-sm">
+                    <span class="coverage-all" *ngIf="!hasFilters(customer)" title="Receives all matches (no restrictions)">
+                      <app-icon name="mail" [size]="12"></app-icon> All
                     </span>
-                  </div>
-                  <div class="filter-group" *ngIf="customer.filters?.allowedSectors?.length">
-                    <span class="filter-label">Sectors:</span>
-                    <span class="filter-badge sector" *ngFor="let sector of customer.filters!.allowedSectors">
-                      {{ sector }}
+                    <span class="coverage" *ngIf="hasFilters(customer)"
+                          [title]="(customer.filters?.allowedCounties?.length || 0) + ' counties, ' + (customer.filters?.allowedSectors?.length || 0) + ' sectors'">
+                      {{ customer.filters?.allowedCounties?.length || 0 }}c · {{ customer.filters?.allowedSectors?.length || 0 }}s
                     </span>
-                  </div>
-                </div>
-              </div>
-              <div class="subscription-filters no-restrictions" *ngIf="!hasFilters(customer)">
-                <span class="filter-badge all">📬 Receives all matches (no restrictions)</span>
-              </div>
+                  </td>
+                  <td class="num">{{ customer.emailCount || 0 }}</td>
+                  <td>
+                    <span class="state-pill" [class.is-active]="customer.isActive" [class.is-inactive]="!customer.isActive">
+                      {{ customer.isActive ? 'Active' : 'Inactive' }}
+                    </span>
+                  </td>
+                  <td class="actions-col">
+                    <div class="row-actions">
+                      <button class="icon-btn" (click)="viewCustomerReports(customer)" [disabled]="isLoading" title="View reports">
+                        <app-icon name="bar-chart" [size]="15"></app-icon>
+                      </button>
+                      <button class="icon-btn" (click)="openEditModal(customer)" [disabled]="isUpdating" title="Edit customer">
+                        <app-icon name="edit" [size]="15"></app-icon>
+                      </button>
+                      <button class="icon-btn" (click)="toggleCustomerStatus(customer._id)" [disabled]="isUpdating"
+                              [title]="customer.isActive ? 'Deactivate' : 'Activate'">
+                        <app-icon [name]="customer.isActive ? 'pause' : 'play'" [size]="15"></app-icon>
+                      </button>
+                      <button class="icon-btn danger" (click)="openDeleteModal(customer)" [disabled]="isUpdating" title="Delete customer">
+                        <app-icon name="trash" [size]="15"></app-icon>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
 
-              <div class="customer-stats" *ngIf="customer.emailCount > 0">
-                <div class="stat-item">
-                  <span class="stat-label">FI Reports Sent:</span>
-                  <span class="stat-value">{{ customer.emailCount }}</span>
-                </div>
-                <div class="stat-item" *ngIf="customer.lastEmailSent">
-                  <span class="stat-label">Last Report:</span>
-                  <span class="stat-value">{{ formatDate(customer.lastEmailSent) }}</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="card-footer">
-              <div class="customer-dates">
-                <span class="created-date">Created: {{ formatDate(customer.createdAt) }}</span>
-              </div>
-              <div class="card-actions">
-                <button
-                  (click)="viewCustomerReports(customer)"
-                  class="btn btn-sm btn-info"
-                  [disabled]="isLoading"
-                  title="View customer reports"
-                >
-                  📊 View Reports
-                </button>
-                <button
-                  (click)="openEditModal(customer)"
-                  class="btn btn-sm btn-primary"
-                  [disabled]="isUpdating"
-                  title="Edit customer details"
-                >
-                  ✏️ Edit
-                </button>
-                <button
-                  (click)="toggleCustomerStatus(customer._id)"
-                  class="btn btn-sm"
-                  [class]="customer.isActive ? 'btn-warning' : 'btn-secondary'"
-                  [disabled]="isUpdating"
-                >
-                  {{ customer.isActive ? 'Deactivate' : 'Activate' }}
-                </button>
-                <button
-                  (click)="openDeleteModal(customer)"
-                  class="btn btn-sm btn-danger"
-                  [disabled]="isUpdating"
-                  title="Delete customer and all records"
-                >
-                  🗑️ Delete
-                </button>
-              </div>
-            </div>
+          <div class="pagination" *ngIf="totalPages > 1">
+            <button class="page-btn" (click)="goToPage(1)" [disabled]="currentPage === 1" title="First page">«</button>
+            <button class="page-btn" (click)="prevPage()" [disabled]="currentPage === 1" title="Previous page">‹</button>
+            <span class="page-info">{{ pageStart + 1 }}–{{ pageEnd }} of {{ customers.length }}</span>
+            <button class="page-btn" (click)="nextPage()" [disabled]="currentPage === totalPages" title="Next page">›</button>
+            <button class="page-btn" (click)="goToPage(totalPages)" [disabled]="currentPage === totalPages" title="Last page">»</button>
           </div>
         </div>
 
         <div class="no-customers" *ngIf="!isLoading && customers.length === 0">
           <div class="no-customers-content">
-            <div class="no-customers-icon">👥</div>
+            <div class="no-customers-icon"><app-icon name="users" [size]="30"></app-icon></div>
             <h3>No Customers Found</h3>
             <p>Start by adding customers to manage FI email notifications.</p>
             <button class="btn btn-primary" (click)="openAddCustomerModal()">Add First Customer</button>
@@ -186,7 +162,7 @@ import { environment } from '../../../../environments/environment';
     <div class="modal" *ngIf="showHistoryModal" (click)="closeHistoryModal()">
       <div class="modal-content large" (click)="$event.stopPropagation()">
         <div class="modal-header">
-          <h2>📋 FI Report History</h2>
+          <h2><app-icon name="clipboard" [size]="18"></app-icon> FI Report History</h2>
           <span class="close" (click)="closeHistoryModal()">&times;</span>
         </div>
 
@@ -251,12 +227,12 @@ import { environment } from '../../../../environments/environment';
     <div class="modal" *ngIf="showQuickSelectModal" (click)="closeQuickSelectModal()">
       <div class="modal-content" (click)="$event.stopPropagation()">
         <div class="modal-header">
-          <h2>✉️ Customer Selected</h2>
+          <h2><app-icon name="mail" [size]="18"></app-icon> Customer Selected</h2>
           <span class="close" (click)="closeQuickSelectModal()">&times;</span>
         </div>
         <div class="modal-body">
           <div class="success-message">
-            <div class="success-icon">✅</div>
+            <div class="success-icon"><app-icon name="check-circle" [size]="40"></app-icon></div>
             <h3>Customer email copied to clipboard!</h3>
             <p>Email: <strong>{{ quickSelectedCustomer?.email }}</strong></p>
             <p>You can now paste this email when creating a new FI report.</p>
@@ -371,7 +347,7 @@ import { environment } from '../../../../environments/environment';
     <div class="modal" *ngIf="showReportsModal" (click)="closeReportsModal()">
       <div class="modal-content modal-lg" (click)="$event.stopPropagation()">
         <div class="modal-header">
-          <h2>📊 Customer Reports</h2>
+          <h2><app-icon name="bar-chart" [size]="18"></app-icon> Customer Reports</h2>
           <div class="modal-customer-info" *ngIf="selectedCustomerForReports">
             <span class="customer-name">{{ selectedCustomerForReports.name }}</span>
             <span class="customer-email">{{ selectedCustomerForReports.email }}</span>
@@ -380,11 +356,11 @@ import { environment } from '../../../../environments/environment';
         </div>
         <div class="modal-body">
           <div *ngIf="reportsLoading" class="loading-spinner">
-            <span>🔄 Loading reports...</span>
+            <span><app-icon name="loader" [size]="14" [spin]="true"></app-icon> Loading reports…</span>
           </div>
 
           <div *ngIf="!reportsLoading && customerReports.length === 0" class="empty-state">
-            <span>📄 No reports found for this customer</span>
+            <span><app-icon name="file-text" [size]="14"></app-icon> No reports found for this customer</span>
           </div>
 
           <div *ngIf="!reportsLoading && customerReports.length > 0" class="reports-list">
@@ -424,13 +400,13 @@ import { environment } from '../../../../environments/environment';
 
               <div class="report-actions">
                 <button class="btn btn-sm btn-info" (click)="viewReportDetails(report)">
-                  👁️ View Details
+                  <app-icon name="eye" [size]="14"></app-icon> View Details
                 </button>
                 <button class="btn btn-sm btn-warning" (click)="openResendModal(report)" *ngIf="report.canResend">
-                  🔁 Resend
+                  <app-icon name="repeat" [size]="14"></app-icon> Resend
                 </button>
                 <button class="btn btn-sm btn-success" (click)="openSendToOthersModal(report)">
-                  📤 Send to Others
+                  <app-icon name="send" [size]="14"></app-icon> Send to Others
                 </button>
               </div>
             </div>
@@ -443,7 +419,7 @@ import { environment } from '../../../../environments/environment';
     <div class="modal" *ngIf="showResendModal" (click)="closeResendModal()">
       <div class="modal-content" (click)="$event.stopPropagation()">
         <div class="modal-header">
-          <h2>📤 Send Report</h2>
+          <h2><app-icon name="send" [size]="18"></app-icon> Send Report</h2>
           <button class="close-btn" (click)="closeResendModal()">×</button>
         </div>
         <div class="modal-body">
@@ -485,8 +461,8 @@ import { environment } from '../../../../environments/environment';
               (click)="sendReport()"
               [disabled]="!resendEmail || resendLoading"
             >
-              <span *ngIf="resendLoading">🔄 Sending...</span>
-              <span *ngIf="!resendLoading">📤 Send Report</span>
+              <span *ngIf="resendLoading"><app-icon name="loader" [size]="14" [spin]="true"></app-icon> Sending…</span>
+              <span *ngIf="!resendLoading"><app-icon name="send" [size]="14"></app-icon> Send Report</span>
             </button>
           </div>
         </div>
@@ -497,7 +473,7 @@ import { environment } from '../../../../environments/environment';
     <div class="modal" *ngIf="showEditModal" (click)="closeEditModal()">
       <div class="modal-content" (click)="$event.stopPropagation()">
         <div class="modal-header">
-          <h2>✏️ Edit Customer</h2>
+          <h2><app-icon name="edit" [size]="18"></app-icon> Edit Customer</h2>
           <button class="close-btn" (click)="closeEditModal()">×</button>
         </div>
         <div class="modal-body">
@@ -551,7 +527,7 @@ import { environment } from '../../../../environments/environment';
 
           <!-- Subscription Filters -->
           <div class="filter-section">
-            <h4>📍 Subscription Filters</h4>
+            <h4><app-icon name="map-pin" [size]="15"></app-icon> Subscription Filters</h4>
             <p class="filter-help">Select which counties and sectors this customer should receive. Leave empty to receive all results.</p>
 
             <div class="form-group">
@@ -623,8 +599,8 @@ import { environment } from '../../../../environments/environment';
               (click)="saveCustomerEdit()"
               [disabled]="!editingCustomer.name || !editingCustomer.email || isUpdating"
             >
-              <span *ngIf="isUpdating">🔄 Saving...</span>
-              <span *ngIf="!isUpdating">💾 Save Changes</span>
+              <span *ngIf="isUpdating"><app-icon name="loader" [size]="14" [spin]="true"></app-icon> Saving…</span>
+              <span *ngIf="!isUpdating"><app-icon name="save" [size]="14"></app-icon> Save Changes</span>
             </button>
           </div>
         </div>
@@ -635,7 +611,7 @@ import { environment } from '../../../../environments/environment';
     <div class="modal" *ngIf="showDeleteModal" (click)="closeDeleteModal()">
       <div class="modal-content" (click)="$event.stopPropagation()">
         <div class="modal-header modal-danger">
-          <h2>🗑️ Delete Customer</h2>
+          <h2><app-icon name="trash" [size]="18"></app-icon> Delete Customer</h2>
           <button class="close-btn" (click)="closeDeleteModal()">×</button>
         </div>
         <div class="modal-body">
@@ -1534,6 +1510,10 @@ export class CustomerListComponent implements OnInit {
   selectedStatus = '';
   searchTimeout: any;
 
+  // Pagination (client-side over the filtered result set)
+  currentPage = 1;
+  pageSize = 25;
+
   // Customer history modal
   showHistoryModal = false;
   selectedCustomerHistory: CustomerHistory | null = null;
@@ -1621,6 +1601,7 @@ export class CustomerListComponent implements OnInit {
     this.customerService.getCustomers(params).subscribe({
       next: (response) => {
         this.customers = response.customers;
+        this.currentPage = 1;
         this.isLoading = false;
       },
       error: (error) => {
@@ -1643,6 +1624,39 @@ export class CustomerListComponent implements OnInit {
 
   onFilterChange() {
     this.loadCustomers();
+  }
+
+  // ---- Pagination helpers ----
+  get totalPages(): number {
+    return Math.max(1, Math.ceil(this.customers.length / this.pageSize));
+  }
+
+  get pageStart(): number {
+    return (this.currentPage - 1) * this.pageSize;
+  }
+
+  get pageEnd(): number {
+    return Math.min(this.pageStart + this.pageSize, this.customers.length);
+  }
+
+  get pagedCustomers(): Customer[] {
+    return this.customers.slice(this.pageStart, this.pageEnd);
+  }
+
+  goToPage(page: number) {
+    this.currentPage = Math.min(Math.max(1, page), this.totalPages);
+  }
+
+  nextPage() {
+    this.goToPage(this.currentPage + 1);
+  }
+
+  prevPage() {
+    this.goToPage(this.currentPage - 1);
+  }
+
+  onPageSizeChange() {
+    this.currentPage = 1;
   }
 
   toggleCustomerStatus(customerId: string) {
@@ -1990,13 +2004,13 @@ export class CustomerListComponent implements OnInit {
 
   // Province quick-select methods
   isProvinceFullySelected(province: { name: string; counties: string[] }): boolean {
-    return province.counties.every(county => 
+    return province.counties.every(county =>
       this.editingCustomer.filters.allowedCounties.includes(county)
     );
   }
 
   isProvincePartiallySelected(province: { name: string; counties: string[] }): boolean {
-    const selectedCount = province.counties.filter(county => 
+    const selectedCount = province.counties.filter(county =>
       this.editingCustomer.filters.allowedCounties.includes(county)
     ).length;
     return selectedCount > 0 && selectedCount < province.counties.length;
@@ -2005,7 +2019,7 @@ export class CustomerListComponent implements OnInit {
   toggleProvinceFilter(province: { name: string; counties: string[] }) {
     if (this.isProvinceFullySelected(province)) {
       // Remove all counties in this province
-      this.editingCustomer.filters.allowedCounties = 
+      this.editingCustomer.filters.allowedCounties =
         this.editingCustomer.filters.allowedCounties.filter(
           (county: string) => !province.counties.includes(county)
         );

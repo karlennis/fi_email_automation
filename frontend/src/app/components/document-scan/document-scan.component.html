@@ -1,11 +1,11 @@
 <div class="document-scan-container">
   <div class="header">
     <div class="header-content">
-      <h1>📄 Document Scan Jobs</h1>
+      <h1>Document Scan Jobs</h1>
       <p>Create automated scan jobs to detect specific document types and notify customers</p>
     </div>
     <button class="btn btn-primary" (click)="openCreateModal()">
-      <span class="btn-icon">➕</span>
+      <app-icon name="plus" [size]="16"></app-icon>
       Create Job
     </button>
   </div>
@@ -13,12 +13,15 @@
   <!-- Document Register Section -->
   <div class="register-section">
     <div class="register-header">
-      <h3>📚 Document Register</h3>
-      <p>Generate document metadata for specific dates before running scans</p>
+      <span class="register-badge"><app-icon name="layers" [size]="18"></app-icon></span>
+      <div>
+        <h3>Document Register</h3>
+        <p>Generate document metadata for specific dates before running scans</p>
+      </div>
     </div>
     <div class="register-controls">
       <div class="form-group-inline">
-        <label for="registerDate">Date:</label>
+        <label for="registerDate">Date</label>
         <input
           type="date"
           id="registerDate"
@@ -28,16 +31,16 @@
         />
       </div>
       <button
-        class="btn btn-success"
+        class="btn btn-primary"
         (click)="generateRegister()"
         [disabled]="generatingRegister || !registerDate"
       >
-        <span *ngIf="!generatingRegister">🔄 Generate Register</span>
-        <span *ngIf="generatingRegister">⏳ Generating...</span>
+        <app-icon name="refresh-cw" [size]="15" [spin]="generatingRegister"></app-icon>
+        {{ generatingRegister ? 'Generating…' : 'Generate Register' }}
       </button>
     </div>
-    <div *ngIf="registerStatus" class="register-status">
-      <span class="status-icon">{{ registerStatus.success ? '✅' : '❌' }}</span>
+    <div *ngIf="registerStatus" class="register-status" [class.is-error]="!registerStatus.success">
+      <app-icon [name]="registerStatus.success ? 'check-circle' : 'alert-circle'" [size]="15"></app-icon>
       {{ registerStatus.message }}
       <span *ngIf="registerStatus.success && registerStatus.data" class="status-details">
         ({{ (registerStatus.data.totalDocuments || 0).toLocaleString() }} docs,
@@ -49,150 +52,149 @@
 
   <!-- Messages -->
   <div *ngIf="error" class="alert alert-error">
-    <span class="alert-icon">⚠️</span>
+    <app-icon name="alert-triangle" [size]="16"></app-icon>
     {{ error }}
     <button class="alert-close" (click)="error = null">×</button>
   </div>
 
   <div *ngIf="successMessage" class="alert alert-success">
-    <span class="alert-icon">✓</span>
+    <app-icon name="check-circle" [size]="16"></app-icon>
     {{ successMessage }}
   </div>
 
   <!-- Jobs List -->
   <div *ngIf="loading && jobs.length === 0" class="loading">
     <div class="spinner"></div>
-    <p>Loading jobs...</p>
+    <p>Loading jobs…</p>
   </div>
 
   <div *ngIf="!loading && jobs.length === 0" class="empty-state">
-    <div class="empty-icon">📋</div>
+    <div class="empty-icon"><app-icon name="inbox" [size]="30"></app-icon></div>
     <h3>No scan jobs yet</h3>
     <p>Create your first document scan job to start automating FI detection</p>
     <button class="btn btn-primary" (click)="openCreateModal()">Create First Job</button>
   </div>
 
-  <div class="jobs-grid" *ngIf="jobs.length > 0">
-    <div class="job-card" *ngFor="let job of jobs">
-      <div class="job-header">
-        <div class="job-title">
-          <span class="job-icon">{{ getDocumentTypeIcon(job.documentType) }}</span>
-          <div>
-            <h3>{{ job.name }}</h3>
-            <span class="job-type">{{ getDocumentTypeLabel(job.documentType) }}</span>
-          </div>
-        </div>
-        <span class="job-status" [ngClass]="getStatusClass(job.status)">
-          {{ job.status }}
-        </span>
-      </div>
+  <div class="jobs-table-wrap" *ngIf="jobs.length > 0">
+    <div class="table-toolbar">
+      <span class="result-count">{{ jobs.length }} job{{ jobs.length === 1 ? '' : 's' }}</span>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th class="expand-col"></th>
+            <th>Job</th>
+            <th class="col-hide-md">Schedule</th>
+            <th>Status</th>
+            <th class="num col-hide-sm">Docs</th>
+            <th class="num">Matches</th>
+            <th class="num col-hide-sm">Emails</th>
+            <th class="num col-hide-md">Cust.</th>
+            <th class="actions-col">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <ng-container *ngFor="let job of jobs">
+            <tr class="job-row" [class.expanded]="isExpanded(job)" (click)="toggleExpand(job)">
+              <td class="expand-col">
+                <button class="icon-btn expand-btn" [class.open]="isExpanded(job)"
+                        (click)="$event.stopPropagation(); toggleExpand(job)"
+                        [attr.aria-label]="isExpanded(job) ? 'Collapse' : 'Expand'">
+                  <app-icon name="chevron-right" [size]="16"></app-icon>
+                </button>
+              </td>
+              <td class="cell-primary">
+                <span class="job-icon"><app-icon [name]="getDocumentTypeIconName(job.documentType)" [size]="16"></app-icon></span>
+                <span class="job-name-wrap">
+                  <span class="job-name">{{ job.name }}</span>
+                  <span class="job-type">{{ getDocumentTypeLabel(job.documentType) }}</span>
+                </span>
+              </td>
+              <td class="col-hide-md cell-muted">
+                {{ job.schedule?.type || 'DAILY' }}
+                <span class="muted-sub">{{ job.schedule?.lookbackDays || 1 }}d window</span>
+              </td>
+              <td>
+                <span class="job-status" [ngClass]="getStatusClass(job.status)">{{ job.status }}</span>
+                <div class="mini-progress" *ngIf="isJobRunning(job)" [title]="getJobProgress(job)">
+                  <div class="mini-progress-bar" [style.width]="(job.checkpoint!.processedCount / job.checkpoint!.totalDocuments * 100) + '%'"></div>
+                </div>
+              </td>
+              <td class="num col-hide-sm">{{ job.statistics.totalDocumentsProcessed || 0 }}</td>
+              <td class="num">{{ job.statistics.totalMatches || 0 }}</td>
+              <td class="num col-hide-sm">{{ job.statistics.totalEmailsSent || 0 }}</td>
+              <td class="num col-hide-md">{{ job.customers.length || 0 }}</td>
+              <td class="actions-col" (click)="$event.stopPropagation()">
+                <div class="row-actions">
+                  <button class="icon-btn" *ngIf="job.status !== 'ACTIVE' && job.status !== 'RUNNING'" (click)="startJob(job)" title="Start">
+                    <app-icon name="play" [size]="15"></app-icon>
+                  </button>
+                  <button class="icon-btn" *ngIf="job.status === 'ACTIVE' || job.status === 'RUNNING'" (click)="stopJob(job)" title="Stop">
+                    <app-icon name="pause" [size]="15"></app-icon>
+                  </button>
+                  <button class="icon-btn" (click)="openRunNowModal(job)" [disabled]="loading || job.status === 'RUNNING' || isJobRunning(job)" title="Run now">
+                    <app-icon name="zap" [size]="15"></app-icon>
+                  </button>
+                  <button class="icon-btn danger" *ngIf="job.status === 'RUNNING' || isJobRunning(job)" (click)="cancelJob(job)" [disabled]="loading" title="Cancel run">
+                    <app-icon name="square" [size]="15"></app-icon>
+                  </button>
+                  <button class="icon-btn danger" (click)="deleteJob(job)" [disabled]="job.status === 'RUNNING'" title="Delete">
+                    <app-icon name="trash" [size]="15"></app-icon>
+                  </button>
+                </div>
+              </td>
+            </tr>
+            <tr class="detail-row" *ngIf="isExpanded(job)">
+              <td></td>
+              <td colspan="8">
+                <div class="job-detail">
+                  <div class="detail-grid">
+                    <div class="detail-block">
+                      <h4>Configuration</h4>
+                      <div class="kv"><span>Schedule</span><strong>{{ job.schedule?.type || 'DAILY' }} ({{ job.schedule?.lookbackDays || 1 }}-day window)</strong></div>
+                      <div class="kv"><span>Auto-deliver results</span><strong>{{ job.config.autoProcess ? 'Yes' : 'No' }}</strong></div>
+                      <div class="kv"><span>Total scans</span><strong>{{ job.statistics.totalScans || 0 }}</strong></div>
+                    </div>
+                    <div class="detail-block">
+                      <div class="detail-block-head">
+                        <h4><app-icon name="users" [size]="14"></app-icon> Customers ({{ job.customers.length || 0 }})</h4>
+                        <button class="btn btn-sm btn-secondary" (click)="openAddCustomersToJobModal(job)" title="Add customers to this job">
+                          <app-icon name="plus" [size]="13"></app-icon> Add
+                        </button>
+                      </div>
+                      <div class="cust-chips" *ngIf="job.customers && job.customers.length > 0; else noCust">
+                        <span class="cust-chip" *ngFor="let customer of job.customers">
+                          <span class="cust-chip-label" [title]="customer.email">{{ customer.company || customer.email }}</span>
+                          <button class="cust-chip-x" (click)="removeCustomer(job, getCustomerId(customer))" title="Remove customer">
+                            <app-icon name="x" [size]="12"></app-icon>
+                          </button>
+                        </span>
+                      </div>
+                      <ng-template #noCust><p class="no-customers">No customers assigned</p></ng-template>
+                    </div>
+                  </div>
 
-      <div class="job-stats">
-        <div class="stat">
-          <span class="stat-label">Total Scans</span>
-          <span class="stat-value">{{ job.statistics.totalScans || 0 }}</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">Documents</span>
-          <span class="stat-value">{{ job.statistics.totalDocumentsProcessed || 0 }}</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">Matches</span>
-          <span class="stat-value">{{ job.statistics.totalMatches || 0 }}</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">Emails Sent</span>
-          <span class="stat-value">{{ job.statistics.totalEmailsSent || 0 }}</span>
-        </div>
-      </div>
+                  <div class="job-progress" *ngIf="isJobRunning(job)">
+                    <div class="progress-info">
+                      <app-icon name="activity" [size]="14"></app-icon>
+                      <strong>Processing:</strong> {{ getJobProgress(job) }}
+                    </div>
+                    <div class="progress-bar-container">
+                      <div class="progress-bar" [style.width]="(job.checkpoint!.processedCount / job.checkpoint!.totalDocuments * 100) + '%'"></div>
+                    </div>
+                  </div>
 
-      <div class="job-config">
-        <h4>Configuration</h4>
-        <div class="config-grid">
-          <div class="config-item">
-            <span class="config-label">Schedule:</span>
-            <span class="config-value">{{ job.schedule?.type || 'DAILY' }} delivery ({{ job.schedule?.lookbackDays || 1 }}-day window)</span>
-          </div>
-          <div class="config-item">
-            <span class="config-label">Confidence Threshold:</span>
-            <span class="config-value">{{ (job.config.confidenceThreshold * 100).toFixed(0) }}%</span>
-          </div>
-          <div class="config-item">
-            <span class="config-label">Review Threshold:</span>
-            <span class="config-value">{{ (job.config.reviewThreshold * 100).toFixed(0) }}%</span>
-          </div>
-          <div class="config-item">
-            <span class="config-label">Auto Process:</span>
-            <span class="config-value">{{ job.config.autoProcess ? 'Yes' : 'No' }}</span>
-          </div>
-          <div class="config-item">
-            <span class="config-label">Vision API:</span>
-            <span class="config-value">{{ job.config.enableVisionAPI ? 'Enabled' : 'Disabled' }}</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="job-customers">
-        <div class="customers-header">
-          <h4>Customers ({{ job.customers.length || 0 }})</h4>
-          <button class="btn btn-sm btn-success" (click)="openAddCustomersToJobModal(job)" title="Add customers to this job">
-            ➕ Add
-          </button>
-        </div>
-        <div class="customer-list" *ngIf="job.customers && job.customers.length > 0">
-          <div class="customer-item" *ngFor="let customer of job.customers">
-            <div class="customer-info">
-              <span class="customer-name">{{ customer.company }}</span>
-              <span class="customer-email">{{ customer.email }}</span>
-            </div>
-            <button class="btn-icon-only btn-danger" (click)="removeCustomer(job, getCustomerId(customer))" title="Remove customer">
-              ×
-            </button>
-          </div>
-        </div>
-        <p *ngIf="!job.customers || job.customers.length === 0" class="no-customers">
-          No customers assigned
-        </p>
-      </div>
-
-      <!-- Running job progress -->
-      <div class="job-progress" *ngIf="isJobRunning(job)">
-        <div class="progress-info">
-          <span class="progress-icon">⚙️</span>
-          <strong>Processing:</strong> {{ getJobProgress(job) }}
-        </div>
-        <div class="progress-bar-container">
-          <div class="progress-bar" [style.width]="(job.checkpoint!.processedCount / job.checkpoint!.totalDocuments * 100) + '%'"></div>
-        </div>
-      </div>
-
-      <div class="job-actions">
-        <button class="btn btn-success" *ngIf="job.status !== 'ACTIVE' && job.status !== 'RUNNING'" (click)="startJob(job)">
-          <span class="btn-icon">▶️</span>
-          Start
-        </button>
-        <button class="btn btn-warning" *ngIf="job.status === 'ACTIVE' || job.status === 'RUNNING'" (click)="stopJob(job)">
-          <span class="btn-icon">⏸️</span>
-          Stop
-        </button>
-        <button class="btn btn-danger" *ngIf="job.status === 'RUNNING' || isJobRunning(job)" (click)="cancelJob(job)" [disabled]="loading" title="Cancel the current running job">
-          <span class="btn-icon">🛑</span>
-          Cancel Run
-        </button>
-        <button class="btn btn-info" (click)="openRunNowModal(job)" [disabled]="loading || job.status === 'RUNNING' || isJobRunning(job)" title="Run this job now for testing">
-          <span class="btn-icon">🚀</span>
-          Run Now
-        </button>
-        <button class="btn btn-danger" (click)="deleteJob(job)" [disabled]="job.status === 'RUNNING'">
-          <span class="btn-icon">🗑️</span>
-          Delete
-        </button>
-      </div>
-
-      <div class="job-meta">
-        <small>Created by {{ job.createdBy.name || 'Unknown' }} on {{ job.createdAt | date:'short' }}</small>
-        <small *ngIf="job.statistics.lastScanDate"> • Last scan: {{ job.statistics.lastScanDate | date:'short' }}</small>
-      </div>
+                  <div class="job-meta">
+                    <small>Created by {{ job.createdBy.name || 'Unknown' }} on {{ job.createdAt | date:'short' }}</small>
+                    <small *ngIf="job.statistics.lastScanDate"> • Last scan: {{ job.statistics.lastScanDate | date:'short' }}</small>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </ng-container>
+        </tbody>
+      </table>
     </div>
   </div>
 
@@ -285,24 +287,11 @@
           <label>Configuration</label>
           <div class="config-inputs">
             <div class="input-row">
-              <label>Confidence Threshold</label>
-              <input type="number" [(ngModel)]="newJob.config.confidenceThreshold" min="0" max="1" step="0.05" class="form-control">
-            </div>
-            <div class="input-row">
-              <label>Review Threshold</label>
-              <input type="number" [(ngModel)]="newJob.config.reviewThreshold" min="0" max="1" step="0.05" class="form-control">
-            </div>
-            <div class="input-row">
               <label>
                 <input type="checkbox" [(ngModel)]="newJob.config.autoProcess">
-                Auto Process
+                Auto-deliver results to customers
               </label>
-            </div>
-            <div class="input-row">
-              <label>
-                <input type="checkbox" [(ngModel)]="newJob.config.enableVisionAPI">
-                Enable Vision API
-              </label>
+              <small class="form-hint">When on, matched results are emailed to assigned customers on the delivery day. When off, results are still scanned and stored but not sent.</small>
             </div>
           </div>
         </div>
@@ -310,7 +299,7 @@
         <div class="form-group">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
             <label>Assign Customers ({{ selectedCustomers.length }} selected)</label>
-            <button class="btn btn-sm btn-success" type="button" (click)="openAddCustomerModal()">+ Add New</button>
+            <button class="btn btn-sm btn-secondary" type="button" (click)="openAddCustomerModal()"><app-icon name="plus" [size]="13"></app-icon> Add New</button>
           </div>
           <input type="text" [(ngModel)]="customerSearch" placeholder="Search customers..." class="form-control search-input">
           <div class="customer-select-list" *ngIf="customers.length > 0">
@@ -416,8 +405,8 @@
         Cancel
       </button>
       <button class="btn btn-primary" (click)="executeRunNow()" [disabled]="loading || !runNowTargetDate">
-        <span *ngIf="!loading">🚀 Run Scan</span>
-        <span *ngIf="loading">Processing...</span>
+        <app-icon name="zap" [size]="15"></app-icon>
+        {{ loading ? 'Processing…' : 'Run Scan' }}
       </button>
     </div>
   </div>
@@ -433,11 +422,11 @@
 
     <div class="modal-body">
       <p>Select customers to add to this scan job:</p>
-      
-      <input 
-        type="text" 
-        [(ngModel)]="addingToJobSearch" 
-        placeholder="Search by company, email, or project ID..." 
+
+      <input
+        type="text"
+        [(ngModel)]="addingToJobSearch"
+        placeholder="Search by company, email, or project ID..."
         class="form-control search-input"
       >
 
@@ -448,9 +437,9 @@
           [class.selected]="isCustomerSelectedForJob(customer)"
           (click)="toggleCustomerForJob(customer)"
         >
-          <input 
-            type="checkbox" 
-            [checked]="isCustomerSelectedForJob(customer)" 
+          <input
+            type="checkbox"
+            [checked]="isCustomerSelectedForJob(customer)"
             (click)="$event.stopPropagation()"
           >
           <div class="customer-select-info">
@@ -469,9 +458,9 @@
       <button class="btn btn-secondary" (click)="closeAddCustomersToJobModal()">
         Cancel
       </button>
-      <button 
-        class="btn btn-primary" 
-        (click)="addCustomersToJob()" 
+      <button
+        class="btn btn-primary"
+        (click)="addCustomersToJob()"
         [disabled]="selectedCustomersForJob.length === 0"
       >
         Add {{ selectedCustomersForJob.length > 0 ? selectedCustomersForJob.length + ' Customer(s)' : 'Customer' }}

@@ -130,27 +130,11 @@ const scheduledJobSchema = new mongoose.Schema({
     },
     // Register-based acoustic scan configuration
     registerScan: {
-      confidenceThreshold: {
-        type: Number,
-        min: 0,
-        max: 1,
-        default: 0.8
-      },
-      reviewThreshold: {
-        type: Number,
-        min: 0,
-        max: 1,
-        default: 0.5
-      },
       autoProcess: {
         type: Boolean,
         default: true
       },
-      checkpointTimestamp: Date,
-      enableVisionAPI: {
-        type: Boolean,
-        default: true
-      }
+      checkpointTimestamp: Date
     }
   },
 

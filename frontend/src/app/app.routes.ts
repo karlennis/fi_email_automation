@@ -13,10 +13,6 @@ export const routes: Routes = [
     loadComponent: () => import('./components/auth/login/login.component').then(m => m.LoginComponent)
   },
   {
-    path: 'register',
-    loadComponent: () => import('./components/auth/register/register.component').then(m => m.RegisterComponent)
-  },
-  {
     path: 'customers',
     loadComponent: () => import('./components/customers/customer-list/customer-list.component').then(m => m.CustomerListComponent),
     canActivate: [AuthGuard]
@@ -34,7 +30,7 @@ export const routes: Routes = [
   {
     path: 'document-scan',
     loadComponent: () => import('./components/document-scan/document-scan.component').then(m => m.DocumentScanComponent),
-    canActivate: [AuthGuard, AdminGuard]
+    canActivate: [AuthGuard]
   },
   {
     path: '**',

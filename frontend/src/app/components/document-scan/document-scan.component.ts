@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
 import { AuthService } from '../../services/auth.service';
+import { IconComponent } from '../shared/icon/icon.component';
 
 interface ScanJob {
   _id: string;
@@ -12,10 +13,7 @@ interface ScanJob {
   documentType: string;
   status: 'ACTIVE' | 'PAUSED' | 'STOPPED' | 'CANCELLING' | 'RUNNING';
   config: {
-    confidenceThreshold: number;
-    reviewThreshold: number;
     autoProcess: boolean;
-    enableVisionAPI: boolean;
   };
   schedule?: {
     type: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'CUSTOM';
@@ -65,12 +63,13 @@ interface Customer {
 @Component({
   selector: 'app-document-scan',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, IconComponent],
   templateUrl: './document-scan.component.html',
   styleUrls: ['./document-scan.component.scss']
 })
 export class DocumentScanComponent implements OnInit {
   jobs: ScanJob[] = [];
+  expandedJobId: string | null = null;
   documentTypes: DocumentType[] = [];
   customers: Customer[] = [];
 
@@ -81,10 +80,7 @@ export class DocumentScanComponent implements OnInit {
     documentType: '',
     customerIds: [] as string[],
     config: {
-      confidenceThreshold: 0.8,
-      reviewThreshold: 0.5,
-      autoProcess: true,
-      enableVisionAPI: true
+      autoProcess: true
     },
     schedule: {
       type: 'DAILY' as 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'CUSTOM',
@@ -192,10 +188,7 @@ export class DocumentScanComponent implements OnInit {
       documentType: '',
       customerIds: [],
       config: {
-        confidenceThreshold: 0.8,
-        reviewThreshold: 0.5,
-        autoProcess: true,
-        enableVisionAPI: true
+        autoProcess: true
       },
       schedule: {
         type: 'DAILY' as 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'CUSTOM',
@@ -549,11 +542,20 @@ export class DocumentScanComponent implements OnInit {
   getStatusClass(status: string): string {
     switch (status) {
       case 'ACTIVE': return 'status-active';
+      case 'RUNNING': return 'status-running';
       case 'PAUSED': return 'status-paused';
       case 'STOPPED': return 'status-stopped';
       case 'CANCELLING': return 'status-cancelling';
       default: return '';
     }
+  }
+
+  toggleExpand(job: ScanJob): void {
+    this.expandedJobId = this.expandedJobId === job.jobId ? null : job.jobId;
+  }
+
+  isExpanded(job: ScanJob): boolean {
+    return this.expandedJobId === job.jobId;
   }
 
   getDocumentTypeLabel(type: string): string {
@@ -564,6 +566,21 @@ export class DocumentScanComponent implements OnInit {
   getDocumentTypeIcon(type: string): string {
     const docType = this.documentTypes.find(dt => dt.value === type);
     return docType ? docType.icon : '📄';
+  }
+
+  /** Maps a document type to a line-icon name in the shared icon set. */
+  getDocumentTypeIconName(type: string): string {
+    const map: { [key: string]: string } = {
+      acoustic: 'volume',
+      transport: 'truck',
+      ecological: 'leaf',
+      flood: 'droplet',
+      heritage: 'landmark',
+      arboricultural: 'leaf',
+      waste: 'trash',
+      lighting: 'bulb'
+    };
+    return map[type] || 'file-text';
   }
 
   async generateRegister() {

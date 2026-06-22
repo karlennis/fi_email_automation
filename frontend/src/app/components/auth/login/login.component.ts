@@ -62,8 +62,7 @@ import { ToastrService } from 'ngx-toastr';
 
         <div class="login-footer">
           <p>
-            Don't have an account?
-            <a routerLink="/register" class="link">Sign up here</a>
+            Don't have an account? Contact the administrator for access.
           </p>
         </div>
       </div>
@@ -246,7 +245,7 @@ export class LoginComponent {
           this.isLoading = false;
           console.log('[LoginComponent] Login successful');
           this.toastr.success('Login successful!');
-          this.router.navigate(['/dashboard']);
+          this.router.navigate(['/']);
         },
         error: (error) => {
           this.isLoading = false;

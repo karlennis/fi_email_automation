@@ -18,7 +18,10 @@ export class AdminGuard implements CanActivate {
     if (this.authService.isAdmin || (currentUser?.permissions?.canManageUsers)) {
       return true;
     } else {
-      this.router.navigate(['/dashboard']);
+      // Redirect non-admin users to a page they are allowed to access.
+      // Must NOT point at an admin-only route, otherwise this guard would
+      // bounce back here and cause an infinite redirect loop.
+      this.router.navigate(['/document-scan']);
       return false;
     }
   }

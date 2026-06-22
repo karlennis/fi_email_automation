@@ -29,15 +29,6 @@ export interface LoginRequest {
   password: string;
 }
 
-export interface RegisterRequest {
-  name: string;
-  email: string;
-  password: string;
-  role?: 'admin' | 'operator';
-  department?: string;
-  jobTitle?: string;
-}
-
 export interface AuthResponse {
   success: boolean;
   data: {
@@ -79,19 +70,6 @@ export class AuthService {
 
   login(credentials: LoginRequest): Observable<AuthResponse> {
     return this.http.post<AuthResponse>(`${this.baseUrl}/auth/login`, credentials)
-      .pipe(
-        tap(response => {
-          if (response.success && typeof window !== 'undefined' && localStorage) {
-            localStorage.setItem('token', response.data.token);
-            localStorage.setItem('user', JSON.stringify(response.data.user));
-            this.currentUserSubject.next(response.data.user);
-          }
-        })
-      );
-  }
-
-  register(userData: RegisterRequest): Observable<AuthResponse> {
-    return this.http.post<AuthResponse>(`${this.baseUrl}/auth/register`, userData)
       .pipe(
         tap(response => {
           if (response.success && typeof window !== 'undefined' && localStorage) {

@@ -22,8 +22,7 @@ import { ToastrService } from 'ngx-toastr';
       <div class="navbar-center">
         <a routerLink="/document-scan"
            routerLinkActive="active"
-           class="nav-link"
-           *ngIf="currentUser?.permissions?.canManageUsers">
+           class="nav-link">
           Document Scan
         </a>
         <a routerLink="/customers"

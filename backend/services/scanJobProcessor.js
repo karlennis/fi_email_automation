@@ -105,11 +105,29 @@ class ScanJobProcessor {
 
             for (const job of activeJobs) {
                 try {
+                    // Heartbeat check: a job that is actively scanning updates
+                    // checkpoint.lastCheckpointTime frequently. A live run normally sits in
+                    // status=RUNNING, so we must NOT treat that as "interrupted" — doing so
+                    // mislabels it ACTIVE and enqueues a duplicate (concurrent) resume.
+                    const HEARTBEAT_STALE_MS = 15 * 60 * 1000; // 15 min without progress = stalled/crashed
+                    const lastBeat = job.checkpoint?.lastCheckpointTime
+                        ? new Date(job.checkpoint.lastCheckpointTime).getTime()
+                        : 0;
+                    const heartbeatAgeMs = Date.now() - lastBeat;
+                    const isActivelyScanning = lastBeat > 0 && heartbeatAgeMs < HEARTBEAT_STALE_MS;
+
+                    if (isActivelyScanning) {
+                        logger.info(`⏭️ Job ${job.jobId} is actively scanning (last checkpoint ${(heartbeatAgeMs / 1000).toFixed(0)}s ago, ${job.checkpoint?.processedCount || 0}/${job.checkpoint?.totalDocuments || 0}) — leaving in place`);
+                        continue;
+                    }
+
                     // Check if this job needs to resume from a crash
                     const needsResume = job.checkpoint && job.checkpoint.isResuming;
 
-                    // Also check for interrupted scans (status=RUNNING on startup means crashed mid-scan)
+                    // Interrupted scan: status=RUNNING with a stale heartbeat means the process
+                    // crashed mid-scan (no live worker is advancing the checkpoint).
                     const wasInterrupted = job.status === 'RUNNING' && job.checkpoint && job.checkpoint.processedCount > 0;
+
 
                     // Also check for incomplete scans (has checkpoint but didn't finish all documents)
                     const isIncomplete = job.checkpoint &&
@@ -674,12 +692,16 @@ class ScanJobProcessor {
         if (autoProcess && this.isDeliveryDay(job, today)) {
             if (!this.shouldApplyDeliveryTimeGate(job)) {
                 logger.info(`📬 Delivery day reached for job ${job.jobId} — sending immediately (no time gate for ${job.schedule?.type || 'DAILY'})`);
+                // Refresh recipients from DB so customers removed during this run are excluded
+                await this.refreshJobCustomers(job);
                 await this.deliverResultsForJob(job, scanDateKey);
                 this.markDeliverySent(job, today);
             } else if (job.deliveryState?.sentForDate === today) {
                 logger.info(`⏭️ Delivery already completed today for job ${job.jobId} (${today}), skipping duplicate send`);
             } else if (this.hasReachedDeliveryTime(job, new Date())) {
                 logger.info(`📬 Delivery day/time reached for job ${job.jobId} — aggregating and delivering now`);
+                // Refresh recipients from DB so customers removed during this run are excluded
+                await this.refreshJobCustomers(job);
                 // Deliver based on the latest fully scanned day (yesterday for scheduled runs).
                 await this.deliverResultsForJob(job, scanDateKey);
                 this.markDeliverySent(job, today);
@@ -1451,6 +1473,26 @@ class ScanJobProcessor {
     shouldApplyDeliveryTimeGate(job) {
         const scheduleType = job.schedule?.type || 'DAILY';
         return scheduleType === 'WEEKLY' || scheduleType === 'MONTHLY';
+    }
+
+    /**
+     * Refresh the in-memory job.customers list from the database.
+     * The worker holds a snapshot of customers loaded when the run started, so a
+     * customer removed from the job mid-run would otherwise still be emailed on the
+     * completion (immediate) delivery path. Re-reading here keeps recipients current.
+     */
+    async refreshJobCustomers(job) {
+        try {
+            const fresh = await ScanJob.findOne({ jobId: job.jobId })
+                .populate('customers.customerId', 'email company name projectId filters')
+                .select('customers');
+            if (fresh) {
+                job.customers = fresh.customers;
+                logger.info(`🔄 Refreshed recipient list for job ${job.jobId} — ${job.customers.length} customer(s) currently assigned`);
+            }
+        } catch (error) {
+            logger.warn(`⚠️ Could not refresh customers for job ${job.jobId}, using snapshot from run start:`, error.message);
+        }
     }
 
     /**

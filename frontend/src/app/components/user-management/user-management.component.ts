@@ -156,6 +156,9 @@ import { AuthService } from '../../services/auth.service';
           </div>
 
           <form [formGroup]="userForm" (ngSubmit)="saveUser()">
+            <div class="error-message" *ngIf="formError" style="margin-bottom: 1rem;">
+              {{ formError }}
+            </div>
             <div class="form-group">
               <label for="name">Full Name *</label>
               <input
@@ -794,6 +797,7 @@ export class UserManagementComponent implements OnInit {
   showPasswordModal: boolean = false;
   editingUser: User | null = null;
   isLoading: boolean = false;
+  formError: string | null = null;
 
   // Forms
   userForm: FormGroup;
@@ -807,7 +811,7 @@ export class UserManagementComponent implements OnInit {
     this.userForm = this.fb.group({
       name: ['', [Validators.required, Validators.minLength(2)]],
       email: ['', [Validators.required, Validators.email, Validators.pattern(/@buildinginfo\.com$/)]],
-      password: ['', [Validators.required, Validators.pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{}|;':",.\/<>?~])[A-Za-z\d!@#$%^&*()_+\-=\[\]{}|;':",.\/<>?~]{8,}$/)]],  
+      password: ['', [Validators.required, Validators.pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{}|;':",.\/<>?~])[A-Za-z\d!@#$%^&*()_+\-=\[\]{}|;':",.\/<>?~]{8,}$/)]],
       role: ['operator', Validators.required],
       department: [''],
       jobTitle: [''],
@@ -816,7 +820,7 @@ export class UserManagementComponent implements OnInit {
 
     this.passwordForm = this.fb.group({
       currentPassword: ['', Validators.required],
-      newPassword: ['', [Validators.required, Validators.pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{}|;':",.\/<>?~])[A-Za-z\d!@#$%^&*()_+\-=\[\]{}|;':",.\/<>?~]{8,}$/)]],  
+      newPassword: ['', [Validators.required, Validators.pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{}|;':",.\/<>?~])[A-Za-z\d!@#$%^&*()_+\-=\[\]{}|;':",.\/<>?~]{8,}$/)]],
       confirmPassword: ['', Validators.required]
     }, { validators: this.passwordMatchValidator });
   }
@@ -870,6 +874,7 @@ export class UserManagementComponent implements OnInit {
 
   openCreateUserModal() {
     this.editingUser = null;
+    this.formError = null;
     this.userForm.reset({
       role: 'operator',
       isActive: true
@@ -881,6 +886,7 @@ export class UserManagementComponent implements OnInit {
 
   openEditUserModal(user: User) {
     this.editingUser = user;
+    this.formError = null;
     this.userForm.patchValue({
       name: user.name,
       role: user.role,
@@ -902,6 +908,14 @@ export class UserManagementComponent implements OnInit {
   closeUserModal() {
     this.showUserModal = false;
     this.editingUser = null;
+    this.formError = null;
+  }
+
+  private extractError(error: any, fallback: string): string {
+    if (error?.error?.details?.length) {
+      return error.error.details.join(' ');
+    }
+    return error?.error?.error || error?.error?.message || fallback;
   }
 
   closePasswordModal() {
@@ -912,6 +926,7 @@ export class UserManagementComponent implements OnInit {
   saveUser() {
     if (this.userForm.valid && !this.isLoading) {
       this.isLoading = true;
+      this.formError = null;
       const formData = this.userForm.value;
 
       if (this.editingUser) {
@@ -932,6 +947,7 @@ export class UserManagementComponent implements OnInit {
           },
           error: (error) => {
             console.error('Error updating user:', error);
+            this.formError = this.extractError(error, 'Failed to update user.');
             this.isLoading = false;
           }
         });
@@ -954,6 +970,7 @@ export class UserManagementComponent implements OnInit {
           },
           error: (error) => {
             console.error('Error creating user:', error);
+            this.formError = this.extractError(error, 'Failed to create user.');
             this.isLoading = false;
           }
         });

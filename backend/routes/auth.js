@@ -15,7 +15,7 @@ const registerSchema = Joi.object({
     .message('Only @buildinginfo.com email addresses are allowed'),
   password: Joi.string().required().min(8).max(128)
     .pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{}|;':",./<>?~])[A-Za-z\d!@#$%^&*()_+\-=\[\]{}|;':",./<>?~]/)
-    .message('Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character'),  
+    .message('Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character'),
   role: Joi.string().valid('admin', 'operator').default('operator'),
   department: Joi.string().optional().trim().max(50),
   jobTitle: Joi.string().optional().trim().max(50)
@@ -27,10 +27,13 @@ const loginSchema = Joi.object({
 });
 
 /**
- * POST /api/auth/register
- * Register new user (domain restricted)
+ * POST /api/auth/users
+ * Create a new user (Admin only)
+ * Self-registration is disabled: accounts can only be created by an admin via
+ * this authenticated endpoint. It does NOT issue a token for the new user and
+ * does NOT affect the requesting admin's session.
  */
-router.post('/register', async (req, res) => {
+router.post('/users', authenticate, requirePermission('canManageUsers'), async (req, res) => {
   try {
     // Validate request body
     const { error, value } = registerSchema.validate(req.body);
@@ -44,51 +47,13 @@ router.post('/register', async (req, res) => {
 
     const { name, email, password, role, department, jobTitle } = value;
 
-    // Additional domain check (redundant but good for security)
-    if (!email.endsWith('@buildinginfo.com')) {
-      return res.status(403).json({
-        success: false,
-        error: 'Domain restriction',
-        message: 'Only @buildinginfo.com email addresses are allowed to register'
-      });
-    }
-
     // Check if user already exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(409).json({
         success: false,
-        error: 'User with this email already exists'
+        error: 'A user with this email already exists'
       });
-    }
-
-    // Only admins can create other admin accounts
-    if (role === 'admin') {
-      // Check if request has valid admin token
-      const token = req.headers.authorization?.replace('Bearer ', '');
-      if (!token) {
-        return res.status(403).json({
-          success: false,
-          error: 'Admin privileges required to create admin accounts'
-        });
-      }
-
-      try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const requestingUser = await User.findById(decoded.userId);
-
-        if (!requestingUser || requestingUser.role !== 'admin' || !requestingUser.permissions.canManageUsers) {
-          return res.status(403).json({
-            success: false,
-            error: 'Insufficient privileges to create admin accounts'
-          });
-        }
-      } catch (tokenError) {
-        return res.status(403).json({
-          success: false,
-          error: 'Invalid admin token'
-        });
-      }
     }
 
     // Hash password
@@ -102,25 +67,13 @@ router.post('/register', async (req, res) => {
       password: hashedPassword,
       role: role || 'operator',
       department,
-      jobTitle
+      jobTitle,
+      createdBy: req.user._id
     });
 
     await user.save();
 
-    // Log registration
-    logger.info(`New user registered: ${email} (${role})`);
-
-    // Generate JWT token
-    const token = jwt.sign(
-      {
-        userId: user._id,
-        email: user.email,
-        role: user.role,
-        permissions: user.permissions
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRE || '7d' }
-    );
+    logger.info(`User created by ${req.user.email}: ${email} (${user.role})`);
 
     res.status(201).json({
       success: true,
@@ -132,18 +85,19 @@ router.post('/register', async (req, res) => {
           role: user.role,
           permissions: user.permissions,
           department: user.department,
-          jobTitle: user.jobTitle
-        },
-        token
+          jobTitle: user.jobTitle,
+          isActive: user.isActive,
+          createdAt: user.createdAt
+        }
       },
-      message: 'User registered successfully'
+      message: 'User created successfully'
     });
 
   } catch (error) {
-    logger.error('Registration error:', error);
+    logger.error('Error creating user:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to register user',
+      error: 'Failed to create user',
       message: error.message
     });
   }
