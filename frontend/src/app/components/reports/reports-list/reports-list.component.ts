@@ -60,7 +60,7 @@ interface ReportGroup {
       <!-- Summary -->
       <div class="summary-bar" *ngIf="!loading">
         <span><strong>{{ total }}</strong> reports</span>
-        <span><strong>{{ groups.length }}</strong> runs</span>
+        <span><strong>{{ visibleGroups.length }}</strong> of <strong>{{ groups.length }}</strong> runs shown</span>
         <span><strong>{{ totalMatchesAll }}</strong> total matches</span>
       </div>
 
@@ -75,7 +75,7 @@ interface ReportGroup {
 
       <!-- Grouped reports -->
       <div *ngIf="!loading" class="runs">
-        <div class="run-group" *ngFor="let group of groups">
+        <div class="run-group" *ngFor="let group of visibleGroups">
           <div class="run-header" (click)="group.collapsed = !group.collapsed">
             <div class="run-title">
               <app-icon [name]="group.collapsed ? 'chevron-right' : 'chevron-down'" [size]="16"></app-icon>
@@ -139,6 +139,13 @@ interface ReportGroup {
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- Load more runs -->
+      <div *ngIf="!loading && groups.length > visibleRunCount" class="load-more-bar">
+        <span class="load-more-label">Showing {{ visibleGroups.length }} of {{ groups.length }} runs</span>
+        <button class="btn btn-secondary" (click)="showMoreRuns()">Show 5 more</button>
+        <button class="btn btn-secondary" (click)="showAllRuns()">Show all</button>
       </div>
     </div>
 
@@ -325,6 +332,8 @@ interface ReportGroup {
     .checkbox-filter { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 0.85rem; }
 
     .summary-bar { display: flex; gap: 20px; margin-bottom: 16px; color: var(--text-secondary); font-size: 0.9rem; }
+    .load-more-bar { display: flex; align-items: center; gap: 12px; padding: 16px 0; border-top: 1px solid var(--border, #ececec); margin-top: 4px; }
+    .load-more-label { flex: 1; color: var(--text-secondary); font-size: 0.85rem; }
     .summary-bar strong { color: var(--text-primary); }
 
     .runs { display: flex; flex-direction: column; gap: 14px; }
@@ -440,6 +449,7 @@ export class ReportsListComponent implements OnInit {
   loading = false;
   total = 0;
   groups: ReportGroup[] = [];
+  visibleRunCount = 5;
 
   filters = {
     search: '',
@@ -485,6 +495,18 @@ export class ReportsListComponent implements OnInit {
     this.loadReports();
   }
 
+  get visibleGroups(): ReportGroup[] {
+    return this.groups.slice(0, this.visibleRunCount);
+  }
+
+  showMoreRuns(): void {
+    this.visibleRunCount += 5;
+  }
+
+  showAllRuns(): void {
+    this.visibleRunCount = this.groups.length;
+  }
+
   get totalMatchesAll(): number {
     return this.groups.reduce((sum, g) => sum + g.totalMatches, 0);
   }
@@ -514,6 +536,7 @@ export class ReportsListComponent implements OnInit {
         const reports = response.data?.reports || [];
         this.total = response.data?.pagination?.total ?? reports.length;
         this.groups = this.groupByRun(reports);
+        this.visibleRunCount = 5;
         this.loading = false;
       },
       error: (error) => {
