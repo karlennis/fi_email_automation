@@ -711,7 +711,30 @@ class ScanJobProcessor {
                 logger.info(`⏳ Delivery deferred for job ${job.jobId} until ${this.getDeliveryTimeParts(job).timeLabel} (server local time)`);
             }
         } else {
-            logger.info(`📦 Results saved for job ${job.jobId} — not a delivery day (${job.schedule?.type || 'DAILY'})`);
+            // Not a configured delivery day at completion time. However, if this scan ran
+            // long (e.g. spanned past its delivery day), we may have MISSED that delivery
+            // window entirely. In that case, deliver the accumulated results now rather
+            // than waiting a full cycle.
+            const dueDateStr = this.getMostRecentDeliveryDateStr(job, today);
+            const lastSent = job.deliveryState?.sentForDate || null;
+            const startStr = job.checkpoint?.scanStartTime
+                ? new Date(job.checkpoint.scanStartTime).toISOString().split('T')[0]
+                : null;
+            // Established cadence: a prior delivery exists and the most recent due date wasn't sent.
+            // First-time: never delivered, but the run was already in progress on/before the due date
+            // (so the delivery day genuinely elapsed mid-scan) — avoids premature off-cycle sends.
+            const missedDelivery = autoProcess && !!dueDateStr && (
+                lastSent ? lastSent < dueDateStr : (!!startStr && startStr <= dueDateStr)
+            );
+
+            if (missedDelivery) {
+                logger.info(`📮 Catch-up delivery for job ${job.jobId}: delivery day ${dueDateStr} was missed (scan finished ${today}, last sent ${lastSent || 'never'}) — delivering now`);
+                await this.refreshJobCustomers(job);
+                await this.deliverResultsForJob(job, scanDateKey);
+                this.markDeliverySent(job, today);
+            } else {
+                logger.info(`📦 Results saved for job ${job.jobId} — not a delivery day (${job.schedule?.type || 'DAILY'})`);
+            }
         }
 
         // Reset job status back to ACTIVE after completion (don't leave it as RUNNING)
@@ -1428,6 +1451,43 @@ class ScanJobProcessor {
 
             default:
                 return true;
+        }
+    }
+
+    /**
+     * Return the most recent configured delivery date (YYYY-MM-DD) on or before `today`.
+     * Used to detect a missed delivery when a long-running scan finishes after its
+     * delivery day. Date handling mirrors isDeliveryDay() for consistency.
+     */
+    getMostRecentDeliveryDateStr(job, today) {
+        const scheduleType = job.schedule?.type || 'DAILY';
+        const date = new Date(today);
+        date.setHours(0, 0, 0, 0);
+
+        switch (scheduleType) {
+            case 'DAILY':
+            case 'CUSTOM':
+                return date.toISOString().split('T')[0];
+
+            case 'WEEKLY': {
+                const deliveryDow = job.schedule?.daysOfWeek?.[0] ?? job.schedule?.dayOfWeek ?? 1;
+                const diff = (date.getDay() - deliveryDow + 7) % 7;
+                date.setDate(date.getDate() - diff);
+                return date.toISOString().split('T')[0];
+            }
+
+            case 'MONTHLY': {
+                const deliveryDom = job.schedule?.dayOfMonth ?? 1;
+                if (date.getDate() >= deliveryDom) {
+                    date.setDate(deliveryDom);
+                } else {
+                    date.setMonth(date.getMonth() - 1, deliveryDom);
+                }
+                return date.toISOString().split('T')[0];
+            }
+
+            default:
+                return date.toISOString().split('T')[0];
         }
     }
 
