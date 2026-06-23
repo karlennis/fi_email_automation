@@ -417,98 +417,124 @@ import { IconComponent } from '../../shared/icon/icon.component';
 
     <!-- Resend/Send to Others Modal -->
     <div class="modal" *ngIf="showResendModal" (click)="closeResendModal()">
-      <div class="modal-content" (click)="$event.stopPropagation()">
+      <div class="modal-content modal-send" (click)="$event.stopPropagation()">
         <div class="modal-header">
           <h2><app-icon name="send" [size]="18"></app-icon> Send Report</h2>
+          <div class="send-header-meta" *ngIf="selectedReport">
+            {{ selectedReport.reportType === 'BATCH_FI_NOTIFICATION' ? 'Batch' : 'FI Detection' }}
+            · {{ selectedReport.totalFIMatches }} matches
+          </div>
           <button class="close-btn" (click)="closeResendModal()">×</button>
         </div>
-        <div class="modal-body">
-          <div class="form-group">
-            <label>Original Report:</label>
-            <div class="report-summary" *ngIf="selectedReport">
-              <span>{{ selectedReport.reportType }} - {{ selectedReport.reportId }}</span>
-              <span class="projects-count">{{ selectedReport.totalFIMatches }} projects found</span>
+
+        <div class="send-subject-bar">
+          <label>Subject</label>
+          <input type="text" class="form-control" [(ngModel)]="resendSubject"
+                 placeholder="Leave blank for default subject" [disabled]="resendLoading">
+        </div>
+
+        <div class="send-panels">
+          <!-- Left: Recipients -->
+          <div class="send-panel send-panel-recipients">
+            <div class="panel-header">
+              <span class="panel-title">Recipients</span>
+              <span class="panel-count" *ngIf="resendRecipients.length">{{ resendRecipients.length }} selected</span>
+            </div>
+
+            <div class="recipient-chips" *ngIf="resendRecipients.length">
+              <span class="chip" *ngFor="let r of resendRecipients">
+                <span class="chip-label" [title]="r">{{ r }}</span>
+                <button class="chip-remove" (click)="removeRecipient(r)" [disabled]="resendLoading">×</button>
+              </span>
+            </div>
+
+            <div class="recipient-search">
+              <app-icon name="search" [size]="13"></app-icon>
+              <input type="text" [(ngModel)]="recipientSearch" placeholder="Search customers…" [disabled]="resendLoading">
+            </div>
+
+            <div class="recipient-list">
+              <label class="recipient-row" *ngFor="let c of filteredAvailableCustomers">
+                <input type="checkbox"
+                       [checked]="isRecipientSelected(c.email)"
+                       (change)="toggleCustomerRecipient(c.email)"
+                       [disabled]="resendLoading">
+                <span class="recipient-info">
+                  <span class="recipient-name">{{ c.name }}</span>
+                  <span class="recipient-email">{{ c.email }}</span>
+                </span>
+              </label>
+              <div *ngIf="filteredAvailableCustomers.length === 0" class="no-results">No customers match</div>
+            </div>
+
+            <div class="custom-email-add">
+              <input type="email" class="form-control" [(ngModel)]="customEmailInput"
+                     placeholder="Add any email address…" [disabled]="resendLoading"
+                     (keyup.enter)="addCustomEmail()">
+              <button class="btn btn-secondary" (click)="addCustomEmail()"
+                      [disabled]="!customEmailInput.trim() || resendLoading">Add</button>
             </div>
           </div>
 
-          <div class="form-group">
-            <label>Send to Email Address:</label>
-            <input
-              type="email"
-              class="form-control"
-              [(ngModel)]="resendEmail"
-              placeholder="Enter email address"
-              [disabled]="resendLoading"
-            >
-          </div>
-
-          <div class="form-group">
-            <label>Or select from existing customers:</label>
-            <select class="form-control" (change)="selectCustomerEmail($event)" [disabled]="resendLoading">
-              <option value="">Choose a customer...</option>
-              <option *ngFor="let customer of availableCustomers" [value]="customer.email">
-                {{ customer.name }} ({{ customer.email }})
-              </option>
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label>Email Subject (optional):</label>
-            <input
-              type="text"
-              class="form-control"
-              [(ngModel)]="resendSubject"
-              placeholder="Leave blank to use the default subject"
-              [disabled]="resendLoading"
-            >
-          </div>
-
-          <div class="form-group">
-            <div class="matches-header">
-              <label>Matches to include:</label>
-              <div class="matches-actions" *ngIf="resendProjects.length">
-                <button type="button" class="link-btn" (click)="setAllMatches(true)" [disabled]="resendLoading">Select all</button>
+          <!-- Right: Matches -->
+          <div class="send-panel send-panel-matches">
+            <div class="panel-header">
+              <span class="panel-title">Matches to include</span>
+              <div class="matches-actions" *ngIf="resendProjects.length && !resendProjectsLoading">
+                <button type="button" class="link-btn" (click)="setAllMatches(true)" [disabled]="resendLoading">All</button>
                 <span class="sep">·</span>
-                <button type="button" class="link-btn" (click)="setAllMatches(false)" [disabled]="resendLoading">Clear</button>
+                <button type="button" class="link-btn" (click)="setAllMatches(false)" [disabled]="resendLoading">None</button>
               </div>
             </div>
 
-            <div *ngIf="resendProjectsLoading" class="loading-spinner">
+            <div *ngIf="resendProjectsLoading" class="panel-loading">
               <app-icon name="loader" [size]="16" [spin]="true"></app-icon> Loading matches…
             </div>
+            <div *ngIf="!resendProjectsLoading && resendProjects.length === 0" class="panel-empty">No matches available for this report.</div>
 
-            <div *ngIf="!resendProjectsLoading && resendProjects.length === 0" class="empty-state">
-              <span>No matches available for this report.</span>
-            </div>
-
-            <div class="matches-select-list" *ngIf="!resendProjectsLoading && resendProjects.length > 0">
-              <label class="match-row" *ngFor="let p of resendProjects">
+            <div class="match-cards" *ngIf="!resendProjectsLoading && resendProjects.length > 0">
+              <label class="match-card" *ngFor="let p of resendProjects" [class.match-card-included]="p.include">
                 <input type="checkbox" [(ngModel)]="p.include" [disabled]="resendLoading">
-                <span class="match-row-text">
-                  <span class="match-row-title">{{ p.planningTitle || p.projectId }}</span>
-                  <span class="match-row-meta">
-                    <span *ngIf="p.planningStage">{{ p.planningStage }}</span>
-                    <span *ngIf="p.planningCounty">· {{ p.planningCounty }}</span>
-                  </span>
-                </span>
+                <div class="match-card-body">
+                  <div class="match-card-title">{{ p.planningTitle || p.projectId }}</div>
+                  <div class="match-card-meta">
+                    <span *ngIf="p.planningStage" class="meta-tag">{{ p.planningStage }}</span>
+                    <span *ngIf="p.planningCounty" class="meta-tag">{{ p.planningCounty }}</span>
+                    <span *ngIf="p.planningValue" class="meta-tag value-tag">€{{ p.planningValue | number }}</span>
+                  </div>
+                  <div class="match-card-indicators" *ngIf="p.fiIndicators?.length">
+                    <span class="indicator-tag" *ngFor="let ind of p.fiIndicators">{{ ind }}</span>
+                  </div>
+                </div>
               </label>
             </div>
-            <span class="matches-count" *ngIf="!resendProjectsLoading && resendProjects.length > 0">
-              {{ selectedMatchCount }} of {{ resendProjects.length }} selected
-            </span>
-          </div>
 
-          <div class="modal-actions">
-            <button class="btn btn-secondary" (click)="closeResendModal()" [disabled]="resendLoading">
-              Cancel
-            </button>
-            <button
-              class="btn btn-primary"
-              (click)="sendReport()"
-              [disabled]="!resendEmail || resendLoading || selectedMatchCount === 0"
-            >
+            <div class="matches-count" *ngIf="!resendProjectsLoading && resendProjects.length > 0">
+              {{ selectedMatchCount }} of {{ resendProjects.length }} selected
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <div class="send-summary">
+            <span *ngIf="resendRecipients.length">
+              <strong>{{ resendRecipients.length }}</strong> recipient{{ resendRecipients.length === 1 ? '' : 's' }}
+            </span>
+            <span *ngIf="resendRecipients.length && !resendProjectsLoading && resendProjects.length > 0">·</span>
+            <span *ngIf="!resendProjectsLoading && resendProjects.length > 0">
+              <strong>{{ selectedMatchCount }}</strong> match{{ selectedMatchCount === 1 ? '' : 'es' }}
+            </span>
+            <span *ngIf="resendRecipients.length === 0" class="send-summary-hint">Select at least one recipient</span>
+          </div>
+          <div class="modal-actions" style="margin-top:0">
+            <button class="btn btn-secondary" (click)="closeResendModal()" [disabled]="resendLoading">Cancel</button>
+            <button class="btn btn-primary" (click)="sendReport()"
+                    [disabled]="resendRecipients.length === 0 || resendLoading || selectedMatchCount === 0">
               <span *ngIf="resendLoading"><app-icon name="loader" [size]="14" [spin]="true"></app-icon> Sending…</span>
-              <span *ngIf="!resendLoading"><app-icon name="send" [size]="14"></app-icon> Send Report</span>
+              <span *ngIf="!resendLoading">
+                <app-icon name="send" [size]="14"></app-icon>
+                Send to {{ resendRecipients.length || 0 }} recipient{{ resendRecipients.length === 1 ? '' : 's' }}
+              </span>
             </button>
           </div>
         </div>
@@ -1455,6 +1481,218 @@ import { IconComponent } from '../../shared/icon/icon.component';
       color: var(--text-secondary);
     }
 
+    /* Two-panel send modal */
+    .modal-content.modal-send {
+      max-width: 980px;
+      display: flex;
+      flex-direction: column;
+      max-height: 90vh;
+      overflow: hidden;
+    }
+    .send-header-meta {
+      flex: 1;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+    }
+    .send-subject-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border, #ececec);
+      flex-shrink: 0;
+    }
+    .send-subject-bar label {
+      white-space: nowrap;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin: 0;
+    }
+    .send-subject-bar .form-control { flex: 1; margin: 0; }
+    .send-panels {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      min-height: 400px;
+    }
+    .send-panel {
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+      overflow: hidden;
+    }
+    .send-panel-recipients {
+      border-right: 1px solid var(--border, #ececec);
+      width: 340px;
+      flex-shrink: 0;
+    }
+    .send-panel-matches { flex: 1; min-width: 0; }
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .panel-title { font-weight: 600; color: var(--text-primary); font-size: 0.9rem; }
+    .panel-count { font-size: 0.78rem; color: var(--primary); font-weight: 600; }
+    .recipient-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-bottom: 10px;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px 3px 10px;
+      background: var(--primary);
+      color: #fff;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      max-width: 220px;
+    }
+    .chip-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .chip-remove {
+      background: none;
+      border: none;
+      color: rgba(255,255,255,0.8);
+      cursor: pointer;
+      padding: 0 0 0 2px;
+      font-size: 1rem;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .chip-remove:hover:not(:disabled) { color: #fff; }
+    .recipient-search {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border, #e0e0e0);
+      border-radius: 6px;
+      margin-bottom: 8px;
+      color: var(--text-secondary);
+      flex-shrink: 0;
+    }
+    .recipient-search input {
+      border: none;
+      background: transparent;
+      outline: none;
+      flex: 1;
+      color: var(--text-primary);
+      font-size: 0.85rem;
+    }
+    .recipient-list {
+      flex: 1;
+      overflow-y: auto;
+      border: 1px solid var(--border, #e0e0e0);
+      border-radius: 6px;
+      margin-bottom: 10px;
+    }
+    .recipient-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border, #f0f0f0);
+    }
+    .recipient-row:last-child { border-bottom: none; }
+    .recipient-row:hover { background: var(--bg-secondary); }
+    .recipient-info { display: flex; flex-direction: column; min-width: 0; }
+    .recipient-name { font-weight: 500; color: var(--text-primary); font-size: 0.85rem; }
+    .recipient-email { font-size: 0.75rem; color: var(--text-secondary); overflow-wrap: anywhere; }
+    .custom-email-add { display: flex; gap: 8px; flex-shrink: 0; }
+    .custom-email-add .form-control { flex: 1; margin: 0; }
+    .no-results { padding: 14px; text-align: center; color: var(--text-secondary); font-size: 0.82rem; }
+    .panel-loading, .panel-empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 40px 16px;
+      color: var(--text-secondary);
+      font-size: 0.85rem;
+    }
+    .match-cards {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      border: 1px solid var(--border, #e0e0e0);
+      border-radius: 6px;
+      padding: 6px;
+      margin-bottom: 6px;
+    }
+    .match-card {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      border: 1px solid transparent;
+    }
+    .match-card:hover { background: var(--bg-secondary); }
+    .match-card-included {
+      background: var(--bg-secondary);
+      border-color: var(--primary) !important;
+    }
+    .match-card input[type="checkbox"] { margin-top: 3px; flex-shrink: 0; }
+    .match-card-body { flex: 1; min-width: 0; }
+    .match-card-title {
+      font-weight: 500;
+      color: var(--text-primary);
+      font-size: 0.88rem;
+      margin-bottom: 4px;
+      overflow-wrap: anywhere;
+    }
+    .match-card-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+    .meta-tag {
+      padding: 1px 7px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border, #e0e0e0);
+      color: var(--text-secondary);
+      border-radius: 8px;
+      font-size: 0.72rem;
+    }
+    .value-tag { color: var(--primary); border-color: var(--primary); }
+    .match-card-indicators { display: flex; flex-wrap: wrap; gap: 4px; }
+    .indicator-tag {
+      padding: 1px 7px;
+      background: rgba(99,102,241,0.12);
+      color: var(--primary);
+      border-radius: 8px;
+      font-size: 0.7rem;
+    }
+    .modal-footer {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 14px 20px;
+      border-top: 1px solid var(--border, #ececec);
+      flex-shrink: 0;
+    }
+    .send-summary {
+      flex: 1;
+      color: var(--text-secondary);
+      font-size: 0.85rem;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .send-summary strong { color: var(--text-primary); }
+    .send-summary-hint { color: var(--error); font-size: 0.82rem; }
+
     .form-group {
       margin-bottom: 20px;
     }
@@ -1822,12 +2060,14 @@ export class CustomerListComponent implements OnInit {
   reportsLoading = false;
   showResendModal = false;
   selectedReport: any = null;
-  resendEmail = '';
+  resendRecipients: string[] = [];
   resendLoading = false;
   availableCustomers: Customer[] = [];
   resendSubject = '';
   resendProjects: any[] = [];
   resendProjectsLoading = false;
+  recipientSearch = '';
+  customEmailInput = '';
 
   // Report details modal
   showDetailsModal = false;
@@ -2224,15 +2464,21 @@ export class CustomerListComponent implements OnInit {
 
   openResendModal(report: any) {
     this.selectedReport = report;
-    this.resendEmail = this.selectedCustomerForReports?.email || '';
+    this.resendRecipients = this.selectedCustomerForReports?.email
+      ? [this.selectedCustomerForReports.email]
+      : [];
     this.showResendModal = true;
+    this.recipientSearch = '';
+    this.customEmailInput = '';
     this.loadResendProjects(report);
   }
 
   openSendToOthersModal(report: any) {
     this.selectedReport = report;
-    this.resendEmail = '';
+    this.resendRecipients = [];
     this.showResendModal = true;
+    this.recipientSearch = '';
+    this.customEmailInput = '';
     this.loadResendProjects(report);
   }
 
@@ -2265,6 +2511,40 @@ export class CustomerListComponent implements OnInit {
     this.resendProjects.forEach(p => (p.include = include));
   }
 
+  get filteredAvailableCustomers(): Customer[] {
+    const term = this.recipientSearch.trim().toLowerCase();
+    if (!term) return this.availableCustomers;
+    return this.availableCustomers.filter(c =>
+      c.name.toLowerCase().includes(term) || c.email.toLowerCase().includes(term)
+    );
+  }
+
+  isRecipientSelected(email: string): boolean {
+    return this.resendRecipients.includes(email);
+  }
+
+  toggleCustomerRecipient(email: string) {
+    const idx = this.resendRecipients.indexOf(email);
+    if (idx === -1) {
+      this.resendRecipients = [...this.resendRecipients, email];
+    } else {
+      this.resendRecipients = this.resendRecipients.filter(r => r !== email);
+    }
+  }
+
+  removeRecipient(email: string) {
+    this.resendRecipients = this.resendRecipients.filter(r => r !== email);
+  }
+
+  addCustomEmail() {
+    const email = this.customEmailInput.trim();
+    if (!email) return;
+    if (!this.resendRecipients.includes(email)) {
+      this.resendRecipients = [...this.resendRecipients, email];
+    }
+    this.customEmailInput = '';
+  }
+
   get selectedMatchCount(): number {
     return this.resendProjects.filter(p => p.include).length;
   }
@@ -2272,19 +2552,17 @@ export class CustomerListComponent implements OnInit {
   closeResendModal() {
     this.showResendModal = false;
     this.selectedReport = null;
-    this.resendEmail = '';
+    this.resendRecipients = [];
     this.resendLoading = false;
     this.resendSubject = '';
     this.resendProjects = [];
     this.resendProjectsLoading = false;
-  }
-
-  selectCustomerEmail(event: any) {
-    this.resendEmail = event.target.value;
+    this.recipientSearch = '';
+    this.customEmailInput = '';
   }
 
   sendReport() {
-    if (!this.selectedReport || !this.resendEmail) return;
+    if (!this.selectedReport || this.resendRecipients.length === 0) return;
 
     const includedProjectIds = this.resendProjects
       .filter(p => p.include)
@@ -2298,7 +2576,7 @@ export class CustomerListComponent implements OnInit {
     this.resendLoading = true;
 
     const body: any = {
-      newRecipientEmail: this.resendEmail,
+      newRecipientEmail: this.resendRecipients.join(', '),
       customerId: this.selectedCustomerForReports?._id,
       includedProjectIds
     };
@@ -2309,10 +2587,10 @@ export class CustomerListComponent implements OnInit {
 
     this.http.post<any>(`${this.baseUrl}/${this.selectedReport.reportId}/resend`, body)
       .subscribe({
-        next: (response) => {
-          this.toastr.success('Report sent successfully!');
+        next: () => {
+          this.toastr.success(`Report sent to ${this.resendRecipients.length} recipient${this.resendRecipients.length === 1 ? '' : 's'}!`);
           this.closeResendModal();
-          this.loadCustomerReports(); // Refresh the reports list
+          this.loadCustomerReports();
         },
         error: (error) => {
           console.error('Error sending report:', error);
@@ -2353,7 +2631,6 @@ export class CustomerListComponent implements OnInit {
     };
   }
 
-  // Toggle filter selection
   toggleCountyFilter(county: string) {
     const index = this.editingCustomer.filters.allowedCounties.indexOf(county);
     if (index === -1) {
@@ -2380,7 +2657,6 @@ export class CustomerListComponent implements OnInit {
     return this.editingCustomer.filters.allowedSectors.includes(sector);
   }
 
-  // Province quick-select methods
   isProvinceFullySelected(province: { name: string; counties: string[] }): boolean {
     return province.counties.every(county =>
       this.editingCustomer.filters.allowedCounties.includes(county)
@@ -2396,13 +2672,11 @@ export class CustomerListComponent implements OnInit {
 
   toggleProvinceFilter(province: { name: string; counties: string[] }) {
     if (this.isProvinceFullySelected(province)) {
-      // Remove all counties in this province
       this.editingCustomer.filters.allowedCounties =
         this.editingCustomer.filters.allowedCounties.filter(
           (county: string) => !province.counties.includes(county)
         );
     } else {
-      // Add all counties in this province
       province.counties.forEach(county => {
         if (!this.editingCustomer.filters.allowedCounties.includes(county)) {
           this.editingCustomer.filters.allowedCounties.push(county);
@@ -2449,7 +2723,6 @@ export class CustomerListComponent implements OnInit {
     });
   }
 
-  // Delete Customer Methods
   openDeleteModal(customer: Customer) {
     this.customerToDelete = customer;
     this.showDeleteModal = true;
@@ -2480,4 +2753,3 @@ export class CustomerListComponent implements OnInit {
     });
   }
 }
-

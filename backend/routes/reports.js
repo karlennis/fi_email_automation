@@ -2,7 +2,26 @@ const express = require('express');
 const router = express.Router();
 const fiReportService = require('../services/fiReportService');
 const emailService = require('../services/emailService');
+const Customer = require('../models/Customer');
 const logger = require('../utils/logger');
+
+const resolveRecipientName = async (recipientList, fallbackName) => {
+  if (!Array.isArray(recipientList) || recipientList.length === 0) {
+    return fallbackName || 'there';
+  }
+
+  const primaryRecipient = String(recipientList[0]).trim().toLowerCase();
+  if (!primaryRecipient) {
+    return fallbackName || 'there';
+  }
+
+  const customer = await Customer.findOne({ email: primaryRecipient }).select('name').lean();
+  if (customer?.name) {
+    return customer.name;
+  }
+
+  return fallbackName || primaryRecipient.split('@')[0];
+};
 
 // Middleware for basic validation
 const validateCustomerId = (req, res, next) => {
@@ -303,10 +322,12 @@ router.post('/:reportId/resend', async (req, res) => {
       .map(email => email.trim())
       .filter(Boolean);
 
+    const recipientName = await resolveRecipientName(recipientList, report.customerName);
+
     // Send the email
     const emailResult = await emailService.sendBatchFINotification(
       recipientList.join(', '),
-      report.customerName || recipientList[0].split('@')[0],
+      recipientName,
       { matches },
       { subject: subject || undefined }
     );
@@ -397,9 +418,10 @@ router.post('/:reportId/retry', async (req, res) => {
     }));
 
     // Send the email
+    const retryRecipientName = await resolveRecipientName([report.customerEmail], report.customerName);
     const emailResult = await emailService.sendBatchFINotification(
       report.customerEmail,
-      report.customerName || report.customerEmail.split('@')[0],
+      retryRecipientName,
       { matches }
     );
 
