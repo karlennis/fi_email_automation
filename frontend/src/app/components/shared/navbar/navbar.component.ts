@@ -30,6 +30,11 @@ import { ToastrService } from 'ngx-toastr';
            class="nav-link">
           Customers
         </a>
+        <a routerLink="/reports"
+           routerLinkActive="active"
+           class="nav-link">
+          Reports
+        </a>
         <a routerLink="/users"
            routerLinkActive="active"
            class="nav-link"

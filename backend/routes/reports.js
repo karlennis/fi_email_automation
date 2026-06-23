@@ -78,6 +78,73 @@ router.get('/customer/:customerId', validateCustomerId, async (req, res) => {
 });
 
 /**
+ * GET /api/reports
+ * List all reports across customers (for the global reports page)
+ */
+router.get('/', async (req, res) => {
+  try {
+    const {
+      status,
+      reportType,
+      dateFrom,
+      dateTo,
+      search,
+      includeArchived,
+      limit = 200,
+      page = 1
+    } = req.query;
+
+    const options = {
+      status,
+      reportType,
+      dateFrom,
+      dateTo,
+      search,
+      includeArchived: includeArchived === 'true' || includeArchived === '1',
+      limit: parseInt(limit),
+      skip: (parseInt(page) - 1) * parseInt(limit)
+    };
+
+    const { reports, total } = await fiReportService.getAllReports(options);
+
+    res.json({
+      success: true,
+      data: {
+        reports: reports.map(report => ({
+          reportId: report.reportId,
+          customerId: report.customerId,
+          customerName: report.customerName,
+          customerEmail: report.customerEmail,
+          reportType: report.reportType,
+          status: report.status,
+          generatedAt: report.generatedAt,
+          sentAt: report.sentAt,
+          totalFIMatches: report.totalFIMatches,
+          totalProjectsScanned: report.totalProjectsScanned,
+          lastDeliveryStatus: report.lastDeliveryStatus,
+          totalDeliveryAttempts: report.totalDeliveryAttempts,
+          subject: report.emailData?.subject || null,
+          notes: report.notes || null,
+          archived: report.archived,
+          canResend: report.canResend()
+        })),
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total
+        }
+      }
+    });
+  } catch (error) {
+    logger.error('Error retrieving all reports:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve reports'
+    });
+  }
+});
+
+/**
  * GET /api/reports/:reportId
  * Get detailed information about a specific report
  */
@@ -178,7 +245,7 @@ router.get('/customer/:customerId/stats', validateCustomerId, async (req, res) =
 router.post('/:reportId/resend', async (req, res) => {
   try {
     const { reportId } = req.params;
-    const { newRecipientEmail, customerId } = req.body;
+    const { newRecipientEmail, customerId, includedProjectIds, subject } = req.body;
 
     if (!newRecipientEmail) {
       return res.status(400).json({
@@ -197,31 +264,59 @@ router.post('/:reportId/resend', async (req, res) => {
     // Prepare the report for resending
     const report = await fiReportService.resendReport(reportId, newRecipientEmail, customerId);
 
-    // Generate email content
-    const emailContent = await emailService.generateFINotificationEmail([{
-      email: newRecipientEmail,
-      name: report.customerName || newRecipientEmail.split('@')[0],
-      matches: report.projectsFound.map(project => ({
-        projectId: project.projectId,
-        planningTitle: project.planningTitle,
-        planningStage: project.planningStage,
-        planningCounty: project.planningCounty,
-        biiUrl: project.biiUrl,
-        fiIndicators: project.fiIndicators,
-        matchedKeywords: project.matchedKeywords,
-        fullMetadata: project.metadata
-      }))
-    }]);
+    // Optionally restrict the projects included in this send
+    let projectsToSend = report.projectsFound || [];
+    if (Array.isArray(includedProjectIds) && includedProjectIds.length > 0) {
+      const includeSet = new Set(includedProjectIds.map(id => String(id)));
+      projectsToSend = projectsToSend.filter(project => includeSet.has(String(project.projectId)));
+    }
+
+    if (projectsToSend.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No matches selected to send'
+      });
+    }
+
+    // Map stored project data back into the shape the email template expects
+    const matches = projectsToSend.map(project => ({
+      projectId: project.projectId,
+      reportType: (project.fiIndicators && project.fiIndicators[0]) || 'FI',
+      documentName: project.metadata?.documentName || 'Unknown document',
+      validationQuote: project.metadata?.validationQuote || '',
+      summary: project.metadata?.summary || '',
+      specificRequests: project.metadata?.specificRequests || '',
+      projectMetadata: {
+        planning_title: project.planningTitle || 'N/A',
+        planning_stage: project.planningStage || 'N/A',
+        planning_sector: project.metadata?.planningSector || project.planningRegion || 'N/A',
+        planning_authority: project.metadata?.planningAuthority || 'N/A',
+        planning_county: project.planningCounty || 'N/A',
+        planning_value: project.planningValue || 0,
+        bii_url: project.biiUrl || null
+      }
+    }));
+
+    // Support one or more comma/semicolon separated recipients
+    const recipientList = String(newRecipientEmail)
+      .split(/[,;]+/)
+      .map(email => email.trim())
+      .filter(Boolean);
 
     // Send the email
-    const emailResult = await emailService.sendBatchFINotification(emailContent);
+    const emailResult = await emailService.sendBatchFINotification(
+      recipientList.join(', '),
+      report.customerName || recipientList[0].split('@')[0],
+      { matches },
+      { subject: subject || undefined }
+    );
 
     // Update delivery status
-    if (emailResult.success) {
+    if (emailResult.success && !emailResult.skipped) {
       await fiReportService.updateDeliveryStatus(
         reportId,
         'SUCCESS',
-        newRecipientEmail,
+        recipientList.join(', '),
         null,
         emailResult.messageId
       );
@@ -231,15 +326,21 @@ router.post('/:reportId/resend', async (req, res) => {
         message: 'Report resent successfully',
         data: {
           reportId: report.reportId,
-          newRecipientEmail,
+          newRecipientEmail: recipientList.join(', '),
+          projectsSent: matches.length,
           messageId: emailResult.messageId
         }
+      });
+    } else if (emailResult.skipped) {
+      res.status(400).json({
+        success: false,
+        error: emailResult.reason || 'Email skipped — no valid project details to send'
       });
     } else {
       await fiReportService.updateDeliveryStatus(
         reportId,
         'FAILED',
-        newRecipientEmail,
+        recipientList.join(', '),
         emailResult.error
       );
 
@@ -276,27 +377,34 @@ router.post('/:reportId/retry', async (req, res) => {
       });
     }
 
-    // Generate email content
-    const emailContent = await emailService.generateFINotificationEmail([{
-      email: report.customerEmail,
-      name: report.customerName || report.customerEmail.split('@')[0],
-      matches: report.projectsFound.map(project => ({
-        projectId: project.projectId,
-        planningTitle: project.planningTitle,
-        planningStage: project.planningStage,
-        planningCounty: project.planningCounty,
-        biiUrl: project.biiUrl,
-        fiIndicators: project.fiIndicators,
-        matchedKeywords: project.matchedKeywords,
-        fullMetadata: project.metadata
-      }))
-    }]);
+    // Map stored project data back into the shape the email template expects
+    const matches = (report.projectsFound || []).map(project => ({
+      projectId: project.projectId,
+      reportType: (project.fiIndicators && project.fiIndicators[0]) || 'FI',
+      documentName: project.metadata?.documentName || 'Unknown document',
+      validationQuote: project.metadata?.validationQuote || '',
+      summary: project.metadata?.summary || '',
+      specificRequests: project.metadata?.specificRequests || '',
+      projectMetadata: {
+        planning_title: project.planningTitle || 'N/A',
+        planning_stage: project.planningStage || 'N/A',
+        planning_sector: project.metadata?.planningSector || project.planningRegion || 'N/A',
+        planning_authority: project.metadata?.planningAuthority || 'N/A',
+        planning_county: project.planningCounty || 'N/A',
+        planning_value: project.planningValue || 0,
+        bii_url: project.biiUrl || null
+      }
+    }));
 
     // Send the email
-    const emailResult = await emailService.sendBatchFINotification(emailContent);
+    const emailResult = await emailService.sendBatchFINotification(
+      report.customerEmail,
+      report.customerName || report.customerEmail.split('@')[0],
+      { matches }
+    );
 
     // Update delivery status
-    if (emailResult.success) {
+    if (emailResult.success && !emailResult.skipped) {
       await fiReportService.updateDeliveryStatus(
         reportId,
         'SUCCESS',
@@ -313,6 +421,11 @@ router.post('/:reportId/retry', async (req, res) => {
           recipientEmail: report.customerEmail,
           messageId: emailResult.messageId
         }
+      });
+    } else if (emailResult.skipped) {
+      res.status(400).json({
+        success: false,
+        error: emailResult.reason || 'Email skipped — no valid project details to send'
       });
     } else {
       await fiReportService.updateDeliveryStatus(
@@ -333,6 +446,63 @@ router.post('/:reportId/retry', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to retry report'
+    });
+  }
+});
+
+/**
+ * PATCH /api/reports/:reportId
+ * Update editable fields of a report (subject, notes, recipient)
+ */
+router.patch('/:reportId', async (req, res) => {
+  try {
+    const { reportId } = req.params;
+    const { subject, notes, customerEmail } = req.body;
+
+    const report = await fiReportService.updateReport(reportId, { subject, notes, customerEmail });
+
+    res.json({
+      success: true,
+      message: 'Report updated',
+      data: {
+        reportId: report.reportId,
+        subject: report.emailData?.subject || null,
+        notes: report.notes || null,
+        customerEmail: report.customerEmail
+      }
+    });
+  } catch (error) {
+    logger.error(`Error updating report ${req.params.reportId}:`, error);
+    const httpStatus = /not found/i.test(error.message) ? 404 : 500;
+    res.status(httpStatus).json({
+      success: false,
+      error: httpStatus === 404 ? 'Report not found' : 'Failed to update report'
+    });
+  }
+});
+
+/**
+ * POST /api/reports/:reportId/archive
+ * Archive (or unarchive) a single report
+ */
+router.post('/:reportId/archive', async (req, res) => {
+  try {
+    const { reportId } = req.params;
+    const archived = req.body.archived !== false; // default true
+
+    const report = await fiReportService.setReportArchived(reportId, archived);
+
+    res.json({
+      success: true,
+      message: archived ? 'Report archived' : 'Report unarchived',
+      data: { reportId: report.reportId, archived: report.archived }
+    });
+  } catch (error) {
+    logger.error(`Error archiving report ${req.params.reportId}:`, error);
+    const httpStatus = /not found/i.test(error.message) ? 404 : 500;
+    res.status(httpStatus).json({
+      success: false,
+      error: httpStatus === 404 ? 'Report not found' : 'Failed to archive report'
     });
   }
 });
@@ -452,6 +622,31 @@ router.delete('/cleanup', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to cleanup reports'
+    });
+  }
+});
+
+/**
+ * DELETE /api/reports/:reportId
+ * Permanently delete a single report
+ */
+router.delete('/:reportId', async (req, res) => {
+  try {
+    const { reportId } = req.params;
+
+    await fiReportService.deleteReport(reportId);
+
+    res.json({
+      success: true,
+      message: 'Report deleted',
+      data: { reportId }
+    });
+  } catch (error) {
+    logger.error(`Error deleting report ${req.params.reportId}:`, error);
+    const httpStatus = /not found/i.test(error.message) ? 404 : 500;
+    res.status(httpStatus).json({
+      success: false,
+      error: httpStatus === 404 ? 'Report not found' : 'Failed to delete report'
     });
   }
 });

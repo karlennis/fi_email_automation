@@ -23,6 +23,11 @@ export const routes: Routes = [
     canActivate: [AuthGuard, AdminGuard]
   },
   {
+    path: 'reports',
+    loadComponent: () => import('./components/reports/reports-list/reports-list.component').then(m => m.ReportsListComponent),
+    canActivate: [AuthGuard]
+  },
+  {
     path: 'users',
     loadComponent: () => import('./components/user-management/user-management.component').then(m => m.UserManagementComponent),
     canActivate: [AuthGuard, AdminGuard]

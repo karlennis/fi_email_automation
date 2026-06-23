@@ -344,6 +344,146 @@ class FIReportService {
       throw error;
     }
   }
+
+  /**
+   * Get all reports across customers with filters and pagination
+   * @param {Object} options - Query options (status, reportType, dateFrom, dateTo, search, includeArchived, limit, skip)
+   * @returns {Promise<{reports: Array, total: number}>}
+   */
+  async getAllReports(options = {}) {
+    try {
+      const query = {};
+
+      if (!options.includeArchived) {
+        query.archived = false;
+      }
+
+      if (options.status) {
+        query.status = options.status;
+      }
+
+      if (options.reportType) {
+        query.reportType = options.reportType;
+      }
+
+      if (options.dateFrom || options.dateTo) {
+        query.generatedAt = {};
+        if (options.dateFrom) query.generatedAt.$gte = new Date(options.dateFrom);
+        if (options.dateTo) query.generatedAt.$lte = new Date(options.dateTo);
+      }
+
+      if (options.search) {
+        const term = new RegExp(options.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+        query.$or = [
+          { customerName: term },
+          { customerEmail: term },
+          { reportId: term }
+        ];
+      }
+
+      const limit = options.limit || 100;
+      const skip = options.skip || 0;
+
+      const [reports, total] = await Promise.all([
+        FIReport.find(query).sort({ generatedAt: -1 }).skip(skip).limit(limit),
+        FIReport.countDocuments(query)
+      ]);
+
+      this.logger.info(`📋 Retrieved ${reports.length}/${total} reports (all customers)`);
+
+      return { reports, total };
+    } catch (error) {
+      this.logger.error('❌ Error retrieving all reports:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update editable fields of a report (subject, notes, recipient email)
+   * @param {string} reportId
+   * @param {Object} updates - { subject, notes, customerEmail }
+   * @returns {Promise<Object>} Updated report
+   */
+  async updateReport(reportId, updates = {}) {
+    try {
+      const report = await FIReport.findOne({ reportId });
+
+      if (!report) {
+        throw new Error(`Report ${reportId} not found`);
+      }
+
+      if (typeof updates.subject === 'string') {
+        report.emailData = report.emailData || {};
+        report.emailData.subject = updates.subject;
+      }
+
+      if (typeof updates.notes === 'string') {
+        report.notes = updates.notes;
+      }
+
+      if (typeof updates.customerEmail === 'string' && updates.customerEmail.trim()) {
+        report.customerEmail = updates.customerEmail.trim();
+      }
+
+      await report.save();
+
+      this.logger.info(`✏️ Report ${reportId} updated`, { reportId, fields: Object.keys(updates) });
+
+      return report;
+    } catch (error) {
+      this.logger.error(`❌ Error updating report ${reportId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Archive or unarchive a single report
+   * @param {string} reportId
+   * @param {boolean} archived
+   * @returns {Promise<Object>} Updated report
+   */
+  async setReportArchived(reportId, archived = true) {
+    try {
+      const report = await FIReport.findOneAndUpdate(
+        { reportId },
+        { $set: { archived } },
+        { new: true }
+      );
+
+      if (!report) {
+        throw new Error(`Report ${reportId} not found`);
+      }
+
+      this.logger.info(`📦 Report ${reportId} archived=${archived}`);
+
+      return report;
+    } catch (error) {
+      this.logger.error(`❌ Error archiving report ${reportId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Permanently delete a single report
+   * @param {string} reportId
+   * @returns {Promise<boolean>}
+   */
+  async deleteReport(reportId) {
+    try {
+      const result = await FIReport.deleteOne({ reportId });
+
+      if (result.deletedCount === 0) {
+        throw new Error(`Report ${reportId} not found`);
+      }
+
+      this.logger.info(`🗑️ Report ${reportId} deleted`);
+
+      return true;
+    } catch (error) {
+      this.logger.error(`❌ Error deleting report ${reportId}:`, error);
+      throw error;
+    }
+  }
 }
 
 module.exports = new FIReportService();

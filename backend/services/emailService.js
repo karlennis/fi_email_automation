@@ -372,14 +372,13 @@ class EmailService {
   /**
    * Send batch FI notification email with multiple matches
    */
-  async sendBatchFINotification(customerEmail, customerName, batchData) {
+  async sendBatchFINotification(customerEmail, customerName, batchData, options = {}) {
     try {
       const template = this.templates.get('fi-batch-notification');
 
       if (!template) {
         throw new Error('FI batch notification template not loaded');
       }
-
       // Filter out matches without valid project details from BII
       const invalidTitles = ['Title unavailable', 'Untitled project', 'Error loading data', 'N/A'];
       const validMatches = batchData.matches.filter(match => {
@@ -455,7 +454,7 @@ class EmailService {
         from: this.getFromAddress(),
         replyTo: this.getReplyToEmail(),
         to: customerEmail,
-        subject: subject,
+        subject: options.subject || subject,
         html: html
       };
 
