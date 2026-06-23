@@ -469,6 +469,98 @@ import { IconComponent } from '../../shared/icon/icon.component';
       </div>
     </div>
 
+    <!-- Report Details Modal -->
+    <div class="modal" *ngIf="showDetailsModal" (click)="closeDetailsModal()">
+      <div class="modal-content modal-lg" (click)="$event.stopPropagation()">
+        <div class="modal-header">
+          <h2><app-icon name="file-text" [size]="18"></app-icon> Report Details</h2>
+          <button class="close-btn" (click)="closeDetailsModal()">×</button>
+        </div>
+        <div class="modal-body">
+          <div *ngIf="detailsLoading" class="loading-spinner">
+            <app-icon name="loader" [size]="18" [spin]="true"></app-icon> Loading report details…
+          </div>
+
+          <div *ngIf="!detailsLoading && reportDetails">
+            <div class="report-summary">
+              <span><strong>{{ reportDetails.reportType }} Report</strong></span>
+              <span class="projects-count">ID: {{ reportDetails.reportId }}</span>
+            </div>
+
+            <div class="report-stats">
+              <div class="stat">
+                <span class="stat-label">Status:</span>
+                <span class="stat-value">{{ reportDetails.status }}</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Customer:</span>
+                <span class="stat-value">{{ reportDetails.customerName || '—' }}</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Email:</span>
+                <span class="stat-value">{{ reportDetails.customerEmail || '—' }}</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Projects Scanned:</span>
+                <span class="stat-value">{{ reportDetails.totalProjectsScanned ?? 0 }}</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">FI Matches:</span>
+                <span class="stat-value">{{ reportDetails.totalFIMatches ?? 0 }}</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Generated:</span>
+                <span class="stat-value">{{ reportDetails.generatedAt ? (reportDetails.generatedAt | date:'short') : '—' }}</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Sent:</span>
+                <span class="stat-value">{{ reportDetails.sentAt ? (reportDetails.sentAt | date:'short') : 'Not sent' }}</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Delivery Attempts:</span>
+                <span class="stat-value">{{ reportDetails.deliveryAttempts ?? 0 }}</span>
+              </div>
+            </div>
+
+            <div class="form-group" *ngIf="reportDetails.emailData?.subject">
+              <label>Email Subject:</label>
+              <div class="detail-text">{{ reportDetails.emailData.subject }}</div>
+            </div>
+
+            <div class="form-group">
+              <label>Projects Found ({{ reportDetails.projectsFound?.length || 0 }}):</label>
+              <div *ngIf="!reportDetails.projectsFound?.length" class="empty-state">
+                <span>No project details available for this report.</span>
+              </div>
+              <div class="projects-detail-list" *ngIf="reportDetails.projectsFound?.length">
+                <div class="project-detail-card" *ngFor="let project of reportDetails.projectsFound">
+                  <div class="project-detail-header">
+                    <span class="project-detail-title">{{ project.planningTitle || project.projectId }}</span>
+                    <a *ngIf="project.biiUrl" [href]="project.biiUrl" target="_blank" rel="noopener" class="project-detail-link">
+                      <app-icon name="eye" [size]="12"></app-icon> View
+                    </a>
+                  </div>
+                  <div class="project-detail-meta">
+                    <span *ngIf="project.projectId">ID: {{ project.projectId }}</span>
+                    <span *ngIf="project.planningStage">Stage: {{ project.planningStage }}</span>
+                    <span *ngIf="project.planningCounty">County: {{ project.planningCounty }}</span>
+                    <span *ngIf="project.planningValue">Value: {{ project.planningValue | currency:'EUR':'symbol':'1.0-0' }}</span>
+                  </div>
+                  <div class="project-detail-tags" *ngIf="project.matchedKeywords?.length">
+                    <span class="tag" *ngFor="let kw of project.matchedKeywords">{{ kw }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="modal-actions">
+              <button class="btn btn-secondary" (click)="closeDetailsModal()">Close</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Edit Customer Modal -->
     <div class="modal" *ngIf="showEditModal" (click)="closeEditModal()">
       <div class="modal-content" (click)="$event.stopPropagation()">
@@ -1163,6 +1255,75 @@ import { IconComponent } from '../../shared/icon/icon.component';
       margin-top: 20px;
     }
 
+    .detail-text {
+      padding: 10px 12px;
+      background: var(--bg-secondary);
+      border-radius: 6px;
+      color: var(--text-primary);
+      font-size: 0.9rem;
+    }
+
+    .projects-detail-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 320px;
+      overflow-y: auto;
+    }
+
+    .project-detail-card {
+      padding: 12px;
+      background: var(--bg-secondary);
+      border-radius: 6px;
+      border-left: 3px solid var(--primary);
+    }
+
+    .project-detail-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+
+    .project-detail-title {
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .project-detail-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 0.8rem;
+      color: var(--primary);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .project-detail-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+    }
+
+    .project-detail-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .project-detail-tags .tag {
+      padding: 2px 8px;
+      background: var(--primary);
+      color: #fff;
+      border-radius: 10px;
+      font-size: 0.72rem;
+    }
+
     .form-group {
       margin-bottom: 20px;
     }
@@ -1534,6 +1695,11 @@ export class CustomerListComponent implements OnInit {
   resendLoading = false;
   availableCustomers: Customer[] = [];
 
+  // Report details modal
+  showDetailsModal = false;
+  reportDetails: any = null;
+  detailsLoading = false;
+
   // Edit customer modal
   showEditModal = false;
   editingCustomer: any = {
@@ -1892,8 +2058,34 @@ export class CustomerListComponent implements OnInit {
   }
 
   viewReportDetails(report: any) {
-    // You could implement a detailed view modal here if needed
-    this.toastr.info('Report details view coming soon!');
+    this.showDetailsModal = true;
+    this.detailsLoading = true;
+    this.reportDetails = null;
+
+    const params: any = {};
+    if (this.selectedCustomerForReports?._id) {
+      params.customerId = this.selectedCustomerForReports._id;
+    }
+
+    this.http.get<any>(`${this.baseUrl}/${report.reportId}`, { params })
+      .subscribe({
+        next: (response) => {
+          this.reportDetails = response.data;
+          this.detailsLoading = false;
+        },
+        error: (error) => {
+          console.error('Error loading report details:', error);
+          this.toastr.error('Failed to load report details');
+          this.detailsLoading = false;
+          this.showDetailsModal = false;
+        }
+      });
+  }
+
+  closeDetailsModal() {
+    this.showDetailsModal = false;
+    this.reportDetails = null;
+    this.detailsLoading = false;
   }
 
   openResendModal(report: any) {
