@@ -399,6 +399,33 @@ class FIReportService {
   }
 
   /**
+   * Retrieve multiple reports by their reportIds (for bulk audit export)
+   * @param {string[]} reportIds
+   * @returns {Promise<Array>} Reports (full documents), sorted newest first
+   */
+  async getReportsByIds(reportIds = []) {
+    try {
+      const ids = (Array.isArray(reportIds) ? reportIds : [])
+        .map(id => String(id))
+        .filter(Boolean);
+
+      if (ids.length === 0) {
+        return [];
+      }
+
+      const reports = await FIReport.find({ reportId: { $in: ids } })
+        .sort({ generatedAt: -1 });
+
+      this.logger.info(`📋 Retrieved ${reports.length}/${ids.length} reports for export`);
+
+      return reports;
+    } catch (error) {
+      this.logger.error('❌ Error retrieving reports by ids:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Update editable fields of a report (subject, notes, recipient email)
    * @param {string} reportId
    * @param {Object} updates - { subject, notes, customerEmail }

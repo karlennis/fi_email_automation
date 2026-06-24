@@ -164,6 +164,115 @@ router.get('/', async (req, res) => {
 });
 
 /**
+ * Build a plain-text audit document for a set of reports.
+ * Full-detail format: report header + every match with its matching quote.
+ */
+const buildAuditText = (reports) => {
+  const fmtDate = (d) => (d ? new Date(d).toISOString() : '—');
+  const line = '='.repeat(72);
+  const sub = '-'.repeat(72);
+
+  const parts = [];
+  parts.push(line);
+  parts.push('FI REPORTS AUDIT EXPORT');
+  parts.push(`Generated: ${new Date().toISOString()}`);
+  parts.push(`Reports: ${reports.length}`);
+  parts.push(line);
+  parts.push('');
+
+  reports.forEach((report, idx) => {
+    parts.push(`REPORT ${idx + 1} of ${reports.length}`);
+    parts.push(`  Report ID:        ${report.reportId || '—'}`);
+    parts.push(`  Customer:         ${report.customerName || '—'} <${report.customerEmail || '—'}>`);
+    parts.push(`  Type:             ${report.reportType || '—'}`);
+    parts.push(`  Status:           ${report.status || '—'}`);
+    parts.push(`  Generated:        ${fmtDate(report.generatedAt)}`);
+    parts.push(`  Sent:             ${report.sentAt ? fmtDate(report.sentAt) : 'Not sent'}`);
+    parts.push(`  Projects scanned: ${report.totalProjectsScanned ?? 0}`);
+    parts.push(`  Matches:          ${report.totalFIMatches ?? 0}`);
+    parts.push(`  Last delivery:    ${report.lastDeliveryStatus || 'NONE'}`);
+    parts.push('');
+
+    const projects = report.projectsFound || [];
+    if (projects.length === 0) {
+      parts.push('  (no match details stored)');
+    } else {
+      projects.forEach((p, pIdx) => {
+        parts.push(`  Match ${pIdx + 1}: ${p.planningTitle || p.projectId || 'Untitled'}`);
+        if (p.projectId) parts.push(`    Project ID:   ${p.projectId}`);
+        const meta = [];
+        if (p.planningStage) meta.push(`Stage: ${p.planningStage}`);
+        if (p.planningCounty) meta.push(`County: ${p.planningCounty}`);
+        if (p.planningValue) meta.push(`Value: €${p.planningValue}`);
+        if (meta.length) parts.push(`    ${meta.join('  |  ')}`);
+        if (p.fiIndicators?.length) parts.push(`    FI indicators: ${p.fiIndicators.join(', ')}`);
+        if (p.metadata?.documentName) parts.push(`    Document:     ${p.metadata.documentName}`);
+        if (p.biiUrl) parts.push(`    URL:          ${p.biiUrl}`);
+        if (p.metadata?.summary) parts.push(`    Summary:      ${p.metadata.summary}`);
+        if (p.metadata?.validationQuote) {
+          parts.push(`    Matching quote:`);
+          parts.push(`      "${p.metadata.validationQuote}"`);
+        } else {
+          parts.push(`    Matching quote: (none recorded)`);
+        }
+        parts.push('');
+      });
+    }
+
+    parts.push(sub);
+    parts.push('');
+  });
+
+  return parts.join('\n');
+};
+
+/**
+ * POST /api/reports/export
+ * Build a plain-text (.txt) audit file for the selected reports across runs
+ */
+router.post('/export', async (req, res) => {
+  try {
+    const { reportIds } = req.body;
+
+    if (!Array.isArray(reportIds) || reportIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'reportIds must be a non-empty array'
+      });
+    }
+
+    if (reportIds.length > 500) {
+      return res.status(400).json({
+        success: false,
+        error: 'Too many reports selected (max 500)'
+      });
+    }
+
+    const reports = await fiReportService.getReportsByIds(reportIds);
+
+    if (reports.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No matching reports found'
+      });
+    }
+
+    const text = buildAuditText(reports);
+    const filename = `reports-audit-${new Date().toISOString().slice(0, 10)}.txt`;
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(text);
+  } catch (error) {
+    logger.error('Error exporting reports:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to export reports'
+    });
+  }
+});
+
+/**
  * GET /api/reports/:reportId
  * Get detailed information about a specific report
  */

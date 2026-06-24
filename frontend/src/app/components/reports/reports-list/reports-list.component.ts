@@ -65,6 +65,16 @@ interface ReportGroup {
         <span><strong>{{ totalMatchesAll }}</strong> total matches</span>
       </div>
 
+      <!-- Selection / export bar -->
+      <div class="selection-bar" *ngIf="selectedReportIds.size">
+        <span class="selection-count"><strong>{{ selectedReportIds.size }}</strong> report{{ selectedReportIds.size === 1 ? '' : 's' }} selected</span>
+        <button class="btn btn-primary" (click)="exportSelected()" [disabled]="exporting">
+          <app-icon [name]="exporting ? 'loader' : 'download'" [size]="14" [spin]="exporting"></app-icon>
+          {{ exporting ? 'Exporting…' : 'Download .txt' }}
+        </button>
+        <button class="btn btn-secondary" (click)="clearSelection()" [disabled]="exporting">Clear</button>
+      </div>
+
       <div *ngIf="loading" class="loading-spinner">
         <app-icon name="loader" [size]="18" [spin]="true"></app-icon> Loading reports…
       </div>
@@ -79,6 +89,10 @@ interface ReportGroup {
         <div class="run-group" *ngFor="let group of visibleGroups">
           <div class="run-header" (click)="group.collapsed = !group.collapsed">
             <div class="run-title">
+              <input type="checkbox" class="run-select" title="Select all in this run"
+                     [checked]="isGroupFullySelected(group)"
+                     (click)="$event.stopPropagation()"
+                     (change)="toggleGroupSelected(group)">
               <app-icon [name]="group.collapsed ? 'chevron-right' : 'chevron-down'" [size]="16"></app-icon>
               <h3>{{ group.dateLabel }}</h3>
             </div>
@@ -90,7 +104,11 @@ interface ReportGroup {
           </div>
 
           <div class="run-body" *ngIf="!group.collapsed">
-            <div class="report-row" *ngFor="let report of group.reports" [class.archived]="report.archived">
+            <div class="report-row" *ngFor="let report of group.reports"
+                 [class.archived]="report.archived" [class.row-selected]="isReportSelected(report)">
+              <input type="checkbox" class="row-select" title="Select report"
+                     [checked]="isReportSelected(report)"
+                     (change)="toggleReportSelected(report)">
               <div class="report-main">
                 <div class="report-customer">
                   <span class="report-name">{{ report.customerName || report.customerEmail }}</span>
@@ -192,7 +210,19 @@ interface ReportGroup {
                     <span *ngIf="p.projectId">ID: {{ p.projectId }}</span>
                     <span *ngIf="p.planningStage">Stage: {{ p.planningStage }}</span>
                     <span *ngIf="p.planningCounty">County: {{ p.planningCounty }}</span>
+                    <span *ngIf="p.planningValue">€{{ p.planningValue | number }}</span>
                   </div>
+                  <div class="match-card-indicators" *ngIf="p.fiIndicators?.length">
+                    <span class="indicator-tag" *ngFor="let ind of p.fiIndicators">{{ ind }}</span>
+                  </div>
+                  <div class="project-detail-doc" *ngIf="p.metadata?.documentName">
+                    <app-icon name="file-text" [size]="12"></app-icon> {{ p.metadata.documentName }}
+                  </div>
+                  <div class="evidence-quote" *ngIf="p.metadata?.validationQuote">
+                    <span class="evidence-label">Matching quote</span>
+                    <span class="evidence-text">“{{ p.metadata.validationQuote }}”</span>
+                  </div>
+                  <div class="project-detail-summary" *ngIf="p.metadata?.summary">{{ p.metadata.summary }}</div>
                 </div>
               </div>
             </div>
@@ -403,6 +433,12 @@ interface ReportGroup {
     .load-more-label { flex: 1; color: var(--text-secondary); font-size: 0.85rem; }
     .summary-bar strong { color: var(--text-primary); }
 
+    .selection-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; padding: 10px 14px;
+      background: var(--bg-secondary); border: 1px solid var(--primary); border-radius: 8px; }
+    .selection-count { flex: 1; color: var(--text-primary); font-size: 0.9rem; }
+    .run-select, .row-select { cursor: pointer; flex-shrink: 0; }
+    .report-row.row-selected { background: var(--bg-secondary); }
+
     .runs { display: flex; flex-direction: column; gap: 14px; }
     .run-group { border: 1px solid var(--border, #e0e0e0); border-radius: 8px; overflow: hidden; }
     .run-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px;
@@ -488,6 +524,13 @@ interface ReportGroup {
     .project-detail-title { font-weight: 600; color: var(--text-primary); }
     .project-detail-link { display: inline-flex; align-items: center; gap: 4px; font-size: 0.8rem; color: var(--primary); text-decoration: none; }
     .project-detail-meta { display: flex; flex-wrap: wrap; gap: 12px; font-size: 0.8rem; color: var(--text-secondary); }
+    .project-detail-card .match-card-indicators { margin-top: 8px; }
+    .project-detail-doc { display: flex; align-items: center; gap: 5px; margin-top: 8px; font-size: 0.78rem; color: var(--text-secondary); overflow-wrap: anywhere; }
+    .evidence-quote { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; padding: 10px 12px;
+      background: var(--bg-primary, #fff); border-left: 3px solid var(--primary); border-radius: 4px; }
+    .evidence-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--primary); font-weight: 600; }
+    .evidence-text { font-style: italic; color: var(--text-primary); font-size: 0.85rem; overflow-wrap: anywhere; }
+    .project-detail-summary { margin-top: 8px; font-size: 0.8rem; color: var(--text-secondary); overflow-wrap: anywhere; }
 
     .matches-header { display: flex; justify-content: space-between; align-items: center; }
     .matches-actions { display: flex; align-items: center; gap: 6px; }
@@ -566,6 +609,10 @@ export class ReportsListComponent implements OnInit {
   groups: ReportGroup[] = [];
   visibleRunCount = 5;
 
+  // Multi-select / export
+  selectedReportIds = new Set<string>();
+  exporting = false;
+
   filters = {
     search: '',
     status: '',
@@ -625,6 +672,62 @@ export class ReportsListComponent implements OnInit {
 
   showAllRuns(): void {
     this.visibleRunCount = this.groups.length;
+  }
+
+  // --- Multi-select / export ---
+  isReportSelected(report: any): boolean {
+    return this.selectedReportIds.has(report.reportId);
+  }
+
+  toggleReportSelected(report: any): void {
+    if (this.selectedReportIds.has(report.reportId)) {
+      this.selectedReportIds.delete(report.reportId);
+    } else {
+      this.selectedReportIds.add(report.reportId);
+    }
+  }
+
+  isGroupFullySelected(group: ReportGroup): boolean {
+    return group.reports.length > 0 && group.reports.every(r => this.selectedReportIds.has(r.reportId));
+  }
+
+  toggleGroupSelected(group: ReportGroup): void {
+    const selectAll = !this.isGroupFullySelected(group);
+    group.reports.forEach(r => {
+      if (selectAll) {
+        this.selectedReportIds.add(r.reportId);
+      } else {
+        this.selectedReportIds.delete(r.reportId);
+      }
+    });
+  }
+
+  clearSelection(): void {
+    this.selectedReportIds.clear();
+  }
+
+  exportSelected(): void {
+    if (this.selectedReportIds.size === 0 || this.exporting) return;
+    this.exporting = true;
+    const reportIds = Array.from(this.selectedReportIds);
+
+    this.http.post(`${this.baseUrl}/export`, { reportIds }, { responseType: 'blob' as 'json' }).subscribe({
+      next: (blob: any) => {
+        const url = window.URL.createObjectURL(blob as Blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `reports-audit-${new Date().toISOString().slice(0, 10)}.txt`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+        this.toastr.success(`Exported ${reportIds.length} report${reportIds.length === 1 ? '' : 's'}`);
+        this.exporting = false;
+      },
+      error: (error) => {
+        console.error('Error exporting reports:', error);
+        this.toastr.error('Failed to export reports');
+        this.exporting = false;
+      }
+    });
   }
 
   get totalMatchesAll(): number {
@@ -704,6 +807,7 @@ export class ReportsListComponent implements OnInit {
         this.total = response.data?.pagination?.total ?? reports.length;
         this.groups = this.groupByRun(reports);
         this.visibleRunCount = 5;
+        this.clearSelection();
         this.loading = false;
       },
       error: (error) => {
