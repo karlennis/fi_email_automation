@@ -21,6 +21,8 @@ class BuildingInfoService {
     this.ukey = process.env.BUILDING_INFO_API_UKEY;
     this.cache = new Map();
     this.cacheTimeout = 24 * 60 * 60 * 1000; // 24 hours
+    // Failed lookups are cached briefly so next-run retries hit the API fresh
+    this.failureCacheTimeout = 15 * 60 * 1000; // 15 minutes
   }
 
   /**
@@ -59,8 +61,11 @@ class BuildingInfoService {
     const cacheKey = `project_${planningId}`;
     const cached = this.cache.get(cacheKey);
 
-    if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
-      return cached.data;
+    if (cached) {
+      const ttl = cached.isFailure ? this.failureCacheTimeout : this.cacheTimeout;
+      if (Date.now() - cached.timestamp < ttl) {
+        return cached.data;
+      }
     }
 
     try {
@@ -77,25 +82,26 @@ class BuildingInfoService {
         planning_sector: 'N/A',
         planning_county: 'N/A',
         planning_authority: 'N/A',
-        planning_status: 'N/A'
+        planning_status: 'N/A',
+        metadataUnavailable: true
       };
 
       if (!data || typeof data !== 'object') {
         logger.warn(`Invalid response from Building Info API for ${planningId}:`, data);
-        this.cache.set(cacheKey, { data: fallbackData, timestamp: Date.now() });
+        this.cache.set(cacheKey, { data: fallbackData, timestamp: Date.now(), isFailure: true });
         return fallbackData;
       }
 
       if (data.success === false || data.status !== 'OK') {
         logger.warn(`Building Info API returned error for ${planningId}:`, { success: data.success, status: data.status, message: data.message });
-        this.cache.set(cacheKey, { data: fallbackData, timestamp: Date.now() });
+        this.cache.set(cacheKey, { data: fallbackData, timestamp: Date.now(), isFailure: true });
         return fallbackData;
       }
 
       const rows = data.data?.rows;
       if (!rows || !Array.isArray(rows) || rows.length === 0) {
         logger.warn(`No data rows returned from Building Info API for ${planningId}`);
-        this.cache.set(cacheKey, { data: fallbackData, timestamp: Date.now() });
+        this.cache.set(cacheKey, { data: fallbackData, timestamp: Date.now(), isFailure: true });
         return fallbackData;
       }
 
@@ -158,10 +164,11 @@ class BuildingInfoService {
         planning_sector: 'N/A',
         planning_county: 'N/A',
         planning_authority: 'N/A',
-        planning_status: 'N/A'
+        planning_status: 'N/A',
+        metadataUnavailable: true
       };
 
-      this.cache.set(cacheKey, { data: fallbackData, timestamp: Date.now() });
+      this.cache.set(cacheKey, { data: fallbackData, timestamp: Date.now(), isFailure: true });
       return fallbackData;
     }
   }
@@ -196,7 +203,8 @@ class BuildingInfoService {
             planning_sector: 'N/A',
             planning_county: 'N/A',
             planning_authority: 'N/A',
-            planning_status: 'Error'
+            planning_status: 'Error',
+            metadataUnavailable: true
           };
         }
       });

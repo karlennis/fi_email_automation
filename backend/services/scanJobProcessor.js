@@ -2,6 +2,7 @@ const schedule = require('node-schedule');
 const ScanJob = require('../models/ScanJob');
 const Customer = require('../models/Customer');
 const ScanJobDailyResult = require('../models/ScanJobDailyResult');
+const PendingMetadataMatch = require('../models/PendingMetadataMatch');
 const fastS3Scanner = require('./fastS3Scanner');
 const fiDetectionService = require('./fiDetectionService');
 const s3Service = require('./s3Service');
@@ -18,6 +19,9 @@ const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
 const { pipeline } = require('stream/promises');
+
+// Delivery-run attempts before an unfound-metadata match is permanently expired
+const MAX_METADATA_RETRIES = 4;
 
 class ScanJobProcessor {
     constructor() {
@@ -1116,7 +1120,7 @@ class ScanJobProcessor {
      * Send batch email notifications for matched documents
      * Groups matches by customer and fetches project metadata from Building Info API
      */
-    async sendMatchEmails(matches, job) {
+    async sendMatchEmails(matches, job, prefetchedMetadataMap = null) {
         logger.info(`📧 Preparing batch notifications for ${matches.length} matched documents...`);
 
         try {
@@ -1177,26 +1181,30 @@ class ScanJobProcessor {
                 }
             }
 
-            // Get unique project IDs to fetch metadata
-            const uniqueProjectIds = new Set();
-            matches.forEach(match => {
-                if (match.document.projectId) {
-                    uniqueProjectIds.add(match.document.projectId);
-                }
-            });
-
-            logger.info(`📡 Fetching metadata for ${uniqueProjectIds.size} projects from Building Info API...`);
-
-            // Fetch all project metadata from Building Info API
-            const projectMetadataMap = new Map();
-            for (const projectId of uniqueProjectIds) {
-                try {
-                    const metadata = await buildingInfoService.getProjectMetadata(projectId);
-                    if (metadata) {
-                        projectMetadataMap.set(projectId, metadata);
+            // Use prefetched metadata when provided (delivery path); otherwise fetch here
+            let projectMetadataMap = prefetchedMetadataMap;
+            if (!projectMetadataMap) {
+                // Get unique project IDs to fetch metadata
+                const uniqueProjectIds = new Set();
+                matches.forEach(match => {
+                    if (match.document.projectId) {
+                        uniqueProjectIds.add(match.document.projectId);
                     }
-                } catch (error) {
-                    logger.warn(`⚠️ Could not fetch metadata for project ${projectId}:`, error.message);
+                });
+
+                logger.info(`📡 Fetching metadata for ${uniqueProjectIds.size} projects from Building Info API...`);
+
+                // Fetch all project metadata from Building Info API
+                projectMetadataMap = new Map();
+                for (const projectId of uniqueProjectIds) {
+                    try {
+                        const metadata = await buildingInfoService.getProjectMetadata(projectId);
+                        if (metadata) {
+                            projectMetadataMap.set(projectId, metadata);
+                        }
+                    } catch (error) {
+                        logger.warn(`⚠️ Could not fetch metadata for project ${projectId}:`, error.message);
+                    }
                 }
             }
 
@@ -1207,6 +1215,18 @@ class ScanJobProcessor {
                         match.projectMetadata = projectMetadataMap.get(match.projectId);
                     }
                 }
+            }
+
+            // Defensive guard: never email matches whose metadata is unavailable
+            // (delivery path holds these back for retry via PendingMetadataMatch)
+            for (const customerData of customerMatchesMap.values()) {
+                customerData.matches = customerData.matches.filter(match => {
+                    if (match.projectMetadata?.metadataUnavailable) {
+                        logger.warn(`⏸️ Project ${match.projectId}: metadata unavailable - excluding from email to ${customerData.email}`);
+                        return false;
+                    }
+                    return true;
+                });
             }
 
             // Apply customer subscription filters (county/sector)
@@ -1672,8 +1692,54 @@ class ScanJobProcessor {
     }
 
     /**
+     * Fetch BuildingInfo metadata once per unique project and partition raw stored
+     * matches into deliverable (real metadata) vs held (metadata not yet available).
+     */
+    async partitionMatchesByMetadata(rawMatches) {
+        const uniqueProjectIds = new Set();
+        for (const m of rawMatches) {
+            if (m.projectId) uniqueProjectIds.add(m.projectId);
+        }
+
+        logger.info(`📡 Fetching metadata for ${uniqueProjectIds.size} projects from Building Info API...`);
+
+        const metadataMap = new Map();
+        for (const projectId of uniqueProjectIds) {
+            try {
+                const metadata = await buildingInfoService.getProjectMetadata(projectId);
+                if (metadata) {
+                    metadataMap.set(projectId, metadata);
+                }
+            } catch (error) {
+                logger.warn(`⚠️ Could not fetch metadata for project ${projectId}:`, error.message);
+            }
+        }
+
+        const deliverable = [];
+        const held = [];
+        for (const m of rawMatches) {
+            if (!m.projectId) {
+                // Retry can never succeed without a projectId — keep current behavior
+                logger.warn(`⚠️ Match ${m.fileName} has no projectId - delivering without metadata`);
+                deliverable.push(m);
+                continue;
+            }
+            const md = metadataMap.get(m.projectId);
+            if (md && !md.metadataUnavailable) {
+                deliverable.push(m);
+            } else {
+                held.push(m);
+            }
+        }
+
+        return { deliverable, held, metadataMap };
+    }
+
+    /**
      * Aggregate stored daily results across the lookback window and deliver to customers.
      * Deduplicates matches by projectId+fileName to prevent double-counting.
+     * Matches whose project metadata is unavailable in BuildingInfo are held back
+     * and retried on subsequent delivery runs (up to MAX_METADATA_RETRIES).
      */
     async deliverResultsForJob(job, deliveryAnchorDate) {
         try {
@@ -1693,7 +1759,12 @@ class ScanJobProcessor {
                 scanDate: { $gte: windowStart, $lte: windowEnd }
             });
 
-            if (dailyResults.length === 0) {
+            const pendingDocs = await PendingMetadataMatch.find({
+                jobId: job.jobId,
+                status: 'PENDING'
+            });
+
+            if (dailyResults.length === 0 && pendingDocs.length === 0) {
                 logger.info(`📭 No stored results for job ${job.jobId} in window ${windowStart.toISOString().split('T')[0]} → ${windowEndStr}`);
                 return;
             }
@@ -1711,11 +1782,77 @@ class ScanJobProcessor {
                 }
             }
 
-            logger.info(`📬 Delivering ${allMatches.length} deduplicated matches for job ${job.jobId} (${dailyResults.length} day(s) in window)`);
+            // Merge pending metadata retries from previous runs (daily copy wins dedup)
+            const pendingByKey = new Map();
+            for (const p of pendingDocs) {
+                const key = `${p.projectId}::${p.fileName}`;
+                pendingByKey.set(key, p);
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    allMatches.push({
+                        projectId: p.projectId,
+                        fileName: p.fileName,
+                        filePath: p.filePath,
+                        fiType: p.fiType,
+                        validationQuote: p.validationQuote,
+                        confidence: p.confidence,
+                        timestamp: p.timestamp
+                    });
+                }
+            }
 
-            if (allMatches.length > 0) {
+            if (pendingDocs.length > 0) {
+                logger.info(`🔁 Retrying ${pendingDocs.length} pending match(es) with previously unavailable metadata for job ${job.jobId}`);
+            }
+
+            // Partition once at project level: deliverable vs held (no metadata yet)
+            const { deliverable, held, metadataMap } = await this.partitionMatchesByMetadata(allMatches);
+
+            // Persist held matches BEFORE emailing (crash-safe)
+            const now = new Date();
+            for (const m of held) {
+                const key = `${m.projectId}::${m.fileName}`;
+                const existing = pendingByKey.get(key);
+                if (existing) {
+                    existing.retryCount += 1;
+                    existing.lastAttemptAt = now;
+                    if (existing.retryCount >= MAX_METADATA_RETRIES) {
+                        existing.status = 'EXPIRED';
+                        logger.warn(`⏳ Match ${key} exhausted ${MAX_METADATA_RETRIES} metadata retries - marking EXPIRED`);
+                    }
+                    await existing.save();
+                } else {
+                    // $setOnInsert-only fields ensure an existing RESOLVED/EXPIRED doc is never resurrected
+                    await PendingMetadataMatch.findOneAndUpdate(
+                        { jobId: job.jobId, projectId: m.projectId, fileName: m.fileName },
+                        {
+                            $setOnInsert: {
+                                filePath: m.filePath,
+                                fiType: m.fiType,
+                                validationQuote: m.validationQuote,
+                                confidence: m.confidence,
+                                timestamp: m.timestamp,
+                                firstSeenAt: now,
+                                retryCount: 1,
+                                status: 'PENDING'
+                            },
+                            $set: { lastAttemptAt: now }
+                        },
+                        { upsert: true }
+                    );
+                    logger.info(`⏸️ Holding back match ${key} - metadata not yet available in Building Info API`);
+                }
+            }
+
+            if (held.length > 0) {
+                logger.info(`⏸️ ${held.length} match(es) held back pending Building Info metadata for job ${job.jobId}`);
+            }
+
+            logger.info(`📬 Delivering ${deliverable.length} deduplicated matches for job ${job.jobId} (${dailyResults.length} day(s) in window)`);
+
+            if (deliverable.length > 0) {
                 // Reconstruct matches in the format sendMatchEmails expects
-                const reconstructedMatches = allMatches.map(m => ({
+                const reconstructedMatches = deliverable.map(m => ({
                     document: { projectId: m.projectId, fileName: m.fileName, filePath: m.filePath || '' },
                     result: {
                         isMatch: true,
@@ -1726,9 +1863,24 @@ class ScanJobProcessor {
                     customers: job.customers
                 }));
 
-                await this.sendMatchEmails(reconstructedMatches, job);
+                await this.sendMatchEmails(reconstructedMatches, job, metadataMap);
             } else {
                 logger.info(`📭 No matches to deliver for job ${job.jobId} in this window`);
+            }
+
+            // Resolve pending docs whose project metadata is now available
+            const resolvedIds = pendingDocs
+                .filter(p => {
+                    const md = metadataMap.get(p.projectId);
+                    return md && !md.metadataUnavailable;
+                })
+                .map(p => p._id);
+            if (resolvedIds.length > 0) {
+                await PendingMetadataMatch.updateMany(
+                    { _id: { $in: resolvedIds } },
+                    { $set: { status: 'RESOLVED', lastAttemptAt: now } }
+                );
+                logger.info(`✅ Resolved ${resolvedIds.length} pending match(es) - metadata now available for job ${job.jobId}`);
             }
 
             // Mark daily results as delivered
