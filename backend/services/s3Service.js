@@ -907,36 +907,76 @@ class S3Service {
 
   /**
    * Clean up old baseline markers (remove markers older than specified days)
+   *
+   * Markers are deleted in batches as the listing pages, rather than collecting
+   * every key and deleting once at the end. Memory stays flat regardless of how
+   * large planning-docs grows, and any batch already flushed survives a crash or
+   * restart part-way through the scan. The previous accumulate-then-delete version
+   * deleted nothing at all unless the full multi-million-object listing completed,
+   * so a single mid-scan failure silently skipped an entire night's cleanup.
+   *
    * @param {number} maxAgeDays - Maximum age in days (default: 1, keep only today's markers)
+   * @returns {object} { deleted, failed, objectsScanned, cutoffDate }
    */
   async cleanupOldBaselineMarkers(maxAgeDays = 1) {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - maxAgeDays);
+    const cutoffStr = cutoffDate.toISOString().split('T')[0];
+
+    // S3 DeleteObjects accepts at most 1000 keys per request
+    const DELETE_BATCH_SIZE = 1000;
+
+    let pendingBatch = [];
+    let totalDeleted = 0;
+    let totalFailed = 0;
+    let objectsScanned = 0;
+    let continuationToken = null;
+
+    const flush = async () => {
+      if (pendingBatch.length === 0) return;
+
+      const batch = pendingBatch;
+      pendingBatch = [];
+
+      try {
+        await this.deleteDocuments(batch);
+        totalDeleted += batch.length;
+        logger.info(`🧹 Deleted ${totalDeleted} stale baseline markers so far (${objectsScanned.toLocaleString()} objects scanned)`);
+      } catch (error) {
+        // One bad batch must not abandon the rest of the cleanup
+        totalFailed += batch.length;
+        logger.error(`Failed to delete a batch of ${batch.length} baseline markers:`, error);
+      }
+    };
+
     try {
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - maxAgeDays);
-      const cutoffStr = cutoffDate.toISOString().split('T')[0];
-
-      // List all baseline markers across all projects
-      const params = {
-        Bucket: this.bucket,
-        Prefix: 'planning-docs/'
-      };
-
-      let continuationToken = null;
-      const markersToDelete = [];
-
       do {
+        const params = {
+          Bucket: this.bucket,
+          Prefix: 'planning-docs/',
+          MaxKeys: 1000
+        };
         if (continuationToken) {
           params.ContinuationToken = continuationToken;
         }
 
         const response = await this.s3.listObjectsV2(params).promise();
 
-        // Find baseline markers older than cutoff
+        // Find baseline markers older than cutoff.
+        // Deleting keys we have already paged past is safe: ListObjectsV2 walks the
+        // bucket in lexicographic order and the continuation token marks our position,
+        // so removing earlier keys cannot cause later ones to be skipped.
         for (const obj of response.Contents || []) {
+          objectsScanned++;
+
           if (obj.Key.includes('/_baseline_')) {
             const markerDate = obj.Key.split('_baseline_')[1];
             if (markerDate && markerDate < cutoffStr) {
-              markersToDelete.push(obj.Key);
+              pendingBatch.push(obj.Key);
+
+              if (pendingBatch.length >= DELETE_BATCH_SIZE) {
+                await flush();
+              }
             }
           }
         }
@@ -944,17 +984,20 @@ class S3Service {
         continuationToken = response.IsTruncated ? response.NextContinuationToken : null;
       } while (continuationToken);
 
-      // Delete old markers
-      if (markersToDelete.length > 0) {
-        await this.deleteDocuments(markersToDelete);
-        logger.info(`🧹 Cleaned up ${markersToDelete.length} old baseline markers`);
+      // Delete whatever is left over from the final page
+      await flush();
+
+      if (totalDeleted === 0 && totalFailed === 0) {
+        logger.info(`🧹 No old baseline markers to clean up (cutoff ${cutoffStr})`);
       } else {
-        logger.info('🧹 No old baseline markers to clean up');
+        logger.info(`🧹 Baseline marker cleanup complete: ${totalDeleted} deleted, ${totalFailed} failed (cutoff ${cutoffStr}, ${objectsScanned.toLocaleString()} objects scanned)`);
       }
 
-      return { deleted: markersToDelete.length };
+      return { deleted: totalDeleted, failed: totalFailed, objectsScanned, cutoffDate: cutoffStr };
     } catch (error) {
-      logger.error('Error cleaning up baseline markers:', error);
+      // Preserve partial progress rather than discarding the current batch
+      await flush();
+      logger.error(`Error cleaning up baseline markers (${totalDeleted} deleted before failure):`, error);
       throw error;
     }
   }

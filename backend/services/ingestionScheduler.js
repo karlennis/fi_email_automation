@@ -140,7 +140,11 @@ class IngestionScheduler {
       // Remove baseline markers older than 2 days (keep today + yesterday for timing edge cases)
       const result = await s3Service.cleanupOldBaselineMarkers(2);
 
-      logger.info(`✅ Cleanup complete: removed ${result.deleted} old baseline markers`);
+      if (result.failed > 0) {
+        logger.warn(`⚠️ Cleanup finished with ${result.failed} markers it could not delete (removed ${result.deleted} of ${result.deleted + result.failed})`);
+      } else {
+        logger.info(`✅ Cleanup complete: removed ${result.deleted} old baseline markers`);
+      }
 
     } catch (error) {
       logger.error('❌ Cleanup job failed:', error);
