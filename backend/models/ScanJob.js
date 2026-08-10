@@ -51,7 +51,36 @@ const ScanJobSchema = new mongoose.Schema({
     isResuming: {
       type: Boolean,
       default: false
-    }
+    },
+    // The fields below were written by scanJobProcessor but absent from this schema, so
+    // Mongoose strict mode silently discarded them on every save. Two consequences:
+    //
+    //   - allMatchDetails was lost on every crash, so a resumed scan persisted only the
+    //     matches found after the resume.
+    //   - scanStartDate never survived, which made the resume branch in processJob dead
+    //     code: a resumed job re-derived "yesterday" from the resume time and therefore
+    //     scanned a different day than the one it had been part-way through.
+    //
+    // Documents in the S3 window for a given day, carried across a restart.
+    allMatchDetails: [{
+      projectId: String,
+      fileName: String,
+      filePath: String,
+      fiType: String,
+      validationQuote: String,
+      confidence: Number,
+      timestamp: Date
+    }],
+    // Boundaries of the window being scanned, so a resume continues the same day.
+    // Written as ISO strings by processJob, so typed loosely.
+    scanStartDate: mongoose.Schema.Types.Mixed,
+    scanEndDate: mongoose.Schema.Types.Mixed,
+    triggeredBy: {
+      email: String,
+      name: String,
+      timestamp: Date
+    },
+    totalDocumentsRaw: Number
   },
   customers: [{
     customerId: {

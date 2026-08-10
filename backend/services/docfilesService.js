@@ -14,6 +14,9 @@ const logger = winston.createLogger({
   ]
 });
 
+const { getQuoteTerms } = require('./reportTypes');
+const { runFunctionChat } = require('./openaiChat');
+
 class DocfilesService {
   constructor() {
     this.client = new OpenAI({
@@ -23,7 +26,7 @@ class DocfilesService {
     });
 
     this.config = {
-      model: "gpt-4o-mini",
+      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
       temperature: 0.0,
       topP: 0.0,
       maxRetries: 3,
@@ -141,43 +144,18 @@ Return detailed analysis with specific quotes showing the REQUEST for each repor
    * Robust OpenAI API call with retries
    */
   async runChat(messages, functions, functionName, maxAttempts = this.config.maxRetries) {
-    const safeMessages = messages.map(m => ({
-      ...m,
-      content: String(m.content || '').slice(0, this.config.maxMsgChars)
-    }));
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        const response = await this.client.chat.completions.create({
-          model: this.config.model,
-          temperature: this.config.temperature,
-          top_p: this.config.topP,
-          messages: safeMessages,
-          functions: functions,
-          function_call: { name: functionName }
-        });
-
-        return JSON.parse(response.choices[0].message.function_call.arguments);
-
-      } catch (error) {
-        if (error.name === 'APITimeoutError' || error.code === 'ECONNRESET') {
-          const wait = 2.0 * (2 ** (attempt - 1)) + Math.random() * 0.3;
-          logger.warn(`${error.constructor.name} – retry ${attempt}/${maxAttempts} in ${wait.toFixed(1)}s`);
-          await new Promise(resolve => setTimeout(resolve, wait * 1000));
-          continue;
-        }
-
-        if (error instanceof SyntaxError && error.message.includes('JSON')) {
-          logger.warn(`JSON parse failed (${error.message}); retry ${attempt}/${maxAttempts}`);
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          continue;
-        }
-
-        throw error;
-      }
-    }
-
-    throw new Error(`runChat: giving up after ${maxAttempts} attempts on ${functionName}`);
+    return runFunctionChat({
+      client: this.client,
+      messages,
+      functions,
+      functionName,
+      model: this.config.model,
+      temperature: this.config.temperature,
+      topP: this.config.topP,
+      maxMsgChars: this.config.maxMsgChars,
+      maxAttempts,
+      logger
+    });
   }
 
   /**
@@ -238,20 +216,11 @@ Return detailed analysis with specific quotes showing the REQUEST for each repor
 
       // VALIDATION: Filter out fiDetails where quote doesn't contain the report type keyword
       if (result.hasFIRequests && result.fiDetails && result.fiDetails.length > 0) {
-        const reportTypeKeywords = {
-          'acoustic': ['acoustic', 'noise', 'sound', 'vibration', 'decibel', 'db(a)'],
-          'transport': ['transport', 'traffic', 'parking', 'travel', 'highway', 'vehicular'],
-          'ecological': ['ecological', 'ecology', 'biodiversity', 'habitat', 'species', 'wildlife'],
-          'flood': ['flood', 'drainage', 'suds', 'hydrology', 'surface water', 'foul water'],
-          'heritage': ['heritage', 'archaeological', 'historic', 'conservation', 'listed building'],
-          'lighting': ['lighting', 'light pollution', 'illumination', 'luminance']
-        };
-
         // Validate each detail - quote must contain at least one keyword for the claimed report type
         const validatedDetails = result.fiDetails.filter(detail => {
           const reportType = detail.reportType;
           const quote = (detail.quote || detail.context || '').toLowerCase();
-          const keywords = reportTypeKeywords[reportType] || [];
+          const keywords = getQuoteTerms(reportType);
 
           const hasKeyword = keywords.some(keyword => quote.includes(keyword));
 

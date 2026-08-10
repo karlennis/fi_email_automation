@@ -33,7 +33,10 @@ const fiReportSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['GENERATED', 'SENT', 'FAILED', 'RESENT'],
+    // SKIPPED: no email was sent because every match was filtered out at send time
+    // (e.g. no valid project details from BuildingInfo). Previously these were recorded
+    // as SENT, so a report nobody received looked delivered.
+    enum: ['GENERATED', 'SENT', 'FAILED', 'RESENT', 'SKIPPED'],
     required: true,
     default: 'GENERATED'
   },

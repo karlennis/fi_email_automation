@@ -3,6 +3,7 @@ const ScanJob = require('../models/ScanJob');
 const Customer = require('../models/Customer');
 const ScanJobDailyResult = require('../models/ScanJobDailyResult');
 const PendingMetadataMatch = require('../models/PendingMetadataMatch');
+const ProjectReportVeto = require('../models/ProjectReportVeto');
 const fastS3Scanner = require('./fastS3Scanner');
 const fiDetectionService = require('./fiDetectionService');
 const s3Service = require('./s3Service');
@@ -19,9 +20,40 @@ const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
 const { pipeline } = require('stream/promises');
+const { normalizeReportType, getQuoteTerms } = require('./reportTypes');
 
 // Delivery-run attempts before an unfound-metadata match is permanently expired
 const MAX_METADATA_RETRIES = 4;
+
+// Quotes that carry no evidence. Matches holding only these are already dropped before
+// the customer email; here they also rank last when choosing a project's best match.
+const PLACEHOLDER_QUOTES = [
+    'Match confirmed by AI',
+    'No specific quote extracted',
+    'No quote captured'
+];
+
+// Outcomes where the document could not actually be judged, as opposed to being judged
+// and found not to match. Counted separately so a night of API or OCR failures cannot
+// masquerade as a night with no FI requests in it.
+const UNRESOLVED_STAGES = [
+    'processing-timeout',
+    'file-too-large',
+    'pdf-stream-parse-error',
+    'pdf-parse-error',
+    'docx-parse-error',
+    'text-extraction',
+    'download-error',
+    'detection-error',
+    'error'
+];
+
+const REQUEST_VERBS = [
+    'requested to', 'required to', 'is requested', 'is required',
+    'shall submit', 'shall provide', 'should submit', 'should provide',
+    'must submit', 'must provide', 'please submit', 'please provide',
+    'carry out', 'undertake', 'prepare and submit', 'recommend', 'recommends'
+];
 
 class ScanJobProcessor {
     constructor() {
@@ -328,10 +360,21 @@ class ScanJobProcessor {
         let totalDocuments = job.checkpoint.totalDocuments; // Use stored count, don't increment
         let skippedNonPdf = 0;
         let skippedBaseline = 0; // Track documents skipped due to baseline markers
+        let weakEvidenceCount = 0;  // AI matched but evidence validation failed
+        let vetoedDocuments = 0;    // Response documents that suppressed their project
+        let unresolvedCount = 0;    // Could not be judged: parse/OCR/timeout/API failures
         const baselineProjectCache = new Map(); // Cache baseline check results per project
         let skipping = isResuming && (job.checkpoint.lastProcessedPath || job.checkpoint.lastProcessedFile);
         const resumePath = job.checkpoint.lastProcessedPath;
         const resumeFile = job.checkpoint.lastProcessedFile;
+        let resumeSkipped = 0;
+
+        // Now that checkpoint.allMatchDetails persists (it was previously dropped by
+        // Mongoose strict mode), a resumed scan continues appending to the pre-crash
+        // matches rather than starting from an empty array.
+        if (isResuming && job.checkpoint.allMatchDetails?.length > 0) {
+            logger.info(`♻️ Resuming with ${job.checkpoint.allMatchDetails.length} match(es) recovered from the checkpoint`);
+        }
 
         // Log baseline check date range for debugging
         const today = new Date().toISOString().split('T')[0];
@@ -397,10 +440,31 @@ class ScanJobProcessor {
 
                         if (skipping) {
                             const currentKey = document.filePath || document.fileName;
-                            if ((resumePath && currentKey === resumePath) || (resumeFile && document.fileName === resumeFile)) {
-                                skipping = false; // Skip the last processed doc and continue
+
+                            // S3 returns keys in lexicographic order, so anything at or
+                            // before the checkpoint has already been processed.
+                            //
+                            // Comparing by order rather than waiting to re-encounter the
+                            // exact checkpoint key matters: if that key is gone from the
+                            // stream - deleted, or the window shifted - equality never
+                            // holds, every document is skipped, and the job "completes"
+                            // having processed nothing and then clears its checkpoint.
+                            if (resumePath) {
+                                if (currentKey > resumePath) {
+                                    skipping = false;
+                                } else {
+                                    resumeSkipped++;
+                                    return;
+                                }
+                            } else if (resumeFile) {
+                                resumeSkipped++;
+                                if (document.fileName === resumeFile) {
+                                    skipping = false;
+                                }
+                                return;
+                            } else {
+                                skipping = false;
                             }
-                            return;
                         }
 
                         // Yield control to event loop EVERY document to prevent health check timeouts
@@ -458,12 +522,24 @@ class ScanJobProcessor {
                             job.checkpoint.allMatchDetails.push({
                                 projectId: document.projectId,
                                 fileName: document.fileName,
+                                filePath: document.filePath,
                                 fiType: job.documentType,
                                 validationQuote: result.validationQuote || 'No quote captured',
                                 confidence: result.confidence,
                                 timestamp: new Date()
                             });
                         } else {
+                            // Count the outcomes that indicate a possible recall problem
+                            // rather than a genuine non-match, so they are measurable
+                            // instead of being visible only as a log line.
+                            if (result.needsReview || result.stage === 'weak-evidence') {
+                                weakEvidenceCount++;
+                                logger.warn(`⚠️ NEEDS REVIEW: ${document.fileName} - AI matched ${job.documentType} but evidence validation failed`);
+                            } else if (result.stage === 'fi-response-veto') {
+                                vetoedDocuments++;
+                            } else if (UNRESOLVED_STAGES.includes(result.stage)) {
+                                unresolvedCount++;
+                            }
                             logger.info(`❌ No match: ${document.fileName} (stage: ${result.stage})`);
                         }
 
@@ -621,8 +697,41 @@ class ScanJobProcessor {
         }
         logger.info(`   Eligible documents scanned: ${eligibleDocuments}`);
         logger.info(`   Documents actually processed: ${totalProcessed}`);
+        if (resumeSkipped > 0) {
+            logger.info(`   Skipped as already processed before resume: ${resumeSkipped}`);
+        }
         logger.info(`   FI matches found: ${totalMatchesFound}`);
+        if (vetoedDocuments > 0) {
+            logger.info(`   Response documents (project vetoed): ${vetoedDocuments}`);
+        }
+        if (weakEvidenceCount > 0) {
+            logger.warn(`   ⚠️ AI matched but evidence failed (needs review): ${weakEvidenceCount}`);
+        }
+        if (unresolvedCount > 0) {
+            const pct = totalProcessed > 0 ? ((unresolvedCount / totalProcessed) * 100).toFixed(1) : '0.0';
+            logger.warn(`   ⚠️ Could not be judged (parse/OCR/timeout/API failure): ${unresolvedCount} (${pct}% of processed)`);
+        }
         logger.info(`✅ Job ${job.jobId} complete: ${totalMatchesFound} matches from ${totalProcessed}/${eligibleDocuments} eligible documents`);
+
+        // A large unresolved fraction means the day's coverage is not what the counts
+        // suggest - these documents were never actually assessed.
+        if (totalProcessed > 0 && unresolvedCount / totalProcessed > 0.2) {
+            logger.error(
+                `🚨 Job ${job.jobId}: ${unresolvedCount}/${totalProcessed} documents could not be assessed. ` +
+                `Match count for this day is not trustworthy.`
+            );
+        }
+
+        // A resume that processes nothing means the checkpoint was past the end of the
+        // stream - the window moved, or the remaining keys are gone. Say so loudly: this
+        // previously looked like a clean scan of a day that had no FI requests in it.
+        if (isResuming && totalProcessed === 0 && eligibleDocuments > 0) {
+            logger.error(
+                `🚨 Job ${job.jobId} resumed and processed 0 of ${eligibleDocuments} eligible documents ` +
+                `(${resumeSkipped} skipped past checkpoint "${resumePath || resumeFile}"). ` +
+                `The stored results for this day are incomplete and the day should be rescanned.`
+            );
+        }
 
         // Print validation quotes for any remaining matches (only those since last checkpoint)
         if (matches.length > 0) {
@@ -812,6 +921,34 @@ class ScanJobProcessor {
 
     async processDocumentInternal(document, job, fileName, documentType) {
         try {
+            // VETO CHECK (filename): a response document suppresses the whole project for
+            // this report type. Done before the download so a known response costs nothing.
+            //
+            // Only decisive verdicts act here. A filename that merely looks like a
+            // deliverable is tentative and needs the content to confirm it, because
+            // councils name their own consultee reports the same way.
+            const filenameVerdict = fiDetectionService.classifyFIResponseByFilename(
+                fileName,
+                normalizeReportType(documentType)
+            );
+            if (filenameVerdict && !filenameVerdict.tentative) {
+                await this.recordProjectVeto({
+                    projectId: document.projectId,
+                    reportType: documentType,
+                    jobId: job.jobId,
+                    fileName,
+                    filePath: document.filePath,
+                    ...filenameVerdict
+                });
+                return {
+                    isMatch: false,
+                    stage: 'fi-response-veto',
+                    confidence: 0,
+                    reasoning: filenameVerdict.reason,
+                    vetoedProject: true
+                };
+            }
+
             // Download and extract text from the document
             const s3Key = document.filePath;
             let documentText = '';
@@ -957,29 +1094,51 @@ class ScanJobProcessor {
             // LAYER 1: Fast structural rejection (no AI cost)
             const filenameLower = fileName.toLowerCase();
 
-            // 1a. Filename rejection - responses/submissions
-            const fiResponseIndicators = [
-                'fi_received',
-                'f.i._received',
-                'fi received',
-                'response to fi',
-                'fi response',
-                'submitted',
+            // 1a. VETO CHECK (content): the target report has already been commissioned,
+            // submitted or reviewed, so the project is no longer a lead for this type.
+            // Runs before the AI layers - a response must never reach the customer, and
+            // the AI reads the request text quoted inside it as a request.
+            const responseVerdict = await fiDetectionService.classifyFIResponse(
+                documentText,
+                fileName,
+                normalizeReportType(documentType)
+            );
+            if (responseVerdict.isResponse) {
+                await this.recordProjectVeto({
+                    projectId: document.projectId,
+                    reportType: documentType,
+                    jobId: job.jobId,
+                    fileName,
+                    filePath: document.filePath,
+                    ...responseVerdict
+                });
+                return {
+                    isMatch: false,
+                    stage: 'fi-response-veto',
+                    confidence: 0,
+                    reasoning: responseVerdict.reason,
+                    vetoedProject: true
+                };
+            }
+
+            // 1b. Decision notices - the application is past the FI stage. Rejects the
+            // document only; it does not veto the project.
+            const decisionIndicators = [
                 'final grant',
                 'decision notification',
                 'grant permission'
             ];
 
-            if (fiResponseIndicators.some(indicator => filenameLower.includes(indicator))) {
+            if (decisionIndicators.some(indicator => filenameLower.includes(indicator))) {
                 return {
                     isMatch: false,
                     stage: 'filename-reject',
                     confidence: 0,
-                    reasoning: 'Filename indicates response/decision document, not FI request'
+                    reasoning: 'Filename indicates a decision document, not an FI request'
                 };
             }
 
-            // 1b. Document length rejection - reports are typically >100 pages
+            // 1c. Document length rejection - reports are typically >100 pages
             // FI request letters are usually 2-5 pages
             const estimatedPages = Math.ceil(documentText.length / 2500); // ~2500 chars per page
             if (estimatedPages > 100) {
@@ -992,7 +1151,7 @@ class ScanJobProcessor {
                 };
             }
 
-            // 1c. Report structure markers - consultant reports have specific formatting
+            // 1d. Report structure markers - consultant reports have specific formatting
             const reportStructureMarkers = [
                 /table of contents/i,
                 /executive summary/i,
@@ -1303,7 +1462,7 @@ class ScanJobProcessor {
                 let emailError = null;
 
                 try {
-                    await emailService.sendBatchFINotification(
+                    const sendResult = await emailService.sendBatchFINotification(
                         customerData.email,
                         customerData.name,
                         {
@@ -1314,13 +1473,28 @@ class ScanJobProcessor {
                         }
                     );
 
-                    emailsSent++;
-                    emailStatus = 'SENT';
-                    logger.info(`✉️ Sent batch email to ${customerData.email} (${customerData.matches.length} matches)`);
+                    // sendBatchFINotification returns {skipped:true} when every match was
+                    // filtered out at send time. That used to be counted as a send and
+                    // written to FIReport as SENT, so a report nobody received looked
+                    // delivered in the UI and in the stats.
+                    if (sendResult?.skipped) {
+                        emailStatus = 'SKIPPED';
+                        logger.warn(
+                            `⏭️ No email sent to ${customerData.email} - ${sendResult.reason || 'all matches filtered at send time'} ` +
+                            `(${customerData.matches.length} match(es) discarded)`
+                        );
+                    } else {
+                        emailsSent++;
+                        emailStatus = 'SENT';
+                        logger.info(`✉️ Sent batch email to ${customerData.email} (${customerData.matches.length} matches)`);
+                    }
 
-                    // Update Customer record with email statistics
+                    // Update Customer record with email statistics - only when an email
+                    // actually went out.
                     try {
-                        const customerRecord = await Customer.findById(customerData.customerId);
+                        const customerRecord = emailStatus === 'SENT'
+                            ? await Customer.findById(customerData.customerId)
+                            : null;
                         if (customerRecord) {
                             await customerRecord.recordEmailSent();
                             logger.info(`📈 Updated email stats for customer ${customerData.email}`);
@@ -1667,6 +1841,28 @@ class ScanJobProcessor {
             const scanDateNormalized = new Date(scanDate);
             scanDateNormalized.setHours(0, 0, 0, 0);
 
+            // Merge rather than replace.
+            //
+            // This upsert used to overwrite `matches` wholesale, so any re-run for a day
+            // already scanned - a restart triggers one - replaced a complete result with
+            // whatever the new pass happened to find, and reset `delivered`. Union the
+            // two sets on projectId::fileName so a partial re-run can only ever add.
+            const existing = await ScanJobDailyResult.findOne({
+                jobId: job.jobId,
+                scanDate: scanDateNormalized
+            }).lean();
+
+            const mergedMatches = [];
+            const seen = new Set();
+            for (const match of [...(existing?.matches || []), ...matches]) {
+                const key = `${match.projectId}::${match.fileName}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                mergedMatches.push(match);
+            }
+
+            const addedCount = mergedMatches.length - (existing?.matches?.length || 0);
+
             await ScanJobDailyResult.findOneAndUpdate(
                 { jobId: job.jobId, scanDate: scanDateNormalized },
                 {
@@ -1674,20 +1870,202 @@ class ScanJobProcessor {
                     scanDate: scanDateNormalized,
                     scanStartDate,
                     scanEndDate,
-                    matches,
-                    processedCount,
-                    eligibleCount,
-                    skippedBaseline,
-                    baselinedProjects,
-                    delivered: false
+                    matches: mergedMatches,
+                    // Counts reflect the most complete pass, not the latest one.
+                    processedCount: Math.max(processedCount || 0, existing?.processedCount || 0),
+                    eligibleCount: Math.max(eligibleCount || 0, existing?.eligibleCount || 0),
+                    skippedBaseline: Math.max(skippedBaseline || 0, existing?.skippedBaseline || 0),
+                    baselinedProjects: Math.max(baselinedProjects || 0, existing?.baselinedProjects || 0),
+                    // Never un-deliver a day that has already gone out.
+                    delivered: existing?.delivered || false
                 },
                 { upsert: true, new: true, setDefaultsOnInsert: true }
             );
 
-            logger.info(`💾 Daily result saved for job ${job.jobId} on ${scanDateNormalized.toISOString().split('T')[0]}: ${matches.length} matches`);
+            if (existing) {
+                logger.info(
+                    `💾 Daily result merged for job ${job.jobId} on ${scanDateNormalized.toISOString().split('T')[0]}: ` +
+                    `${existing.matches?.length || 0} existing + ${matches.length} from this pass = ${mergedMatches.length} (${addedCount} new)`
+                );
+            } else {
+                logger.info(`💾 Daily result saved for job ${job.jobId} on ${scanDateNormalized.toISOString().split('T')[0]}: ${mergedMatches.length} matches`);
+            }
         } catch (error) {
             logger.error(`❌ Failed to save daily scan result for job ${job.jobId}:`, error);
             throw error;
+        }
+    }
+
+    /**
+     * Collapse matches to one per project and report type, choosing the strongest.
+     *
+     * Councils routinely republish the same FI text across several documents - project
+     * 408961 produced three, whose quotes differed only by OCR noise ("c ontrol" vs
+     * "control"). Previously emailService kept the first by array order while the stored
+     * FIReport kept all of them, so the email, the UI and the audit export disagreed
+     * about the same project.
+     */
+    selectBestMatchPerProject(matches, defaultReportType) {
+        const best = new Map();
+
+        for (const match of matches) {
+            const type = normalizeReportType(match.fiType || defaultReportType);
+            const key = `${match.projectId}::${type}`;
+            const current = best.get(key);
+
+            if (!current || this.scoreMatchEvidence(match, type) > this.scoreMatchEvidence(current, type)) {
+                best.set(key, match);
+            }
+        }
+
+        const selected = [...best.values()];
+        if (selected.length < matches.length) {
+            logger.info(`🧹 Collapsed ${matches.length} match(es) to ${selected.length} unique project/report-type row(s)`);
+        }
+        return selected;
+    }
+
+    /**
+     * Rank a match by how good its evidence is. Higher wins.
+     *
+     * Order of preference: a quote showing an explicit request for the report type, then
+     * one merely mentioning it, then stated confidence, then the earliest sighting so a
+     * repeat of the same request does not displace the original.
+     */
+    scoreMatchEvidence(match, reportType) {
+        const quote = String(match.validationQuote || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+        if (!quote || PLACEHOLDER_QUOTES.some(p => quote.includes(p.toLowerCase()))) {
+            return 0;
+        }
+
+        const mentionsType = getQuoteTerms(reportType).some(term => quote.includes(term));
+        const hasRequestVerb = REQUEST_VERBS.some(verb => quote.includes(verb));
+
+        let score = 1;
+        if (mentionsType) score += 2;
+        if (mentionsType && hasRequestVerb) score += 3;
+        score += Math.min(Number(match.confidence) || 0, 1);
+
+        // Prefer a fuller quote, but only as a tie-breaker - cap the contribution well
+        // below a single evidence step so length can never outrank real evidence.
+        score += Math.min(quote.length / 4000, 0.4);
+
+        // Earliest wins on an exact tie.
+        const ts = match.timestamp ? new Date(match.timestamp).getTime() : Number.MAX_SAFE_INTEGER;
+        score -= Math.min(ts / 1e15, 0.01);
+
+        return score;
+    }
+
+    /**
+     * Record that a project must never be delivered for a report type, because one of
+     * its documents responds to - rather than requests - that report.
+     *
+     * Upserted, so the first observation wins and repeat sightings are cheap. Failures
+     * are logged but never thrown: a veto that cannot be written must not abort a scan.
+     */
+    async recordProjectVeto({ projectId, reportType, jobId, fileName, filePath, source, reason, quote }) {
+        if (!projectId) return;
+
+        const canonicalType = normalizeReportType(reportType);
+        try {
+            const result = await ProjectReportVeto.findOneAndUpdate(
+                { projectId, reportType: canonicalType },
+                {
+                    $setOnInsert: {
+                        projectId,
+                        reportType: canonicalType,
+                        source,
+                        reason,
+                        evidenceFileName: fileName,
+                        evidenceFilePath: filePath,
+                        evidenceQuote: (quote || '').slice(0, 1000),
+                        detectedAt: new Date(),
+                        detectedByJobId: jobId
+                    }
+                },
+                { upsert: true, new: false }
+            );
+
+            if (!result) {
+                logger.info(`🚫 Vetoed project ${projectId} for ${canonicalType} via ${source}: ${reason} (${fileName})`);
+            }
+        } catch (error) {
+            logger.warn(`⚠️ Could not record veto for project ${projectId}/${canonicalType}: ${error.message}`);
+        }
+    }
+
+    /**
+     * Load the set of vetoed "projectId::reportType" keys for the given matches.
+     */
+    async loadVetoKeys(matches) {
+        const projectIds = [...new Set(matches.map(m => m.projectId).filter(Boolean))];
+        if (projectIds.length === 0) return new Set();
+
+        try {
+            const vetoes = await ProjectReportVeto.find({ projectId: { $in: projectIds } }).lean();
+            return new Set(vetoes.map(v => `${v.projectId}::${v.reportType}`));
+        } catch (error) {
+            // Fail open: if the veto store is unreadable we deliver as before rather
+            // than silently dropping every match.
+            logger.error(`❌ Could not load project vetoes, delivering unfiltered: ${error.message}`);
+            return new Set();
+        }
+    }
+
+    /**
+     * Scan the rest of each candidate project's documents for a response that was never
+     * seen by a daily scan.
+     *
+     * Needed because a scan only ever looks at one day of documents, while the response
+     * typically arrives well after the request - 28 days later for project 384778. Only
+     * the filename layer is used here: it needs no download, so the sweep stays cheap
+     * even for projects with hundreds of documents.
+     */
+    async sweepProjectsForResponses(projectIds, reportType) {
+        const canonicalType = normalizeReportType(reportType);
+        let vetoed = 0;
+
+        // Skip projects already vetoed - the verdict is permanent, so re-listing their
+        // S3 prefix every delivery run would be pure waste.
+        let alreadyVetoed = new Set();
+        try {
+            const existing = await ProjectReportVeto
+                .find({ projectId: { $in: projectIds }, reportType: canonicalType })
+                .select('projectId')
+                .lean();
+            alreadyVetoed = new Set(existing.map(v => v.projectId));
+        } catch (error) {
+            logger.warn(`⚠️ Could not read existing vetoes before sweep: ${error.message}`);
+        }
+
+        for (const projectId of projectIds) {
+            if (alreadyVetoed.has(projectId)) continue;
+
+            try {
+                const docs = await s3Service.listPlanningDocsProject(projectId);
+                for (const doc of docs) {
+                    const verdict = fiDetectionService.classifyFIResponseByFilename(doc.fileName, canonicalType);
+                    if (verdict) {
+                        await this.recordProjectVeto({
+                            projectId,
+                            reportType: canonicalType,
+                            fileName: doc.fileName,
+                            filePath: doc.key,
+                            ...verdict
+                        });
+                        vetoed++;
+                        break;
+                    }
+                }
+            } catch (error) {
+                logger.warn(`⚠️ Response sweep failed for project ${projectId}: ${error.message}`);
+            }
+        }
+
+        if (vetoed > 0) {
+            logger.info(`🚫 Response sweep vetoed ${vetoed} project(s) for ${canonicalType}`);
         }
     }
 
@@ -1805,8 +2183,68 @@ class ScanJobProcessor {
                 logger.info(`🔁 Retrying ${pendingDocs.length} pending match(es) with previously unavailable metadata for job ${job.jobId}`);
             }
 
+            // PROJECT VETO - the authoritative gate.
+            //
+            // A response for this report type suppresses the entire project: the report
+            // has already been commissioned or produced, so the lead is dead. Enforced
+            // here rather than only at scan time because a veto recorded on any earlier
+            // day must still suppress a request found today.
+            //
+            // The sweep first looks for response documents that no daily scan ever saw,
+            // since a scan only covers a single day's uploads.
+            const candidateProjectIds = [...new Set(allMatches.map(m => m.projectId).filter(Boolean))];
+            await this.sweepProjectsForResponses(candidateProjectIds, job.documentType);
+
+            const vetoKeys = await this.loadVetoKeys(allMatches);
+            const survivingMatches = [];
+            const vetoedProjects = new Set();
+
+            for (const match of allMatches) {
+                const matchType = normalizeReportType(match.fiType || job.documentType);
+                if (vetoKeys.has(`${match.projectId}::${matchType}`)) {
+                    vetoedProjects.add(match.projectId);
+                    continue;
+                }
+                survivingMatches.push(match);
+            }
+
+            if (vetoedProjects.size > 0) {
+                logger.info(
+                    `🚫 Suppressed ${allMatches.length - survivingMatches.length} match(es) across ` +
+                    `${vetoedProjects.size} vetoed project(s) for job ${job.jobId}: ${[...vetoedProjects].join(', ')}`
+                );
+
+                // Close out any held matches for these projects. They can never be
+                // delivered now, and left PENDING they would be reloaded and re-dropped
+                // on every future delivery run.
+                try {
+                    const closed = await PendingMetadataMatch.updateMany(
+                        { jobId: job.jobId, projectId: { $in: [...vetoedProjects] }, status: 'PENDING' },
+                        { $set: { status: 'EXPIRED', lastAttemptAt: new Date() } }
+                    );
+                    if (closed.modifiedCount > 0) {
+                        logger.info(`🚫 Expired ${closed.modifiedCount} pending match(es) belonging to vetoed projects`);
+                    }
+                } catch (error) {
+                    logger.warn(`⚠️ Could not expire pending matches for vetoed projects: ${error.message}`);
+                }
+            }
+
+            if (survivingMatches.length === 0) {
+                logger.info(`📭 No deliverable matches remain for job ${job.jobId} after project vetoes`);
+                await ScanJobDailyResult.updateMany(
+                    { jobId: job.jobId, scanDate: { $gte: windowStart, $lte: windowEnd } },
+                    { $set: { delivered: true, deliveredAt: new Date() } }
+                );
+                return;
+            }
+
+            // Collapse to one row per project so the email, the stored FIReport and the
+            // audit export all describe the same document.
+            const dedupedMatches = this.selectBestMatchPerProject(survivingMatches, job.documentType);
+
             // Partition once at project level: deliverable vs held (no metadata yet)
-            const { deliverable, held, metadataMap } = await this.partitionMatchesByMetadata(allMatches);
+            const { deliverable, held, metadataMap } = await this.partitionMatchesByMetadata(dedupedMatches);
 
             // Persist held matches BEFORE emailing (crash-safe)
             const now = new Date();

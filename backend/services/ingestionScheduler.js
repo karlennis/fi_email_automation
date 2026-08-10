@@ -97,7 +97,9 @@ class IngestionScheduler {
         for (const result of results.projectResults) {
           if (result.errors && result.errors.length === 0) {
             try {
-              await documentIngestionService.cleanupFilterDocs(result.projectId);
+              // Pass the keys this run actually routed so files the scraper added
+              // mid-run survive for the next pass instead of being deleted unrouted.
+              await documentIngestionService.cleanupFilterDocs(result.projectId, result.handledKeys || []);
               cleanedUp++;
             } catch (error) {
               logger.warn(`Failed to clean up filter-docs for ${result.projectId}:`, error.message);

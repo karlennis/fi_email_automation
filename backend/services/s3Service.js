@@ -1029,6 +1029,9 @@ class S3Service {
           key: obj.Key,
           fileName: path.basename(obj.Key),
           size: obj.Size,
+          // Quoted MD5 for single-part uploads; used to tell a re-issued document
+          // apart from one that merely reuses a filename.
+          etag: obj.ETag ? obj.ETag.replace(/"/g, '') : null,
           lastModified: obj.LastModified,
           projectId: projectId
         }));
@@ -1071,6 +1074,9 @@ class S3Service {
           key: obj.Key,
           fileName: path.basename(obj.Key),
           size: obj.Size,
+          // Quoted MD5 for single-part uploads; used to tell a re-issued document
+          // apart from one that merely reuses a filename.
+          etag: obj.ETag ? obj.ETag.replace(/"/g, '') : null,
           lastModified: obj.LastModified,
           projectId: projectId
         }));

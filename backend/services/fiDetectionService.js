@@ -21,6 +21,242 @@ const logger = winston.createLogger({
 // Import FI Report Service for saving results
 const fiReportService = require('./fiReportService');
 const Customer = require('../models/Customer');
+const {
+  normalizeReportType,
+  getDocumentTerms,
+  getQuoteTerms,
+  getFilenameTerms
+} = require('./reportTypes');
+const { runFunctionChat } = require('./openaiChat');
+
+/**
+ * How far from a report-type term a contextual marker must sit to count, in characters.
+ * Roughly a sentence either side.
+ */
+const REPORT_TYPE_PROXIMITY_WINDOW = 200;
+
+
+/**
+ * Phrases that identify a document as a response, a decision, or a consultant's own
+ * report regardless of where they appear. These are safe to match against the whole
+ * document because they cannot plausibly occur in an authority's request for information.
+ */
+const HARD_RESPONSE_MARKERS = [
+  // Explicit responses to an FI request
+  'response to further information',
+  'in response to your request for further information',
+  'following your request for further information',
+  'in response to your request',
+  'in response to the request',
+  'this report responds to',
+  'responds to items relating to',
+
+  // FI already received / fulfilled
+  'the further information received',
+  'further information has been received',
+  'fi received', 'f.i. received',
+  'we have submitted the following',
+  'enclosed please find the requested',
+  'attached herewith the further information',
+
+  // Decision notices - the application is past the FI stage
+  'permission is hereby granted',
+  'it is proposed to grant permission',
+  'decision to grant permission',
+  'it is proposed to refuse permission',
+  'decision to refuse permission',
+  'we will condition', 'this will be conditioned',
+
+  // The document is itself a commissioned consultant report
+  'were engaged to undertake',
+  'were engaged by',
+  'have been engaged by',
+  'commissioned to undertake',
+  'this report has been prepared by'
+];
+
+/**
+ * Phrases that only indicate a response when they refer to the report type in question.
+ * "has been submitted" is meaningless on its own - a planning application, a drawing or
+ * a fee can all have "been submitted" inside a genuine FI request. It only matters when
+ * it is the target report that was submitted, so these are matched within
+ * REPORT_TYPE_PROXIMITY_WINDOW characters of a report-type term.
+ */
+const CONTEXTUAL_RESPONSE_MARKERS = [
+  // The target report already exists
+  'has been submitted', 'was submitted', 'have been submitted',
+  'has reviewed the submitted', 'reviewed the submitted', 'the submitted',
+  'has received and reviewed', 'received and reviewed the',
+  // A consultee commenting on a named report that already exists, e.g. project 401040:
+  // "Lester Acoustics, MRL/1773/L01 ... the environmental health department have had the
+  // chance to review the document referred to above"
+  'had the chance to review', 'chance to review the document',
+  'reviewed the document', 'review the document referred to',
+  'environmental health service has received',
+  'environmental health has reviewed',
+  'report shows', 'report indicates', 'report concludes', 'report demonstrates',
+
+  // The applicant has already produced or commissioned it
+  'has provided', 'have provided',
+  'has appointed', 'have appointed',
+  'proposes to submit', 'propose to submit',
+  'await submission of', 'awaiting submission of',
+
+  // Covering language for an enclosed submission
+  'please find enclosed', 'please find attached',
+  'enclosed please find', 'attached please find',
+  'acknowledge receipt', 'acknowledges receipt'
+];
+
+/**
+ * Deliberately NOT rejected any more. These were previously matched with
+ * String.includes over the entire document, which discarded any genuine FI request
+ * letter that happened to be signed off politely or sent as an email:
+ *
+ *   "good morning" / "good afternoon" / "good evening"
+ *   "kind regards" / "best regards"
+ *   "happy to discuss" / "please let me know"
+ *   "waiting until" / "waiting to" / "can we please agree"
+ *   "receipt of this application"
+ *
+ * A council officer writing "Kind regards" at the bottom of a request to submit a noise
+ * assessment says nothing about whether the document is a request. Signals like these are
+ * informative but not decisive, so they belong in the model prompt, not in a hard pre-AI
+ * gate. Downstream validation (detectFIRequest, matchFIRequestType, extractValidationQuote,
+ * isValidCustomerEvidence and the project-level response veto) carries the precision load.
+ */
+
+/**
+ * Filename patterns identifying an FI response, matched against the filename with all
+ * non-alphanumerics stripped.
+ *
+ * Separator-free matching is essential: the production false positives were
+ * "…noiseimpactassessmentfiresponse.pdf" and "25-163firesponseletter.pdf", which the
+ * hyphen/underscore patterns in shouldRejectByFilename do not match.
+ */
+const FI_RESPONSE_FILENAME_PATTERNS = [
+  'firesponse', 'rfiresponse', 'responsetofi', 'responsetorfi',
+  'furtherinformationresponse', 'responsetofurther', 'responsetorequest',
+  'fireturn', 'fireply', 'fisubmission', 'fisubmitted',
+  'fireceived', 'furtherinformationreceived',
+  'applicantresponse', 'agentresponse',
+  'substantivereply', 'finalreply', 'finalresponse'
+];
+
+/**
+ * Filename patterns that positively identify a REQUEST. These exempt a file from the
+ * "names the report type plus a report noun" heuristic below, so that a genuine
+ * "Further-Information-Request.pdf" naming the report it asks for is not mistaken for
+ * the report itself.
+ */
+const FI_REQUEST_FILENAME_PATTERNS = [
+  'firequest', 'furtherinformationrequest', 'requestforfurtherinformation',
+  'rfirequest', 'additionalinformationrequest', 'requestforinformation',
+  // Further Environmental Information, used for EIA-scale applications (project 307302)
+  'feirequest', 'furtherenvironmentalinformationrequest'
+];
+
+/** Nouns indicating the document is a deliverable rather than correspondence about one. */
+const REPORT_NOUN_PATTERNS = [
+  'report', 'assessment', 'survey', 'study', 'statement', 'appraisal', 'audit'
+];
+
+/**
+ * Language showing the authority or a consultee is ASKING for the report.
+ *
+ * Used to overturn the filename-deliverable heuristic. Irish councils publish internal
+ * consultee reports under names like "FW25A.0216E_Air_and_Noise_Report.pdf" that read as
+ * deliverables but actually contain the request - project 383115 is exactly that:
+ * "the following additional information should be requested from the applicant: 1. a
+ * noise impact assessment (NIA) shall be carried out by the applicant".
+ *
+ * "has not submitted" belongs here rather than among the response markers: a report
+ * noted as missing is the clearest possible sign the lead is still live.
+ */
+const REQUEST_LANGUAGE_MARKERS = [
+  'is requested to', 'are requested to', 'is required to', 'are required to',
+  'should be requested', 'should be submitted', 'should be provided',
+  'should be carried out', 'should be undertaken', 'should submit', 'should provide',
+  'shall be carried out', 'shall be submitted', 'shall submit', 'shall provide',
+  'shall complete', 'shall carry out', 'shall undertake',
+  'must submit', 'must provide', 'please submit', 'please provide',
+  'would recommend', 'we recommend', 'recommends that', 'recommend that',
+  'recommends the applicant', 'recommend the applicant',
+  'is invited to', 'further information is required',
+  'has not submitted', 'have not submitted', 'not been submitted',
+  'is necessary to submit',
+  'provide details of', 'submit details of'
+];
+
+/**
+ * Request phrases unambiguous enough to trust anywhere in the document.
+ *
+ * Matched against the whitespace-stripped text, so OCR word splits do not hide them -
+ * project 389452 reads "the air and noise unit recommend s that the following additional
+ * information be requested from the applicant", which is plainly a request but which
+ * literal, sentence-scoped matching missed on both counts.
+ *
+ * Deliberately present/imperative tense only. Past-tense forms like "was requested to
+ * provide" are how a RESPONSE quotes the request it is answering, and must not appear
+ * here or every response would exempt itself.
+ */
+const STRONG_REQUEST_MARKERS = [
+  'is requested to', 'are requested to',
+  'should be requested from', 'information be requested',
+  'recommends that the following', 'recommend that the following',
+  'is required to submit', 'is required to provide',
+  'further information is requested'
+];
+
+const SENTENCE_BOUNDARY = /[.!?\n;]/;
+
+/**
+ * Widen an index to the sentence containing it, then clamp to +/- window characters.
+ *
+ * The clamp matters because OCR'd planning documents frequently lose their punctuation,
+ * producing "sentences" thousands of characters long; without it a marker at one end of
+ * such a block would match a report-type term at the other.
+ */
+function scopeAroundIndex(lowerText, idx, markerLength, window) {
+  let start = idx;
+  while (start > 0 && !SENTENCE_BOUNDARY.test(lowerText[start - 1])) start--;
+
+  let end = idx + markerLength;
+  while (end < lowerText.length && !SENTENCE_BOUNDARY.test(lowerText[end])) end++;
+
+  return {
+    from: Math.max(start, idx - window),
+    to: Math.min(end, idx + markerLength + window)
+  };
+}
+
+/**
+ * Find a marker that refers to the target report type - that is, one sharing a sentence
+ * with a report-type term, within REPORT_TYPE_PROXIMITY_WINDOW characters.
+ *
+ * Scoping to the sentence is what separates "The site layout plan has been submitted.
+ * The applicant is requested to carry out a noise assessment" (a genuine request) from
+ * "The applicant has provided a noise impact assessment" (already satisfied).
+ *
+ * Returns { marker, excerpt } for logging, or null.
+ */
+function findMarkerNearReportType(lowerText, markers, targetReportType, window = REPORT_TYPE_PROXIMITY_WINDOW) {
+  const terms = getQuoteTerms(targetReportType);
+  if (terms.length === 0) return null;
+
+  for (const marker of markers) {
+    let idx = lowerText.indexOf(marker);
+    while (idx !== -1) {
+      const { from, to } = scopeAroundIndex(lowerText, idx, marker.length, window);
+      const scope = lowerText.slice(from, to);
+      if (terms.some(term => scope.includes(term))) {
+        return { marker, excerpt: scope.trim() };
+      }
+      idx = lowerText.indexOf(marker, idx + marker.length);
+    }
+  }
+  return null;
+}
 
 class FIDetectionService {
   constructor() {
@@ -35,7 +271,9 @@ class FIDetectionService {
       ocrTimeout: 1000,
       maxTextChars: 10000,
       maxMsgChars: 32000,
-      model: "gpt-4o-mini",
+      // Overridable so detection quality can be evaluated against a stronger
+      // model without a code change. Default preserves existing behaviour.
+      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
       temperature: 0.0,
       topP: 0.0,
       maxRetries: 6,
@@ -303,6 +541,55 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
     };
   }
 
+  get FI_RESPONSE_FUNCTION() {
+    return {
+      name: "classify_fi_response",
+      parameters: {
+        type: "object",
+        properties: {
+          isResponse: { type: "boolean" },
+          reason: { type: "string" },
+          quote: { type: "string" }
+        },
+        required: ["isResponse"]
+      }
+    };
+  }
+
+  get SYSTEM_FI_RESPONSE_CLASSIFY() {
+    return `You decide whether a planning document shows that a report of a given type has ALREADY been commissioned, submitted, or reviewed - as opposed to being requested.
+
+This determines whether a sales lead is still live. If the report already exists or is already being produced, the opportunity is gone.
+
+Answer isResponse=TRUE if ANY of these are true for the TARGET REPORT TYPE:
+- The document IS the report, or is a cover note accompanying it
+  ("this report responds to items relating to noise within the request for further information")
+- A consultant has been engaged, appointed or commissioned to produce it
+  ("Wave Dynamics have been engaged by ... to undertake a noise impact assessment")
+- The applicant has already provided, submitted or enclosed it
+  ("the applicant has provided a noise impact assessment")
+- The applicant states they intend to submit it, or has appointed someone to prepare it
+  ("the applicant proposes to submit a noise impact assessment",
+   "the applicant has appointed an acoustic consultant")
+- A consultee is reviewing, has reviewed, or is awaiting a report already in train
+  ("Environmental Health has reviewed the submitted noise assessment",
+   "Environmental Health await submission of an acoustic report")
+- The document responds to, or quotes and then answers, an earlier FI request
+
+Answer isResponse=FALSE if:
+- The authority or a consultee is ASKING for the report, in any form, including
+  recommendations ("would recommend the applicant submits a noise impact assessment")
+- The report type is merely mentioned, discussed, or referenced in policy
+- The document concerns a DIFFERENT report type than the target
+  (a transport response says nothing about an acoustic request)
+- You are unsure
+
+Be conservative: only answer TRUE on clear evidence about the TARGET report type.
+A false TRUE suppresses a genuine lead permanently.
+
+Provide the exact sentence supporting your answer in "quote".`;
+  }
+
   get EXTRACTION_FUNCTION() {
     return {
       name: "extract_fi_request",
@@ -326,44 +613,18 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
    * Robust OpenAI API call with retries - from your RAG pipeline
    */
   async runChat(messages, functions, functionName, maxAttempts = this.MAX_RETRIES) {
-    // Ensure plain-string content & length clamp
-    const safeMessages = messages.map(m => ({
-      ...m,
-      content: String(m.content || '').slice(0, this.MAX_MSG_CHARS)
-    }));
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        const response = await this.client.chat.completions.create({
-          model: this.MODEL,
-          temperature: this.TEMPERATURE,
-          top_p: this.TOP_P,
-          messages: safeMessages,
-          functions: functions,
-          function_call: { name: functionName }
-        });
-
-        return JSON.parse(response.choices[0].message.function_call.arguments);
-
-      } catch (error) {
-        if (error.name === 'APITimeoutError' || error.code === 'ECONNRESET') {
-          const wait = 2.0 * (2 ** (attempt - 1)) + Math.random() * 0.3;
-          logger.warn(`${error.constructor.name} – retry ${attempt}/${maxAttempts} in ${wait.toFixed(1)}s`);
-          await new Promise(resolve => setTimeout(resolve, wait * 1000));
-          continue;
-        }
-
-        if (error instanceof SyntaxError && error.message.includes('JSON')) {
-          logger.warn(`JSON parse failed (${error.message}); retry ${attempt}/${maxAttempts}`);
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          continue;
-        }
-
-        throw error;
-      }
-    }
-
-    throw new Error(`runChat: giving up after ${maxAttempts} attempts on ${functionName}`);
+    return runFunctionChat({
+      client: this.client,
+      messages,
+      functions,
+      functionName,
+      model: this.MODEL,
+      temperature: this.TEMPERATURE,
+      topP: this.TOP_P,
+      maxMsgChars: this.MAX_MSG_CHARS,
+      maxAttempts,
+      logger
+    });
   }
 
   /**
@@ -535,19 +796,180 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
     if (!fileName || !targetReportType) return false;
 
     const filenameLower = fileName.toLowerCase();
-    const reportTypeIndicators = {
-      "acoustic": ["noise", "sound", "acoustic", "decibel", "audio", "vibration"],
-      "transport": ["traffic", "transport", "parking", "vehicle", "highway", "road", "mobility"],
-      "ecological": ["ecology", "ecological", "wildlife", "habitat", "species", "biodiversity", "environment"],
-      "flood": ["flood", "drainage", "water", "sewage", "storm", "surface water", "suds"],
-      "heritage": ["heritage", "archaeological", "historic", "conservation", "listed", "cultural"],
-      "arboricultural": ["tree", "arboricultural", "vegetation", "landscape", "planting", "forestry"],
-      "waste": ["waste", "refuse", "recycling", "disposal", "management", "bin"],
-      "lighting": ["lighting", "light", "illumination", "lumens", "lux", "lamp"]
-    };
+    return getFilenameTerms(targetReportType).some(indicator => filenameLower.includes(indicator));
+  }
 
-    const indicators = reportTypeIndicators[targetReportType.toLowerCase()] || [];
-    return indicators.some(indicator => filenameLower.includes(indicator));
+  /**
+   * Decide whether a document is a RESPONSE to an FI request for `targetReportType`,
+   * rather than a request for one.
+   *
+   * A positive verdict vetoes the whole project for that report type: once the report
+   * has been commissioned, submitted or reviewed, the project is no longer a lead. See
+   * models/ProjectReportVeto.
+   *
+   * Deterministic by default. `useAI` adds a confirmation call for documents that look
+   * ambiguous; it is off in the scan path because processDocument already spends two AI
+   * calls per document, and the deterministic layers below were built from - and are
+   * regression-tested against - the real production false positives.
+   *
+   * @returns {Promise<{isResponse: boolean, source?: string, reason?: string, quote?: string}>}
+   */
+  async classifyFIResponse(documentText, fileName, targetReportType, { useAI = false } = {}) {
+    const reportType = normalizeReportType(targetReportType);
+
+    // LAYER 1: filename. An explicit response name is decisive; a name that merely looks
+    // like a deliverable is only a hint, resolved against the content below.
+    const filenameVerdict = this.classifyFIResponseByFilename(fileName, reportType);
+    if (filenameVerdict && !filenameVerdict.tentative) return filenameVerdict;
+
+    if (!documentText) {
+        return filenameVerdict ? { ...filenameVerdict, tentative: undefined } : { isResponse: false };
+    }
+    const textLower = documentText.toLowerCase();
+    const despacedText = textLower.replace(/\s+/g, '');
+
+    // Does the document ask for the report? If so it is a request whatever it is called,
+    // and no amount of "already submitted" language elsewhere should suppress it.
+    //
+    // A filename that literally says "Request for Further Information" is itself evidence:
+    // project 418804 was vetoed on the phrase "the submitted environmental audit" despite
+    // being the authority's own request document.
+    const requestLanguage =
+      findMarkerNearReportType(textLower, REQUEST_LANGUAGE_MARKERS, reportType) ||
+      (STRONG_REQUEST_MARKERS.some(m => despacedText.includes(m.replace(/\s+/g, '')))
+        ? { marker: 'strong request phrase' }
+        : null) ||
+      (this.filenameIndicatesRequest(fileName) ? { marker: 'request filename' } : null);
+
+    if (filenameVerdict?.tentative) {
+      if (requestLanguage) {
+        // A council consultee report named like a deliverable, e.g. project 383115's
+        // "Air_and_Noise_Report.pdf" asking for an NIA. Still a live lead.
+        logger.info(`📄 ${fileName} looks like a deliverable but requests ${reportType} - not vetoing`);
+      } else {
+        return { ...filenameVerdict, tentative: undefined };
+      }
+    }
+
+    // LAYER 2a: unambiguous response/decision language anywhere in the document.
+    //
+    // Matched against the text with whitespace removed as well as the raw text, because
+    // OCR splits words unpredictably - project 403501 reads "this report respond s to",
+    // which no amount of literal phrase matching would catch.
+    const despaced = textLower.replace(/\s+/g, '');
+    const hardMarker = HARD_RESPONSE_MARKERS.find(marker =>
+      textLower.includes(marker) || despaced.includes(marker.replace(/\s+/g, ''))
+    );
+    if (hardMarker && !requestLanguage) {
+      return {
+        isResponse: true,
+        source: 'hard-marker',
+        reason: `Document contains response language: "${hardMarker}"`,
+        quote: this.excerptAround(documentText, textLower.indexOf(hardMarker), hardMarker.length)
+      };
+    }
+
+    // LAYER 2b: weaker language, but referring to the target report type
+    const contextual = findMarkerNearReportType(textLower, CONTEXTUAL_RESPONSE_MARKERS, reportType);
+    if (contextual && !requestLanguage) {
+      return {
+        isResponse: true,
+        source: 'contextual-marker',
+        reason: `The ${reportType} report appears already submitted or commissioned: "${contextual.marker}"`,
+        quote: contextual.excerpt.slice(0, 400)
+      };
+    }
+
+    // LAYER 3: optional AI confirmation
+    if (useAI) {
+      try {
+        const result = await this.runChat(
+          [
+            { role: 'system', content: this.SYSTEM_FI_RESPONSE_CLASSIFY },
+            { role: 'user', content: `Target report type: ${reportType}\n\nFile name: ${fileName || 'unknown'}\n\n${documentText}` }
+          ],
+          [this.FI_RESPONSE_FUNCTION],
+          'classify_fi_response'
+        );
+
+        if (result.isResponse) {
+          return {
+            isResponse: true,
+            source: 'ai',
+            reason: result.reason || `AI classified document as a ${reportType} response`,
+            quote: (result.quote || '').slice(0, 400)
+          };
+        }
+      } catch (error) {
+        // Fail open: an unavailable classifier must not silently suppress live leads.
+        logger.warn(`FI response classification failed for ${fileName}; treating as not-a-response: ${error.message}`);
+      }
+    }
+
+    return { isResponse: false };
+  }
+
+  /**
+   * Filename half of classifyFIResponse.
+   *
+   * Filenames are normalised to alphanumerics before matching because real filenames
+   * routinely carry no separators at all - the production false positives included
+   * "...noiseimpactassessmentfiresponse.pdf" and "25-163firesponseletter.pdf", neither of
+   * which matches the hyphen/underscore patterns in shouldRejectByFilename.
+   *
+   * @returns {null|{isResponse: true, source: string, reason: string}}
+   */
+  classifyFIResponseByFilename(fileName, targetReportType) {
+    if (!fileName) return null;
+
+    const compact = String(fileName).toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    const responsePattern = FI_RESPONSE_FILENAME_PATTERNS.find(p => compact.includes(p));
+    if (responsePattern) {
+      return {
+        isResponse: true,
+        source: 'filename',
+        reason: `Filename indicates an FI response: "${responsePattern}"`
+      };
+    }
+
+    // A filename naming the target report plus a report noun means the report itself,
+    // not a request for one - unless the name also says it is a request.
+    if (this.filenameIndicatesRequest(fileName)) return null;
+
+    const namesReportType = getFilenameTerms(targetReportType)
+      .map(t => t.replace(/[^a-z0-9]/g, ''))
+      .filter(Boolean)
+      .some(t => compact.includes(t));
+    const namesDeliverable = REPORT_NOUN_PATTERNS.some(n => compact.includes(n));
+
+    if (namesReportType && namesDeliverable) {
+      return {
+        isResponse: true,
+        source: 'filename',
+        reason: `Filename names a submitted ${targetReportType} deliverable`,
+        // Councils also name their own consultee reports this way, so this verdict
+        // stands only if the content does not request the report. See classifyFIResponse.
+        tentative: true
+      };
+    }
+
+    return null;
+  }
+
+  /** True when the filename itself declares the document to be a request. */
+  filenameIndicatesRequest(fileName) {
+    if (!fileName) return false;
+    const compact = String(fileName).toLowerCase().replace(/[^a-z0-9]/g, '');
+    return FI_REQUEST_FILENAME_PATTERNS.some(p => compact.includes(p));
+  }
+
+  /** Short excerpt around an index, for evidence in a veto record. */
+  excerptAround(text, idx, length, window = 180) {
+    if (idx < 0) return '';
+    const from = Math.max(0, idx - window);
+    const to = Math.min(text.length, idx + length + window);
+    return text.slice(from, to).replace(/\s+/g, ' ').trim();
   }
 
   /**
@@ -675,47 +1097,11 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
     }
 
     const keywordLower = keyword.toLowerCase();
-
-    // Report type keywords - includes abbreviations commonly used in planning documents
-    const relatedTerms = {
-      "acoustic": [
-        "noise", "sound", "decibel", "db", "vibration", "noise assessment", "sound level", "acoustic",
-        "noise impact", "nia", "nir", "bns", "background noise", "noise survey", "acoustic survey",
-        "sound insulation", "noise mitigation", "ambient noise", "plant noise"
-      ],
-      "transport": [
-        "traffic", "vehicle", "highway", "road", "parking", "transport assessment", "car park", "mobility", "transport",
-        "ta", "tia", "traffic impact", "travel plan", "tp", "access", "junction", "pedestrian", "cycle"
-      ],
-      "ecological": [
-        "ecology", "wildlife", "habitat", "species", "biodiversity", "environment", "ecological", "nature", "flora", "fauna",
-        "eia", "bng", "biodiversity net gain", "pea", "preliminary ecological", "bat survey", "bat", "newt", "dormouse",
-        "protected species", "nesting birds", "breeding birds"
-      ],
-      "flood": [
-        "drainage", "water", "sewage", "storm", "rainfall", "suds", "surface water", "attenuation", "flood",
-        "fra", "flood risk", "hydrology", "runoff", "soakaway", "infiltration", "watercourse", "pluvial"
-      ],
-      "heritage": [
-        "archaeological", "historic", "conservation", "listed", "cultural", "monument", "archaeology", "heritage",
-        "hia", "heritage impact", "wsi", "written scheme", "desk-based assessment", "dba", "historic environment"
-      ],
-      "arboricultural": [
-        "tree", "trees", "vegetation", "landscape", "planting", "hedge", "woodland", "green", "arboricultural",
-        "aia", "arboricultural impact", "tree survey", "root protection", "rpa", "tree protection"
-      ],
-      "waste": [
-        "waste", "refuse", "recycling", "bin", "storage", "collection", "disposal", "management plan",
-        "waste management", "skip", "compactor"
-      ],
-      "lighting": [
-        "lighting", "light", "illumination", "lumens", "lux", "lamp",
-        "light pollution", "spillage", "luminaire", "obtrusive light", "sky glow"
-      ]
-    };
+    const documentTerms = getDocumentTerms(keywordLower);
 
     // GATE 3: Report type keywords present
-    const hasReportTypeKeyword = relatedTerms[keywordLower]?.some(term => textLower.includes(term)) || textLower.includes(keywordLower);
+    const hasReportTypeKeyword = documentTerms.some(term => textLower.includes(term)) ||
+      textLower.includes(keywordLower);
     if (!hasReportTypeKeyword) {
       return false;
     }
@@ -731,7 +1117,7 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
       "best practicable means to prevent/minimise noise" // Actual sound reduction method, not request
     ];
 
-    if (keywordLower === "acoustic" || relatedTerms[keywordLower]?.includes("noise")) {
+    if (normalizeReportType(keywordLower) === "acoustic") {
       if (existingConstructionPlanPatterns.some(p => textLower.includes(p))) {
         return false;
       }
@@ -749,7 +1135,7 @@ Return JSON for match_fi_request – requestsReportType true/false.`;
       "clarification is required", "clarification is needed"
     ];
 
-    const reportTypeTerms = relatedTerms[keywordLower] || [keywordLower];
+    const reportTypeTerms = documentTerms;
     const sentences = this.splitIntoSentences(textLower);
 
     let foundSentenceMatch = false;
@@ -944,76 +1330,42 @@ Answer with just YES or NO.`;
    * Check if FI request matches target report type
    * Returns object with match result and validation quote
    * NOTE: Quick filter bypassed - AI handles all detection to reduce false negatives
-   * BUT negative indicators are still checked to reject obvious responses
+   * BUT response indicators are still checked to reject obvious responses.
+   *
+   * Consultation recommendations like "would recommend the applicant submits" are NOT
+   * rejected - they indicate future report needs and are valuable leads.
    */
   async matchFIRequestType(documentText, targetReportType) {
     try {
-      // GATE 1: Check for negative indicators (responses, not requests)
-      // CRITICAL: Only use phrases that are EXCLUSIVE to responses/reports
-      const negativeFIIndicators = [
-        // Response patterns
-        "response to further information",
-        "in response to your request for further information",
-        "following your request for further information",
-        "in response to your request",
-        "in response to the request",
-
-        // FI received/fulfilled patterns
-        "the further information received",
-        "further information has been received",
-        "fi received", "f.i. received",
-        "we have submitted the following",
-        "enclosed please find the requested",
-        "attached herewith the further information",
-        "enclosed please find", "attached please find",
-        "please find enclosed", "please find attached",
-
-        // Decision patterns
-        "permission is hereby granted",
-        "it is proposed to grant permission",
-        "decision to grant permission",
-        "it is proposed to refuse permission",
-        "decision to refuse permission",
-        "we will condition", "this will be conditioned",
-
-        // Consultant report indicators
-        "were engaged to undertake",
-        "were engaged by",
-        "commissioned to undertake",
-        "this report has been prepared by",
-
-        // Acknowledgment/receipt patterns
-        "acknowledge receipt", "acknowledges receipt",
-        "has reviewed the submitted", "reviewed the submitted",
-        "receipt of this application",
-
-        // Email/correspondence patterns
-        "good morning", "good afternoon", "good evening",
-        "kind regards", "best regards",
-        "happy to discuss", "please let me know",
-        "waiting until", "waiting to", "can we please agree",
-
-        // Submitted report discussion patterns (report ALREADY submitted - not a lead)
-        "the submitted acoustic", "submitted noise assessment",
-        "the acoustic report shows", "the noise report indicates",
-        "has been submitted", "was submitted",
-        "has received and reviewed", "received and reviewed the",
-        "environmental health service has received",
-        "environmental health has reviewed"
-
-        // NOTE: Consultation recommendations like "would recommend the applicant submits"
-        // are NOT rejected - they indicate future report needs (valuable leads)
-      ];
-
       const textLower = documentText.toLowerCase();
 
-      // Reject if contains negative indicators
-      if (negativeFIIndicators.some(indicator => textLower.includes(indicator))) {
+      // GATE 1a: unambiguous response/decision language, anywhere in the document.
+      const hardMarker = HARD_RESPONSE_MARKERS.find(marker => textLower.includes(marker));
+      if (hardMarker) {
         return {
           matches: false,
           validationQuote: 'Rejected: Document appears to be a response/decision, not a request',
           hasValidEvidence: false,
-          aiConfirmedMatchButWeakEvidence: false
+          aiConfirmedMatchButWeakEvidence: false,
+          rejectionReason: `hard response marker: "${hardMarker}"`
+        };
+      }
+
+      // GATE 1b: weaker markers count only when they refer to the target report type.
+      // Checking these against the whole document rejected genuine requests that merely
+      // mentioned some unrelated thing having "been submitted".
+      const contextualMarker = findMarkerNearReportType(
+        textLower,
+        CONTEXTUAL_RESPONSE_MARKERS,
+        targetReportType
+      );
+      if (contextualMarker) {
+        return {
+          matches: false,
+          validationQuote: 'Rejected: Target report appears to have already been submitted or commissioned',
+          hasValidEvidence: false,
+          aiConfirmedMatchButWeakEvidence: false,
+          rejectionReason: `contextual response marker near ${targetReportType}: "${contextualMarker.marker}"`
         };
       }
 
@@ -1036,16 +1388,7 @@ Answer with just YES or NO.`;
         // Sanity check: if quote exists, ensure it's about the right topic
         if (validationQuote && validationQuote !== 'No specific quote extracted' &&
             validationQuote !== 'Match confirmed by AI but no specific quote extracted') {
-          const reportTypeTerms = {
-            "acoustic": ["noise", "sound", "acoustic", "decibel", "db", "vibration"],
-            "transport": ["traffic", "vehicle", "highway", "road", "parking", "transport", "mobility"],
-            "ecological": ["ecology", "ecological", "habitat", "species", "biodiversity", "wildlife"],
-            "flood": ["flood", "drainage", "suds", "hydrology", "water", "surface water"],
-            "heritage": ["heritage", "archaeological", "historic", "conservation", "listed"],
-            "lighting": ["lighting", "light", "illumination", "luminaire", "lux"]
-          };
-
-          const terms = reportTypeTerms[targetReportType.toLowerCase()] || [targetReportType];
+          const terms = getQuoteTerms(targetReportType);
           const quoteContainsReportType = terms.some(term =>
             validationQuote.toLowerCase().includes(term.toLowerCase())
           );
@@ -1144,15 +1487,7 @@ Answer with just YES or NO.`;
     if (!hasValidRequest) return false;
 
     // For other report types
-    const reportTypeTerms = {
-      "transport": ["traffic", "vehicle", "highway", "road", "parking", "transport", "mobility"],
-      "ecological": ["ecology", "ecological", "habitat", "species", "biodiversity", "wildlife"],
-      "flood": ["flood", "drainage", "suds", "hydrology", "water"],
-      "heritage": ["heritage", "archaeological", "historic", "conservation", "listed"],
-      "lighting": ["lighting", "light", "illumination", "luminaire"]
-    };
-
-    const topicTerms = reportTypeTerms[targetReportType.toLowerCase()] || [targetReportType.toLowerCase()];
+    const topicTerms = getQuoteTerms(targetReportType);
     const hasTopicTerm = topicTerms.some(t => quoteLower.includes(t.toLowerCase()));
 
     if (!hasTopicTerm) return false;
@@ -1249,20 +1584,9 @@ Answer with just YES or NO.`;
       "calculations"
     ];
 
-    const reportTypeTerms = {
-      "acoustic": ["noise", "sound", "acoustic", "decibel", "db", "vibration", "noise assessment", "sound level", "noise impact"],
-      "transport": ["traffic", "vehicle", "highway", "road", "parking", "transport assessment", "car park", "mobility", "transport"],
-      "ecological": ["ecology", "wildlife", "habitat", "species", "biodiversity", "environment", "ecological", "nature", "flora", "fauna"],
-      "flood": ["drainage", "water", "sewage", "storm", "rainfall", "suds", "surface water", "attenuation", "flood"],
-      "heritage": ["archaeological", "historic", "conservation", "listed", "cultural", "monument", "archaeology", "heritage"],
-      "arboricultural": ["tree", "trees", "vegetation", "landscape", "planting", "hedge", "woodland", "green", "arboricultural"],
-      "waste": ["waste", "refuse", "recycling", "bin", "storage", "collection", "disposal"],
-      "lighting": ["lighting", "light", "illumination", "lumens", "lux", "lamp"]
-    };
-
     const textLower = documentText.toLowerCase();
     const sentences = this.splitIntoSentences(textLower);
-    const terms = reportTypeTerms[targetReportType.toLowerCase()] || [targetReportType.toLowerCase()];
+    const terms = getDocumentTerms(targetReportType);
 
     // Find sentences with request verbs and report type terms
     // Reject if it's about physical work (e.g., "provide insulation") but NOT a document
@@ -1602,18 +1926,7 @@ Answer with just YES or NO.`;
     }
 
     // STRICT: Must contain BOTH a request verb AND the target report term
-    const reportTypeKeywords = {
-      "acoustic": ["acoustic", "noise", "sound"],
-      "transport": ["transport", "traffic", "parking", "highway"],
-      "ecological": ["ecological", "ecology", "biodiversity", "habitat", "wildlife"],
-      "flood": ["flood", "drainage", "suds", "hydrology"],
-      "heritage": ["heritage", "archaeological", "historic"],
-      "lighting": ["lighting", "light", "illumination"],
-      "arboricultural": ["tree", "arboricultural", "vegetation"],
-      "waste": ["waste", "refuse", "recycling"]
-    };
-
-    const reportTerms = (reportTypeKeywords[targetReportType.toLowerCase()] || [targetReportType]).map(x => x.toLowerCase());
+    const reportTerms = getQuoteTerms(targetReportType).map(x => x.toLowerCase());
 
     const hasRequestVerb = requestVerbs.some(verb => requestsLower.includes(verb));
     const hasReportTerm = reportTerms.some(term => requestsLower.includes(term));
@@ -2454,4 +2767,11 @@ Answer with just YES or NO.`;
   }
 }
 
-module.exports = new FIDetectionService();
+const fiDetectionService = new FIDetectionService();
+
+// Exposed for unit testing of the deterministic gates without an OpenAI call.
+fiDetectionService.HARD_RESPONSE_MARKERS = HARD_RESPONSE_MARKERS;
+fiDetectionService.CONTEXTUAL_RESPONSE_MARKERS = CONTEXTUAL_RESPONSE_MARKERS;
+fiDetectionService.findMarkerNearReportType = findMarkerNearReportType;
+
+module.exports = fiDetectionService;

@@ -149,6 +149,10 @@ class DocumentIngestionService {
       documentsSkipped: 0,
       newDocuments: [],
       errors: [],
+      // filter-docs keys this run accounted for: either copied successfully, or already
+      // present in planning-docs with identical content. Only these may be deleted at
+      // cleanup - see cleanupFilterDocs.
+      handledKeys: [],
       durationMs: 0
     };
 
@@ -203,6 +207,7 @@ class DocumentIngestionService {
           } else {
             result.documentsCopied++;
             result.newDocuments.push(fileName);
+            result.handledKeys.push(item.key);
             this.stats.documentsRouted++;
           }
         }
@@ -222,16 +227,38 @@ class DocumentIngestionService {
 
         // Get existing documents in planning-docs
         const planningDocs = await s3Service.listPlanningDocsProject(projectId);
-        const existingFileNames = new Set(
+        const existingByName = new Map(
           planningDocs
             .filter(d => !d.fileName.startsWith('_baseline_')) // Exclude markers
-            .map(d => d.fileName)
+            .map(d => [d.fileName, d])
         );
 
-        // Filter to only new documents
-        const newDocs = filterDocs.filter(doc => !existingFileNames.has(doc.fileName));
-        const skippedDocs = filterDocs.filter(doc => existingFileNames.has(doc.fileName));
+        // Copy anything whose name is new, OR whose content differs from the copy already
+        // in planning-docs.
+        //
+        // Comparing filenames alone silently destroyed re-issued documents: authorities
+        // routinely republish under the same name (a revised "FI Request.pdf"), the file
+        // was skipped as already-present, and with INGESTION_CLEANUP_FILTER_DOCS=true the
+        // staged copy was then deleted - losing the new version from both locations.
+        const isUnchanged = (doc) => {
+          const existing = existingByName.get(doc.fileName);
+          if (!existing) return false;
+          if (doc.etag && existing.etag) return doc.etag === existing.etag;
+          // Fall back to size when either ETag is unavailable (e.g. multipart uploads).
+          return doc.size === existing.size;
+        };
+
+        const newDocs = filterDocs.filter(doc => !isUnchanged(doc));
+        const skippedDocs = filterDocs.filter(doc => isUnchanged(doc));
         result.documentsSkipped = skippedDocs.length;
+
+        const revisedDocs = newDocs.filter(doc => existingByName.has(doc.fileName));
+        if (revisedDocs.length > 0) {
+          logger.info(
+            `♻️ Project ${projectId}: ${revisedDocs.length} document(s) changed content under an existing name, re-copying: ` +
+            revisedDocs.map(d => d.fileName).join(', ')
+          );
+        }
 
         if (newDocs.length > 0) {
           // Parallel copy new documents only
@@ -249,10 +276,14 @@ class DocumentIngestionService {
             } else {
               result.documentsCopied++;
               result.newDocuments.push(fileName);
+              result.handledKeys.push(item.key);
               this.stats.documentsRouted++;
             }
           }
         }
+
+        // Identical copies already in planning-docs are safe to remove from staging.
+        result.handledKeys.push(...skippedDocs.map(doc => doc.key));
 
         logger.info(`✅ Project ${projectId}: ${result.documentsCopied} new, ${result.documentsSkipped} existing (eligible for FI scan)`);
       }
@@ -275,10 +306,36 @@ class DocumentIngestionService {
    * @param {string} projectId - Project ID to clean up
    * @returns {object} Cleanup result
    */
-  async cleanupFilterDocs(projectId) {
+  /**
+   * @param {string} projectId
+   * @param {string[]|null} handledKeys - filter-docs keys this run copied or verified.
+   *   When provided, only these are deleted. Omitting it restores the old behaviour of
+   *   deleting everything under the prefix and is unsafe while the scraper is writing.
+   */
+  async cleanupFilterDocs(projectId, handledKeys = null) {
     try {
       const filterDocs = await s3Service.listFilterDocsProject(projectId);
-      const deleteCandidates = filterDocs.filter(doc => doc.fileName !== KEEP_FILE_NAME);
+      let deleteCandidates = filterDocs.filter(doc => doc.fileName !== KEEP_FILE_NAME);
+
+      // Delete only what routing actually accounted for.
+      //
+      // This used to re-list the prefix and delete everything it found. Because the
+      // routing snapshot is taken at the start of a run that can span the whole batch,
+      // any file the scraper wrote in between was deleted without ever being copied to
+      // planning-docs - lost outright.
+      if (handledKeys) {
+        const handled = new Set(handledKeys);
+        const unhandled = deleteCandidates.filter(doc => !handled.has(doc.key));
+        deleteCandidates = deleteCandidates.filter(doc => handled.has(doc.key));
+
+        if (unhandled.length > 0) {
+          logger.info(
+            `⏭️ Leaving ${unhandled.length} unrouted file(s) in filter-docs/${projectId}/ for the next run: ` +
+            unhandled.slice(0, 5).map(d => d.fileName).join(', ') +
+            (unhandled.length > 5 ? ` (+${unhandled.length - 5} more)` : '')
+          );
+        }
+      }
 
       if (deleteCandidates.length === 0) {
         return { projectId, deleted: 0 };
@@ -329,7 +386,10 @@ class DocumentIngestionService {
 
       // Step 3: Cleanup filter-docs (optional)
       if (cleanupAfter && pipelineResult.routing.errors.length === 0) {
-        pipelineResult.cleanup = await this.cleanupFilterDocs(projectId);
+        pipelineResult.cleanup = await this.cleanupFilterDocs(
+          projectId,
+          pipelineResult.routing.handledKeys || []
+        );
       }
 
       pipelineResult.success = pipelineResult.routing.errors.length === 0;

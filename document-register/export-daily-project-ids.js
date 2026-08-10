@@ -70,6 +70,7 @@ Options:
 Examples:
   node export-daily-project-ids.js --date 2026-07-25
   node export-daily-project-ids.js --date 2026-07-25 --local
+  node export-daily-project-id
 `);
     process.exit(0);
   }
