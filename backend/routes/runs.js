@@ -200,18 +200,10 @@ router.post('/:runId/retry-failed', async (req, res) => {
       }
     );
 
-    // Update run counters
+    // Rebuild the counters from the items rather than nudging them by a delta - the
+    // stored values may already be drifted, and a delta preserves the drift.
     if (result.modifiedCount > 0) {
-      await DailyRun.updateOne(
-        { runId },
-        {
-          $inc: {
-            'counters.failed': -result.modifiedCount,
-            'counters.queued': result.modifiedCount
-          }
-        }
-      );
-
+      await dailyRunService.reconcileCounters(runId);
       logger.info(`♻️ Retrying ${result.modifiedCount} failed items for run ${runId}`);
     }
 
@@ -226,6 +218,39 @@ router.post('/:runId/retry-failed', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to retry items',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Rebuild a run's counters from its items, and complete it if nothing is outstanding.
+ * POST /api/runs/:runId/reconcile
+ *
+ * Unsticks a run left in 'processing' by the counter drift described in
+ * dailyRunService.reconcileCounters, without needing shell access.
+ */
+router.post('/:runId/reconcile', async (req, res) => {
+  try {
+    const { runId } = req.params;
+    const result = await dailyRunService.reconcileCounters(runId);
+
+    res.json({
+      success: true,
+      message: result.drifted
+        ? 'Counters were drifted and have been rebuilt from the run items'
+        : 'Counters already matched the run items',
+      ...result
+    });
+
+  } catch (error) {
+    if (/not found/i.test(error.message)) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
+    logger.error('❌ Error reconciling run counters:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to reconcile counters',
       error: error.message
     });
   }

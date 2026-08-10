@@ -3,6 +3,7 @@ const DailyRun = require('../models/DailyRun');
 const DailyRunItem = require('../models/DailyRunItem');
 const s3Service = require('./s3Service');
 const fiDetectionService = require('./fiDetectionService');
+const dailyRunService = require('./dailyRunService');
 const path = require('path');
 const fs = require('fs').promises;
 
@@ -270,22 +271,24 @@ class DailyRunWorker {
         return;
       }
 
-      // Check if all items are processed
-      const { queued, processing } = run.counters;
+      // Ask the items, not the counters. The stored counters used to be incremented by
+      // the full batch length even when duplicates were rejected, so counters.queued
+      // could never reach 0 and a run stayed 'processing' forever. This count is served
+      // by the { runId: 1, status: 1 } index on DailyRunItem.
+      const outstanding = await DailyRunItem.countDocuments({
+        runId,
+        status: { $in: ['queued', 'processing'] }
+      });
 
-      if (queued === 0 && processing === 0) {
-        await DailyRun.updateOne(
-          { runId },
-          {
-            status: 'completed',
-            completedAt: new Date()
-          }
-        );
+      if (outstanding === 0) {
+        // Rewrite the counters from the items before reporting, so the completion log
+        // and the UI show the real numbers rather than the drifted ones.
+        const { after } = await dailyRunService.reconcileCounters(runId);
 
-        const successRate = run.counters.totalItems > 0
-          ? ((run.counters.completed / run.counters.totalItems) * 100).toFixed(1)
+        const successRate = after.totalItems > 0
+          ? ((after.completed / after.totalItems) * 100).toFixed(1)
           : 0;
-        logger.info(`🎉 [RUN ${runId.slice(-8)}] COMPLETE: ${run.counters.completed}/${run.counters.totalItems} succeeded (${successRate}%), ${run.counters.failed} failed`);
+        logger.info(`🎉 [RUN ${runId.slice(-8)}] COMPLETE: ${after.completed}/${after.totalItems} succeeded (${successRate}%), ${after.failed} failed`);
       }
 
     } catch (error) {
