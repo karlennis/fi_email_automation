@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const scheduledJobManager = require('../services/scheduledJobManager');
 const Customer = require('../models/Customer');
+const ScheduledJob = require('../models/ScheduledJob');
 const { authenticate, requirePermission } = require('../middleware/auth');
 const logger = require('../utils/logger');
 
@@ -36,8 +37,16 @@ router.post('/create', authenticate, requirePermission('canManageJobs'), async (
       });
     }
 
-    // Customer validation - optional for FI_DETECTION jobs (they can be configured later)
-    if (jobType === 'EMAIL_BATCH' && (!customerIds || customerIds.length === 0)) {
+    // These types were removed from the executor because they never ran successfully.
+    // Reject at creation rather than accepting a job that is guaranteed to fail.
+    if (ScheduledJob.RETIRED_JOB_TYPES.includes(jobType)) {
+      return res.status(400).json({
+        success: false,
+        error: `Job type ${jobType} is no longer supported. Only EMAIL_BATCH can be scheduled.`
+      });
+    }
+
+    if (!customerIds || customerIds.length === 0) {
       return res.status(400).json({
         success: false,
         error: 'At least one customer must be specified for EMAIL_BATCH jobs'

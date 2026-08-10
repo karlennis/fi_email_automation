@@ -9,7 +9,14 @@ const scheduledJobSchema = new mongoose.Schema({
     default: () => `JOB_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
   },
 
-  // Job type and configuration
+  // Job type and configuration.
+  //
+  // Only EMAIL_BATCH is implemented. REPORT_GENERATION and FI_DETECTION were removed
+  // from scheduledJobManager - they called methods that never existed and threw on
+  // every run. REGISTER_ACOUSTIC_SCAN was never dispatched at all. The values stay in
+  // the enum because updateStatus() saves through validation, so dropping them would
+  // make existing production rows un-saveable; creation is blocked in
+  // routes/scheduled-jobs.js and initializeScheduledJobs() skips them.
   jobType: {
     type: String,
     enum: ['REPORT_GENERATION', 'EMAIL_BATCH', 'FI_DETECTION', 'REGISTER_ACOUSTIC_SCAN'],
@@ -434,5 +441,9 @@ scheduledJobSchema.virtual('isCacheExpired').get(function() {
 });
 
 const ScheduledJob = mongoose.model('ScheduledJob', scheduledJobSchema);
+
+// Job types that still validate (so existing rows stay saveable) but can no longer be
+// created or scheduled. See the jobType comment above.
+ScheduledJob.RETIRED_JOB_TYPES = ['REPORT_GENERATION', 'FI_DETECTION', 'REGISTER_ACOUSTIC_SCAN'];
 
 module.exports = ScheduledJob;

@@ -2,11 +2,7 @@ const schedule = require('node-schedule');
 const winston = require('winston');
 const ScheduledJob = require('../models/ScheduledJob');
 const Customer = require('../models/Customer');
-const fiDetectionService = require('./fiDetectionService');
-const fiReportService = require('./fiReportService');
 const emailService = require('./emailService');
-const buildingInfoService = require('./buildingInfoService');
-const s3Service = require('./s3Service');
 
 const logger = winston.createLogger({
   level: 'info',
@@ -81,8 +77,24 @@ class ScheduledJobManager {
 
       const jobs = await ScheduledJob.find({
         isActive: true,
-        status: { $in: ['SCHEDULED', 'CACHED'] }
+        status: { $in: ['SCHEDULED', 'CACHED'] },
+        // Retired types would be scheduled only to throw when they fired.
+        jobType: { $nin: ScheduledJob.RETIRED_JOB_TYPES }
       });
+
+      const retiredCount = await ScheduledJob.countDocuments({
+        isActive: true,
+        status: { $in: ['SCHEDULED', 'CACHED'] },
+        jobType: { $in: ScheduledJob.RETIRED_JOB_TYPES }
+      });
+
+      if (retiredCount > 0) {
+        logger.warn(
+          `Skipped ${retiredCount} active job(s) of a retired type ` +
+          `(${ScheduledJob.RETIRED_JOB_TYPES.join(', ')}). ` +
+          `Run scripts/retire-dead-scheduled-jobs.js --apply to deactivate them.`
+        );
+      }
 
       for (const job of jobs) {
         await this.scheduleJob(job);
@@ -126,7 +138,8 @@ class ScheduledJobManager {
         createdByUser = await this.getSystemUser();
       }
 
-      // Fetch customer details (optional - can be empty for FI_DETECTION jobs)
+      // Fetch customer details. The create route requires at least one, but keep this
+      // tolerant of an empty list so a job created another way still saves.
       let customers = [];
       if (customerIds && customerIds.length > 0) {
         customers = await Customer.find({
@@ -258,62 +271,11 @@ class ScheduledJobManager {
 
         this.activeSchedules.set(job.jobId, scheduledTask);
 
-        // For recurring jobs (DAILY, WEEKLY, MONTHLY, CRON), schedule pre-processing 2 hours before
-        // This ensures reports are fresh and not outdated
-        if (['DAILY', 'WEEKLY', 'MONTHLY', 'CRON'].includes(job.schedule.type)) {
-          const preprocessRule = this.createPreprocessSchedule(job.schedule);
-
-          if (preprocessRule) {
-            const preprocessTask = schedule.scheduleJob(preprocessRule, async () => {
-              logger.info(`[Pre-Processing Trigger] Running Phase 1 for job ${job.jobId} (2 hours before send)`);
-              try {
-                await this.executeReportGeneration(await ScheduledJob.findById(job._id));
-              } catch (error) {
-                logger.error(`Pre-processing failed for job ${job.jobId}:`, error);
-                // Don't throw - let the main job try again if needed
-              }
-            });
-
-            this.activeSchedules.set(`${job.jobId}_preprocess`, preprocessTask);
-            logger.info(`Scheduled pre-processing for job ${job.jobId} (2 hours before send time)`);
-          }
-        }
-
-        // For ONCE jobs, schedule pre-processing based on time until send
-        if (job.schedule.type === 'ONCE' && job.schedule.scheduledFor) {
-          const scheduledTime = new Date(job.schedule.scheduledFor);
-          const now = new Date();
-          const hoursUntilSend = (scheduledTime - now) / (1000 * 60 * 60);
-
-          if (hoursUntilSend > 2) {
-            // Schedule to run exactly 2 hours before send time
-            const preprocessTime = new Date(scheduledTime.getTime() - (2 * 60 * 60 * 1000));
-
-            logger.info(`[Pre-Processing] ONCE job scheduled ${hoursUntilSend.toFixed(1)}h from now, pre-processing will run at ${preprocessTime.toLocaleString()} (2h before send)`);
-
-            const preprocessTask = schedule.scheduleJob(preprocessTime, async () => {
-              logger.info(`[Pre-Processing Trigger] Running Phase 1 for ONCE job ${job.jobId} (2 hours before send)`);
-              try {
-                await this.executeReportGeneration(await ScheduledJob.findById(job._id));
-              } catch (error) {
-                logger.error(`Pre-processing failed for ONCE job ${job.jobId}:`, error);
-              }
-            });
-
-            this.activeSchedules.set(`${job.jobId}_preprocess`, preprocessTask);
-          } else if (hoursUntilSend > 0.1) {
-            // Less than 2 hours but more than 6 minutes - run immediately
-            logger.info(`[Pre-Processing] ONCE job scheduled ${hoursUntilSend.toFixed(1)}h from now (<2h), running pre-processing immediately`);
-
-            // Run pre-processing in background (don't await)
-            this.executeReportGeneration(job).catch(error => {
-              logger.error(`Pre-processing failed for ONCE job ${job.jobId}:`, error);
-            });
-          } else {
-            // Very soon (< 6 minutes) - no time for pre-processing
-            logger.info(`[No Pre-Processing] ONCE job scheduled ${(hoursUntilSend * 60).toFixed(1)} minutes from now (too soon for pre-processing)`);
-          }
-        }
+        // Pre-processing (the old "Phase 1") used to be scheduled here, two hours
+        // before the send. It called executeReportGeneration, which never ran to
+        // completion - see the removal note on executeJob below. The `_preprocess`
+        // entries it wrote were also never cancelled by cancelJob or pauseJob, so
+        // each reschedule leaked a timer.
 
         logger.info(`Scheduled job ${job.jobId} with type ${job.schedule.type}`);
       }
@@ -321,82 +283,6 @@ class ScheduledJobManager {
     } catch (error) {
       logger.error(`Error scheduling job ${job.jobId}:`, error);
       throw error;
-    }
-  }
-
-  /**
-   * Create a schedule rule for pre-processing (2 hours before main schedule)
-   * @param {Object} jobSchedule - The main schedule configuration
-   * @returns {Object|null} - Pre-processing schedule rule
-   */
-  createPreprocessSchedule(jobSchedule) {
-    try {
-      let preprocessRule;
-
-      switch (jobSchedule.type) {
-        case 'WEEKLY':
-          // For weekly jobs, run 2 hours before
-          const [hours, minutes] = (jobSchedule.timeOfDay || '10:00').split(':');
-          const sendHour = parseInt(hours);
-          let preprocessHour = sendHour - 2;
-          let preprocessDay = jobSchedule.dayOfWeek || 5;
-
-          // Handle hour wraparound (e.g., if send is at 1 AM, preprocess at 11 PM previous day)
-          if (preprocessHour < 0) {
-            preprocessHour += 24;
-            preprocessDay = (preprocessDay - 1 + 7) % 7; // Previous day
-          }
-
-          preprocessRule = new schedule.RecurrenceRule();
-          preprocessRule.dayOfWeek = preprocessDay;
-          preprocessRule.hour = preprocessHour;
-          preprocessRule.minute = parseInt(minutes);
-          break;
-
-        case 'DAILY':
-          // For daily jobs, run 2 hours before
-          const [h, m] = (jobSchedule.timeOfDay || '10:00').split(':');
-          let dailyPreprocessHour = parseInt(h) - 2;
-
-          if (dailyPreprocessHour < 0) {
-            dailyPreprocessHour += 24;
-          }
-
-          preprocessRule = new schedule.RecurrenceRule();
-          preprocessRule.hour = dailyPreprocessHour;
-          preprocessRule.minute = parseInt(m);
-          break;
-
-        case 'MONTHLY':
-          // For monthly jobs, run 2 hours before
-          const [mh, mm] = (jobSchedule.timeOfDay || '10:00').split(':');
-          let monthlyPreprocessHour = parseInt(mh) - 2;
-          let preprocessDate = jobSchedule.dayOfMonth || 1;
-
-          if (monthlyPreprocessHour < 0) {
-            monthlyPreprocessHour += 24;
-            preprocessDate = preprocessDate - 1;
-            if (preprocessDate < 1) preprocessDate = 1; // Stay on same month
-          }
-
-          preprocessRule = new schedule.RecurrenceRule();
-          preprocessRule.date = preprocessDate;
-          preprocessRule.hour = monthlyPreprocessHour;
-          preprocessRule.minute = parseInt(mm);
-          break;
-
-        case 'CRON':
-          // For cron, we can't easily calculate 2 hours before
-          // Just use the same cron for now (user can set up separate cron if needed)
-          logger.warn(`Pre-processing for CRON jobs not fully supported, using same schedule`);
-          preprocessRule = jobSchedule.cronExpression;
-          break;
-      }
-
-      return preprocessRule;
-    } catch (error) {
-      logger.error('Error creating preprocess schedule:', error);
-      return null;
     }
   }
 
@@ -421,21 +307,28 @@ class ScheduledJobManager {
 
       const startTime = Date.now();
 
-      // Execute based on job type
-      let result;
-      switch (job.jobType) {
-        case 'REPORT_GENERATION':
-          result = await this.executeReportGeneration(job);
-          break;
-        case 'EMAIL_BATCH':
-          result = await this.executeEmailBatch(job);
-          break;
-        case 'FI_DETECTION':
-          result = await this.executeFIDetection(job);
-          break;
-        default:
-          throw new Error(`Unknown job type: ${job.jobType}`);
+      // EMAIL_BATCH is the only job type that ever worked.
+      //
+      // REPORT_GENERATION and FI_DETECTION both called fiDetectionService.searchProjects
+      // and fiDetectionService.detectFIRequests, neither of which exists on that service
+      // (searchProjects lives on buildingInfoService; detectFIRequests exists nowhere -
+      // the closest is detectFIRequest, singular, with a different signature). On top of
+      // that, executeReportGeneration re-required fiDetectionService inside its own body,
+      // shadowing the module import, so the first reference hit the temporal dead zone and
+      // threw a ReferenceError before it could even reach the missing method. Both paths
+      // therefore failed on every single run and were removed rather than implemented.
+      //
+      // The enum values remain on the ScheduledJob model so existing rows stay saveable;
+      // creation of new ones is blocked in routes/scheduled-jobs.js and initialization
+      // skips them.
+      if (job.jobType !== 'EMAIL_BATCH') {
+        throw new Error(
+          `Unsupported job type: ${job.jobType}. Only EMAIL_BATCH is implemented ` +
+          `(REPORT_GENERATION and FI_DETECTION were removed - they never ran successfully).`
+        );
       }
+
+      const result = await this.executeEmailBatch(job);
 
       // Update execution stats
       const duration = Date.now() - startTime;
@@ -462,128 +355,6 @@ class ScheduledJobManager {
       if (job) {
         await job.updateStatus('FAILED', error);
       }
-    }
-  }
-
-  /**
-   * Execute report generation and cache results (Phase 1: Pre-Processing)
-   * This runs hours before the scheduled send time to allow plenty of time
-   * for document downloads, OCR, and AI analysis without rushing
-   */
-  async executeReportGeneration(job) {
-    try {
-      const { reportTypes, projectIds, searchCriteria } = job.config;
-
-      logger.info(`[Phase 1: Pre-Processing] Generating reports for job ${job.jobId}`);
-
-      let projects = [];
-
-      // Get projects based on criteria
-      if (projectIds && projectIds.length > 0) {
-        // Use specific project IDs
-        logger.info(`Fetching metadata for ${projectIds.length} specific projects`);
-        projects = await Promise.all(
-          projectIds.map(id => buildingInfoService.getProjectMetadata(id))
-        );
-      } else if (searchCriteria) {
-        // Use search criteria to find projects
-        logger.info('Searching for projects based on criteria:', searchCriteria);
-        projects = await fiDetectionService.searchProjects(searchCriteria);
-      }
-
-      if (projects.length === 0) {
-        throw new Error('No projects found matching criteria');
-      }
-
-      logger.info(`Processing ${projects.length} projects for ${job.customers.length} customers`);
-
-      const startTime = Date.now();
-
-      // Use the existing FI detection service - this handles:
-      // - Document downloads from S3/BII
-      // - OCR processing
-      // - AI analysis for FI matching
-      // - Per-customer matching based on their report type preferences
-      const fiDetectionService = require('./fiDetectionService');
-
-      const apiParams = {
-        projectIds: projects.map(p => p.planning_id || p.projectId)
-      };
-
-      // This is the slow part - can take minutes for many projects
-      // That's why we run it hours before the scheduled send time
-      const results = await fiDetectionService.processFIRequestWithFiltering(
-        reportTypes,
-        apiParams,
-        job.customers // Array of {_id, name, email, reportTypes}
-      );
-
-      const processingTime = Date.now() - startTime;
-
-      logger.info(`[Phase 1] FI Detection results:`, {
-        success: results.success,
-        hasCustomerMatches: !!results.customerMatches,
-        customerMatchesLength: results.customerMatches?.length || 0,
-        totalResults: results.results?.length || 0
-      });
-
-      if (!results.success) {
-        throw new Error('FI detection processing failed');
-      }
-
-      // Ensure we have customer matches array (even if empty)
-      const customerMatches = results.customerMatches || [];
-
-      // Calculate total matches across all customers
-      const totalMatches = customerMatches.reduce((sum, cm) => sum + (cm.matches?.length || 0), 0);
-
-      // Cache the results for the email send phase
-      const reportData = {
-        customerMatches: customerMatches,
-        totalMatches: totalMatches,
-        processedProjects: results.processingStats?.totalProjects || projects.length,
-        processingTime: processingTime,
-        generatedAt: new Date(),
-        reportSummary: results.processingStats || {},
-        cacheExpiry: new Date(Date.now() + (7 * 24 * 60 * 60 * 1000)) // 1 week
-      };
-
-      // Store in job document so it persists across server restarts
-      const updatedJob = await ScheduledJob.findByIdAndUpdate(
-        job._id,
-        {
-          'cache.reportData': reportData,
-          'cache.reportIds': reportData.customerMatches.map(cm => cm.reportId).filter(Boolean),
-          'cache.generatedAt': reportData.generatedAt,
-          'cache.expiresAt': reportData.cacheExpiry,
-          'stats.totalMatches': reportData.totalMatches,
-          'stats.processedProjects': reportData.processedProjects,
-          'stats.lastProcessingTime': processingTime
-        },
-        { new: true } // Return the updated document
-      );
-
-      // Update the in-memory job object with the cache
-      job.cache = updatedJob.cache;
-      job.stats = updatedJob.stats;
-
-      logger.info(`[Phase 1 Complete] Reports cached for job ${job.jobId}:`, {
-        totalMatches: reportData.totalMatches,
-        processedProjects: reportData.processedProjects,
-        customersWithMatches: reportData.customerMatches.filter(cm => cm.matches.length > 0).length,
-        processingTime: `${(processingTime / 1000).toFixed(2)}s`,
-        cacheExpiry: reportData.cacheExpiry.toISOString()
-      });
-
-      return {
-        projectsProcessed: projects.length,
-        reportsGenerated: reportData.totalMatches,
-        cached: true
-      };
-
-    } catch (error) {
-      logger.error(`Error in report generation for job ${job.jobId}:`, error);
-      throw error;
     }
   }
 
@@ -629,21 +400,16 @@ class ScheduledJobManager {
         }
       }
 
-      // If no valid cache, generate reports now
+      // No valid cache means there is nothing to send. This used to fall back to
+      // executeReportGeneration, which threw a ReferenceError on its first line, so the
+      // job already failed here - just illegibly, as "Cannot access 'fiDetectionService'
+      // before initialization". Fail with something an operator can act on instead.
       if (!cacheWasValid) {
-        logger.info(`[Phase 2] Generating fresh reports for job ${job.jobId}`);
-        await this.executeReportGeneration(job);
-
-        // Reload job to get updated cache
-        job = await ScheduledJob.findById(job._id);
-
-        if (!job.cache?.reportData?.customerMatches) {
-          logger.error(`[Phase 2] Failed to generate reports. Cache structure:`, JSON.stringify(job.cache, null, 2));
-          throw new Error('Failed to generate reports - no customer matches data available');
-        }
-
-        reportData = job.cache.reportData;
-        logger.info(`[Phase 2] Fresh reports generated: ${reportData.customerMatches.length} customers, ${reportData.totalMatches} total matches`);
+        throw new Error(
+          `No valid pre-generated report cache for job ${job.jobId}. Cache must be ` +
+          `populated for this job and less than 24 hours old. On-demand generation was ` +
+          `removed - it never worked.`
+        );
       }
 
       await job.updateStatus('SENDING');
@@ -656,7 +422,6 @@ class ScheduledJobManager {
 
       let sentCount = 0;
       let failedCount = 0;
-      const emailService = require('./emailService');
 
       // Send emails using cached customer matches
       for (const customerMatch of reportData.customerMatches) {
@@ -727,49 +492,6 @@ class ScheduledJobManager {
 
     } catch (error) {
       logger.error(`Error in email batch for job ${job.jobId}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Execute FI detection
-   */
-  async executeFIDetection(job) {
-    try {
-      const { reportTypes, searchCriteria } = job.config;
-
-      logger.info(`Running FI detection for job ${job.jobId}`);
-
-      // Search for projects
-      const projects = await fiDetectionService.searchProjects(searchCriteria);
-
-      const results = {
-        projectsScanned: projects.length,
-        fiRequestsFound: 0,
-        reportsByType: {}
-      };
-
-      // Process each project
-      for (const project of projects) {
-        const fiResults = await fiDetectionService.detectFIRequests(
-          project.planning_id,
-          reportTypes
-        );
-
-        for (const [reportType, hasRequest] of Object.entries(fiResults)) {
-          if (hasRequest) {
-            results.fiRequestsFound++;
-            results.reportsByType[reportType] = (results.reportsByType[reportType] || 0) + 1;
-          }
-        }
-      }
-
-      logger.info(`FI detection completed: ${results.fiRequestsFound} requests found`);
-
-      return results;
-
-    } catch (error) {
-      logger.error(`Error in FI detection for job ${job.jobId}:`, error);
       throw error;
     }
   }
