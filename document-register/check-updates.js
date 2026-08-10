@@ -23,16 +23,17 @@ const path = require('path');
 // Resolve AWS SDK from backend's node_modules
 const backendNodeModules = path.join(__dirname, '../backend/node_modules');
 const { S3Client, ListObjectsV2Command } = require(path.join(backendNodeModules, '@aws-sdk/client-s3'));
+const { getBucket, getRegion } = require('../backend/utils/awsConfig');
 
 // S3 client setup - directly queries planning-docs/ in planning-documents-2 bucket
 const s3Client = new S3Client({
-    region: process.env.AWS_REGION || 'eu-west-2',
+    region: getRegion(),
     credentials: {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID,
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
     }
 });
-const BUCKET_NAME = process.env.S3_BUCKET_NAME || 'planning-documents-2';
+const BUCKET_NAME = getBucket();
 const PREFIX = 'planning-docs/';
 
 // Parse command-line arguments

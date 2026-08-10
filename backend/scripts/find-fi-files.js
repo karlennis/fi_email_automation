@@ -1,11 +1,12 @@
 require('dotenv').config();
 const { S3Client, ListObjectsV2Command } = require('@aws-sdk/client-s3');
+const { getBucket, getRegion } = require('../utils/awsConfig');
 
 async function findFIFiles() {
   console.log('🔍 Searching for FI-related files in S3...\n');
   
   const s3Client = new S3Client({
-    region: process.env.AWS_REGION || 'eu-west-1',
+    region: getRegion(),
     credentials: {
       accessKeyId: process.env.AWS_ACCESS_KEY_ID,
       secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
@@ -21,7 +22,7 @@ async function findFIFiles() {
   for (let batch = 0; batch < 20; batch++) {
     try {
       const command = new ListObjectsV2Command({
-        Bucket: process.env.AWS_S3_BUCKET_NAME || 'planning-documents-2',
+        Bucket: getBucket(),
         Prefix: 'planning-docs/',
         MaxKeys: 1000,
         ContinuationToken: continuationToken

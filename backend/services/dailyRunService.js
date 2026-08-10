@@ -2,16 +2,17 @@ const logger = require('../utils/logger');
 const DailyRun = require('../models/DailyRun');
 const DailyRunItem = require('../models/DailyRunItem');
 const { S3Client, ListObjectsV2Command } = require('@aws-sdk/client-s3');
+const { getBucket, getRegion } = require('../utils/awsConfig');
 
 const s3Client = new S3Client({
-  region: process.env.AWS_REGION || 'eu-north-1',
+  region: getRegion(),
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
   }
 });
 
-const BUCKET = process.env.S3_BUCKET || 'planning-documents-2';
+const BUCKET = getBucket();
 const PREFIX = 'planning-docs/';
 
 class DailyRunService {

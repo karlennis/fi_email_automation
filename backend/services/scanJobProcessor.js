@@ -21,6 +21,7 @@ const fsp = require('fs').promises;
 const path = require('path');
 const { pipeline } = require('stream/promises');
 const { normalizeReportType, getQuoteTerms } = require('./reportTypes');
+const { getBucket } = require('../utils/awsConfig');
 
 // Delivery-run attempts before an unfound-metadata match is permanently expired
 const MAX_METADATA_RETRIES = 4;
@@ -962,7 +963,7 @@ class ScanJobProcessor {
                 const s3 = new AWS.S3();
 
                 const params = {
-                    Bucket: process.env.S3_BUCKET || 'planning-documents-2',
+                    Bucket: getBucket(),
                     Key: s3Key
                 };
 

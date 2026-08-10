@@ -1,5 +1,6 @@
 const { S3Client, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 const logger = require('../utils/logger');
+const { getBucket, getRegion } = require('../utils/awsConfig');
 
 /**
  * Fast document scanner for S3 - filters by last modified date
@@ -7,14 +8,16 @@ const logger = require('../utils/logger');
  */
 class FastS3Scanner {
     constructor() {
+        // Must resolve to the same bucket/region as scanJobProcessor, which downloads
+        // the keys this scanner lists. See backend/utils/awsConfig.js.
         this.s3Client = new S3Client({
-            region: process.env.AWS_REGION || 'eu-west-2',
+            region: getRegion(),
             credentials: {
                 accessKeyId: process.env.AWS_ACCESS_KEY_ID,
                 secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
             }
         });
-        this.bucketName = process.env.S3_BUCKET_NAME || 'planning-documents-2';
+        this.bucketName = getBucket();
     }
 
     /**

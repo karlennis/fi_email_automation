@@ -7,15 +7,16 @@ require('dotenv').config();
 const AWS = require('aws-sdk');
 const pdf = require('pdf-parse');
 const { detectFIRequest, matchFIRequestType } = require('../services/fiDetectionService');
+const { getBucket, getRegion } = require('../utils/awsConfig');
 
 AWS.config.update({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  region: process.env.AWS_REGION || 'eu-north-1'
+  region: getRegion()
 });
 
 const s3 = new AWS.S3();
-const bucket = process.env.S3_BUCKET || 'planning-documents-2';
+const bucket = getBucket();
 
 const LAYER2_PASSES = [
   { file: 'email-to-agent-re-dfi-roads-response.pdf', project: '404436', rejection: 'not-fi-request' },

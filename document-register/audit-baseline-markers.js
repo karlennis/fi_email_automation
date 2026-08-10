@@ -20,9 +20,10 @@ const fs = require('fs');
 const path = require('path');
 const backendNodeModules = path.join(__dirname, '../backend/node_modules');
 const { S3Client, ListObjectsV2Command } = require(path.join(backendNodeModules, '@aws-sdk/client-s3'));
+const { getBucket, getRegion } = require('../backend/utils/awsConfig');
 
-const BUCKET_NAME = process.env.S3_BUCKET || process.env.S3_BUCKET_NAME || 'planning-documents-2';
-const REGION = process.env.AWS_REGION || process.env.S3_REGION || 'eu-west-2';
+const BUCKET_NAME = getBucket();
+const REGION = getRegion();
 
 const s3Client = new S3Client({
   region: REGION,

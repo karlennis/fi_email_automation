@@ -2,6 +2,7 @@
 require('dotenv').config();
 const AWS = require('aws-sdk');
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+const { getBucket, getRegion } = require('../utils/awsConfig');
 
 async function testCorruptedPDF() {
     try {
@@ -15,7 +16,7 @@ async function testCorruptedPDF() {
         // Download from S3
         const s3 = new AWS.S3();
         const params = {
-            Bucket: process.env.S3_BUCKET || 'planning-documents-2',
+            Bucket: getBucket(),
             Key: testFile
         };
         

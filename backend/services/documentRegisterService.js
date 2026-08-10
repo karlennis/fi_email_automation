@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const logger = require('../utils/logger');
+const { getBucket, getRegion } = require('../utils/awsConfig');
 
 class DocumentRegisterService {
   constructor() {
@@ -305,7 +306,7 @@ class DocumentRegisterService {
       // Ensure credentials are available
       const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
       const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
-      const region = process.env.AWS_REGION || 'eu-north-1';
+      const region = getRegion();
 
       if (!accessKeyId || !secretAccessKey) {
         throw new Error('AWS credentials not configured. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables.');
@@ -318,7 +319,7 @@ class DocumentRegisterService {
           secretAccessKey: secretAccessKey
         }
       });
-      const bucket = process.env.S3_BUCKET || 'planning-documents-2';
+      const bucket = getBucket();
 
       const projectMap = new Map();
       let continuationToken = null;
@@ -420,7 +421,7 @@ class DocumentRegisterService {
       // Ensure credentials are available
       const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
       const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
-      const region = process.env.AWS_REGION || 'eu-north-1';
+      const region = getRegion();
 
       if (!accessKeyId || !secretAccessKey) {
         throw new Error('AWS credentials not configured. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables.');
@@ -433,7 +434,7 @@ class DocumentRegisterService {
           secretAccessKey: secretAccessKey
         }
       });
-      const bucket = process.env.S3_BUCKET || 'planning-documents-2';
+      const bucket = getBucket();
 
       const projectSet = new Set(); // Store unique project IDs
       const projectDetails = {}; // Store project metadata

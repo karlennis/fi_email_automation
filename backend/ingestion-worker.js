@@ -20,6 +20,9 @@ const path = require('path');
 // Load environment variables from backend directory
 dotenv.config({ path: path.join(__dirname, '.env') });
 
+// Must run before s3Service below, which resolves the bucket at require time.
+require('./utils/awsConfig').assertConsistentS3Env();
+
 const mongoose = require('mongoose');
 const logger = require('./utils/logger');
 const ingestionScheduler = require('./services/ingestionScheduler');

@@ -2,6 +2,7 @@ const AWS = require('aws-sdk');
 const fs = require('fs').promises;
 const path = require('path');
 const winston = require('winston');
+const { getBucket, getRegion } = require('../utils/awsConfig');
 
 const logger = winston.createLogger({
   level: 'info',
@@ -20,11 +21,11 @@ class S3Service {
     AWS.config.update({
       accessKeyId: process.env.AWS_ACCESS_KEY_ID,
       secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-      region: process.env.AWS_REGION || 'eu-north-1'
+      region: getRegion()
     });
 
     this.s3 = new AWS.S3();
-    this.bucket = process.env.S3_BUCKET || 'planning-documents-2';
+    this.bucket = getBucket();
     this.downloadDir = process.env.DOWNLOAD_DIR || './temp/downloads';
 
     // Cache for listMainFolders to prevent hammering S3

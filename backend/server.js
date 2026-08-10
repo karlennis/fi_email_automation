@@ -10,6 +10,12 @@ const path = require('path');
 // Load environment variables from backend directory
 dotenv.config({ path: path.join(__dirname, '.env') });
 
+// Fail fast if two spellings of the bucket or region disagree. Several services
+// resolve the bucket at require time, so this has to run before they are loaded -
+// a mismatch means the scanner lists one bucket while downloads hit another, and
+// that failure mode reports success with zero matches.
+require('./utils/awsConfig').assertConsistentS3Env();
+
 // Import routes
 const authRoutes = require('./routes/auth');
 const projectRoutes = require('./routes/projects');

@@ -1,5 +1,6 @@
 require('dotenv').config();
 const { S3Client, ListObjectsV2Command } = require('@aws-sdk/client-s3');
+const { getBucket, getRegion } = require('../utils/awsConfig');
 
 async function findInSpecificProjects() {
   const targetFiles = [
@@ -19,7 +20,7 @@ async function findInSpecificProjects() {
   console.log('');
   
   const s3Client = new S3Client({
-    region: process.env.AWS_REGION || 'eu-west-1',
+    region: getRegion(),
     credentials: {
       accessKeyId: process.env.AWS_ACCESS_KEY_ID,
       secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
@@ -35,7 +36,7 @@ async function findInSpecificProjects() {
     
     try {
       const command = new ListObjectsV2Command({
-        Bucket: process.env.AWS_S3_BUCKET_NAME || 'planning-documents-2',
+        Bucket: getBucket(),
         Prefix: `planning-docs/${projectId}/`,
         MaxKeys: 1000
       });

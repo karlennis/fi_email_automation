@@ -15,17 +15,18 @@ const fs = require('fs');
 const path = require('path');
 const csv = require('csv-parser');
 const readline = require('readline');
+const { getBucket, getRegion } = require('../backend/utils/awsConfig');
 
 class S3CleanupService {
   constructor() {
     this.s3 = new AWS.S3({
       accessKeyId: process.env.AWS_ACCESS_KEY_ID,
       secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-      region: process.env.AWS_REGION || 'eu-north-1',
+      region: getRegion(),
       httpOptions: { timeout: 120000, connectTimeout: 10000 },
       maxRetries: 3
     });
-    this.bucket = process.env.S3_BUCKET || 'planning-documents-2';
+    this.bucket = getBucket();
     this.approvedIds = new Set();
     this.csvPath = path.join(__dirname, '2025_ids.csv');
   }

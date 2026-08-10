@@ -5,15 +5,16 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const { S3Client, ListObjectsV2Command } = require('@aws-sdk/client-s3');
+const { getBucket, getRegion } = require('../utils/awsConfig');
 
 const s3Client = new S3Client({
-    region: process.env.AWS_REGION || 'eu-west-2',
+    region: getRegion(),
     credentials: {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID,
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
     }
 });
-const bucketName = process.env.S3_BUCKET_NAME || 'planning-documents-2';
+const bucketName = getBucket();
 
 async function debugS3Dates(targetDateStr) {
     const targetDate = new Date(targetDateStr);

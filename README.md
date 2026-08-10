@@ -95,8 +95,8 @@ A comprehensive system for automatically detecting Further Information (FI) requ
    # AWS S3 (optional)
    AWS_ACCESS_KEY_ID=your_aws_key
    AWS_SECRET_ACCESS_KEY=your_aws_secret
-   AWS_REGION=eu-west-1
-   S3_BUCKET_NAME=your-bucket-name
+   AWS_REGION=eu-north-1
+   S3_BUCKET=your-bucket-name
    ```
 
 ## 🚀 Usage
