@@ -240,11 +240,20 @@ class DocumentIngestionService {
         // routinely republish under the same name (a revised "FI Request.pdf"), the file
         // was skipped as already-present, and with INGESTION_CLEANUP_FILTER_DOCS=true the
         // staged copy was then deleted - losing the new version from both locations.
+        // A multipart ETag ("<md5>-<partCount>") is not a plain MD5 and is NOT preserved
+        // by copyObject, which writes a single-part object. Comparing one against the
+        // other would report "changed" on every run - re-copying the file nightly, which
+        // in turn refreshes its LastModified and makes the FI scanner reprocess the whole
+        // corpus every night. Only compare ETags when both are single-part.
+        const isSinglePartEtag = (etag) => !!etag && !/-\d+$/.test(etag);
+
         const isUnchanged = (doc) => {
           const existing = existingByName.get(doc.fileName);
           if (!existing) return false;
-          if (doc.etag && existing.etag) return doc.etag === existing.etag;
-          // Fall back to size when either ETag is unavailable (e.g. multipart uploads).
+          if (isSinglePartEtag(doc.etag) && isSinglePartEtag(existing.etag)) {
+            return doc.etag === existing.etag;
+          }
+          // Fall back to size, which is stable across a copy either way.
           return doc.size === existing.size;
         };
 
