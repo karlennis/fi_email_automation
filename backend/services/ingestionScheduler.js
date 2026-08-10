@@ -13,6 +13,7 @@ const schedule = require('node-schedule');
 const documentIngestionService = require('./documentIngestionService');
 const s3Service = require('./s3Service');
 const logger = require('../utils/logger');
+const { withLock } = require('./jobLock');
 
 class IngestionScheduler {
   constructor() {
@@ -69,6 +70,23 @@ class IngestionScheduler {
       return;
     }
 
+    // isRunning and lastRunDate are both reset by a restart, so on their own they let a
+    // crash mid-run start a second pass on top of the first. This worker is instances: 1
+    // today, but the lock is what actually holds if that ever changes.
+    const outcome = await withLock(
+      'ingestion-routing',
+      {
+        ttlMs: 120 * 60 * 1000,
+        heartbeat: true,
+        skipMessage: '⏭️ Routing job held by another process, skipping...'
+      },
+      () => this.executeRoutingJob(today)
+    );
+
+    return outcome.ran ? outcome.result : undefined;
+  }
+
+  async executeRoutingJob(today) {
     this.isRunning = true;
     const startTime = Date.now();
 
@@ -136,6 +154,19 @@ class IngestionScheduler {
    * Run the cleanup job - remove old baseline markers
    */
   async runCleanupJob() {
+    const outcome = await withLock(
+      'baseline-marker-cleanup',
+      {
+        ttlMs: 60 * 60 * 1000,
+        skipMessage: '⏭️ Baseline marker cleanup held by another process, skipping...'
+      },
+      () => this.executeCleanupJob()
+    );
+
+    return outcome.ran ? outcome.result : undefined;
+  }
+
+  async executeCleanupJob() {
     try {
       logger.info('🧹 Starting baseline marker cleanup...');
 

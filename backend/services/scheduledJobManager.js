@@ -3,6 +3,7 @@ const winston = require('winston');
 const ScheduledJob = require('../models/ScheduledJob');
 const Customer = require('../models/Customer');
 const emailService = require('./emailService');
+const { withLock } = require('./jobLock');
 
 const logger = winston.createLogger({
   level: 'info',
@@ -287,9 +288,28 @@ class ScheduledJobManager {
   }
 
   /**
-   * Execute a scheduled job
+   * Execute a scheduled job.
+   *
+   * Locked per job: this class only tracks node-schedule handles, never a per-execution
+   * flag, so two cluster instances (or the monitor loop racing the cron) could both enter
+   * here for the same job and send every customer their email twice.
    */
   async executeJob(jobId) {
+    const outcome = await withLock(
+      `scheduled-job:${jobId}`,
+      {
+        ttlMs: 60 * 60 * 1000,
+        heartbeat: true,
+        meta: { jobId: String(jobId) },
+        skipMessage: `⏭️ Scheduled job ${jobId} already running elsewhere, skipping`
+      },
+      () => this.runJob(jobId)
+    );
+
+    return outcome.ran ? outcome.result : undefined;
+  }
+
+  async runJob(jobId) {
     let job;
 
     try {
@@ -636,23 +656,27 @@ class ScheduledJobManager {
    * Start monitoring for jobs that need execution
    */
   startMonitoring() {
-    // Check every minute for jobs that need execution
+    // Check every minute for jobs that need execution. The sweep itself is locked so
+    // two instances do not both build the due list; executeJob then locks per job.
     setInterval(async () => {
-      try {
-        const now = new Date();
-        const jobs = await ScheduledJob.find({
-          isActive: true,
-          status: 'SCHEDULED',
-          'execution.nextRunAt': { $lte: now }
-        });
+      await withLock('scheduled-job-monitor', { ttlMs: 2 * 60 * 1000, skipMessage: false }, async () => {
+        try {
+          const now = new Date();
+          const jobs = await ScheduledJob.find({
+            isActive: true,
+            status: 'SCHEDULED',
+            jobType: { $nin: ScheduledJob.RETIRED_JOB_TYPES },
+            'execution.nextRunAt': { $lte: now }
+          });
 
-        for (const job of jobs) {
-          await this.executeJob(job._id);
+          for (const job of jobs) {
+            await this.executeJob(job._id);
+          }
+
+        } catch (error) {
+          logger.error('Error in monitoring loop:', error);
         }
-
-      } catch (error) {
-        logger.error('Error in monitoring loop:', error);
-      }
+      });
     }, 60000); // Every minute
 
     logger.info('Started job monitoring loop');

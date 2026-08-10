@@ -3,6 +3,7 @@ const DailyRun = require('../models/DailyRun');
 const DailyRunItem = require('../models/DailyRunItem');
 const { S3Client, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 const { getBucket, getRegion } = require('../utils/awsConfig');
+const { withLock } = require('./jobLock');
 
 const s3Client = new S3Client({
   region: getRegion(),
@@ -30,6 +31,24 @@ class DailyRunService {
       return;
     }
 
+    // This is reachable from POST /api/runs/daily, which PM2 load-balances across both
+    // cluster instances - so the in-process isScanning flag on one fork says nothing
+    // about the other. Two concurrent scans of the same run would double every counter.
+    const outcome = await withLock(
+      'daily-run-scan',
+      {
+        ttlMs: 120 * 60 * 1000,
+        heartbeat: true,
+        meta: { runId },
+        skipMessage: `⏭️ Daily run scan held by another process, skipping run ${runId}`
+      },
+      () => this.executeScan(runId)
+    );
+
+    return outcome.ran ? outcome.result : undefined;
+  }
+
+  async executeScan(runId) {
     this.isScanning = true;
 
     try {

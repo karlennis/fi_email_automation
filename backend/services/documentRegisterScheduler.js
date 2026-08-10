@@ -4,6 +4,7 @@ const fastS3Scanner = require('./fastS3Scanner');
 const fs = require('fs');
 const path = require('path');
 const XLSX = require('xlsx');
+const { withLock } = require('./jobLock');
 
 class DocumentRegisterScheduler {
     constructor() {
@@ -98,23 +99,49 @@ class DocumentRegisterScheduler {
      * No longer accumulates documents in arrays - streams directly to CSV
      */
     async runDailyGeneration() {
+        // this.isRunning is the cheap in-process short-circuit; the Mongo lock is what
+        // actually prevents two PM2 cluster instances writing the same CSV concurrently.
         if (this.isRunning) {
             logger.warn('Document register generation already running, skipping...');
-            return {
-                totalDocuments: 0,
-                uniqueProjects: 0,
-                csvPath: null,
-                xlsxPath: null,
-                metadataPath: null,
-                stats: null,
-                skipped: true,
-                reason: 'Already running'
-            };
+            return this.skippedResult('Already running');
         }
 
+        const outcome = await withLock(
+            'document-register-daily',
+            {
+                ttlMs: 60 * 60 * 1000,
+                heartbeat: true,
+                skipMessage: '⏭️ Document register generation held by another instance, skipping...'
+            },
+            () => this.generateDailyRegister()
+        );
+
+        return outcome.ran ? outcome.result : this.skippedResult(outcome.reason);
+    }
+
+    skippedResult(reason) {
+        return {
+            totalDocuments: 0,
+            uniqueProjects: 0,
+            csvPath: null,
+            xlsxPath: null,
+            metadataPath: null,
+            stats: null,
+            skipped: true,
+            reason
+        };
+    }
+
+    /**
+     * The actual generation. Always call through runDailyGeneration() so it stays locked.
+     */
+    async generateDailyRegister() {
         this.isRunning = true;
         const startTime = new Date();
         logger.info('⚡ Starting STREAMING document register generation (memory safe)...');
+
+        // Declared out here so the failure path can clear them.
+        const tempPaths = [];
 
         try {
             const timestamp = new Date().toISOString().split('T')[0];
@@ -125,15 +152,27 @@ class DocumentRegisterScheduler {
 
             const csvPath = path.join(outputDir, `document-register-${timestamp}.csv`);
 
+            // Write to a process-private temp file and rename on success. Renames within
+            // a directory are atomic, so the final name only ever exists complete - a
+            // crashed or concurrent run can no longer leave a truncated CSV that looks
+            // finished. (Two instances used to open a write stream on the same path and
+            // interleave their output line by line.)
+            const csvTempPath = `${csvPath}.${process.pid}.part`;
+            tempPaths.push(csvTempPath);
+
             // STREAMING CSV GENERATION - No document arrays in memory
             logger.info('📅 Starting streaming CSV generation for yesterday...');
             const streamResult = await this.streamDailyRegisterToCSV({
-                csvPath,
+                csvPath: csvTempPath,
                 date: timestamp
             });
 
+            fs.renameSync(csvTempPath, csvPath);
+
             // Generate safe metadata - NO DOCUMENTS ARRAY
             const metadataPath = path.join(outputDir, `register-metadata-${timestamp}.json`);
+            const metadataTempPath = `${metadataPath}.${process.pid}.part`;
+            tempPaths.push(metadataTempPath);
             const safeMetadata = {
                 generatedAt: new Date().toISOString(),
                 date: timestamp,
@@ -150,7 +189,8 @@ class DocumentRegisterScheduler {
                 }
             };
             
-            fs.writeFileSync(metadataPath, JSON.stringify(safeMetadata, null, 2));
+            fs.writeFileSync(metadataTempPath, JSON.stringify(safeMetadata, null, 2));
+            fs.renameSync(metadataTempPath, metadataPath);
 
             // XLSX is disabled for memory safety (can be re-enabled with streaming XLSX writer)
             const xlsxPath = null;
@@ -184,6 +224,15 @@ class DocumentRegisterScheduler {
             logger.error('Stack trace:', error.stack);
             throw error;
         } finally {
+            // Partial output is never useful and would otherwise accumulate one file per
+            // failed night. The already-renamed final files are untouched.
+            for (const tempPath of tempPaths) {
+                try {
+                    if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+                } catch (cleanupError) {
+                    logger.warn(`Could not remove partial file ${tempPath}: ${cleanupError.message}`);
+                }
+            }
             this.isRunning = false;
         }
     }

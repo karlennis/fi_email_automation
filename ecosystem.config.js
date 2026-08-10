@@ -3,11 +3,21 @@ module.exports = {
     {
       name: 'fi-email-backend',
       script: './backend/server.js',
+      // Two instances for API throughput. Schedulers are registered only on the fork
+      // where NODE_APP_INSTANCE === '0' (see backend/utils/clusterRole.js), and every
+      // scheduled job additionally takes a Mongo lock (backend/services/jobLock.js) -
+      // without both, every cron here fires twice and two processes interleave their
+      // writes to the same document-register CSV.
+      //
+      // Changing this env block needs `pm2 delete fi-email-backend && pm2 start
+      // ecosystem.config.js`; `pm2 reload` does not pick up env changes.
       instances: 2,
       exec_mode: 'cluster',
+      instance_var: 'NODE_APP_INSTANCE',
       node_args: '--expose-gc --max-old-space-size=1536',
       env: {
-        NODE_ENV: 'production'
+        NODE_ENV: 'production',
+        SCHEDULERS_ENABLED: 'true'
       },
       error_file: '/var/log/fi_email/backend-error.log',
       out_file: '/var/log/fi_email/backend-out.log',

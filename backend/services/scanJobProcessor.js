@@ -22,6 +22,7 @@ const path = require('path');
 const { pipeline } = require('stream/promises');
 const { normalizeReportType, getQuoteTerms } = require('./reportTypes');
 const { getBucket } = require('../utils/awsConfig');
+const { withLock } = require('./jobLock');
 
 // Delivery-run attempts before an unfound-metadata match is permanently expired
 const MAX_METADATA_RETRIES = 4;
@@ -119,6 +120,22 @@ class ScanJobProcessor {
             return;
         }
 
+        // Defence in depth: this runs in the single fork-mode worker today, but both
+        // in-process guards above are wiped by a restart, so a crash-loop around 12:10 AM
+        // could enqueue the same job repeatedly.
+        const outcome = await withLock(
+            'scan-job-enqueue-daily',
+            {
+                ttlMs: 10 * 60 * 1000,
+                skipMessage: '⏭️ Daily scan enqueue held by another process, skipping...'
+            },
+            () => this.enqueueDueJobs(today)
+        );
+
+        return outcome.ran ? outcome.result : undefined;
+    }
+
+    async enqueueDueJobs(today) {
         this.isRunning = true;
 
         try {
@@ -1781,6 +1798,18 @@ class ScanJobProcessor {
      * Process deferred deliveries once configured delivery time has been reached.
      */
     async processPendingDeliveries() {
+        // Fires every minute. Locked so a second process can never send the same
+        // customer their leads twice; silent on skip to keep the log readable.
+        const outcome = await withLock(
+            'scan-delivery-sweep',
+            { ttlMs: 5 * 60 * 1000, skipMessage: false },
+            () => this.deliverPendingJobs()
+        );
+
+        return outcome.ran ? outcome.result : undefined;
+    }
+
+    async deliverPendingJobs() {
         try {
             const now = new Date();
             const today = now.toISOString().split('T')[0];

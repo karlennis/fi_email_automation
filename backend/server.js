@@ -207,17 +207,36 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/fi-email-
     .then(() => logger.info('Primary admin account verified'))
     .catch(error => logger.error('Failed to ensure primary admin:', error));
 
-  // Initialize scheduled job manager after DB connection
-  scheduledJobManager.initialize()
-    .then(() => logger.info('Scheduled job manager initialized successfully'))
-    .catch(error => logger.error('Failed to initialize scheduled job manager:', error));
+  // This app runs with instances: 2 in PM2 cluster mode, so everything below would
+  // otherwise be registered twice and every cron would fire twice. Only the primary
+  // fork registers schedulers; the Mongo lock inside each job is the real guarantee.
+  const { isPrimaryInstance, describeInstance } = require('./utils/clusterRole');
 
-  // Initialize document register scheduler after DB connection
-  try {
-    documentRegisterScheduler.initialize();
-    logger.info('Document register scheduler initialized successfully');
-  } catch (error) {
-    logger.error('Failed to initialize document register scheduler:', error);
+  if (!isPrimaryInstance()) {
+    logger.info(`Schedulers not registered on this process (${describeInstance()}) - serving API only`);
+  } else {
+    logger.info(`Registering schedulers on the primary process (${describeInstance()})`);
+
+    // Initialize scheduled job manager after DB connection
+    scheduledJobManager.initialize()
+      .then(() => logger.info('Scheduled job manager initialized successfully'))
+      .catch(error => logger.error('Failed to initialize scheduled job manager:', error));
+
+    // Initialize document register scheduler after DB connection
+    try {
+      documentRegisterScheduler.initialize();
+      logger.info('Document register scheduler initialized successfully');
+    } catch (error) {
+      logger.error('Failed to initialize document register scheduler:', error);
+    }
+
+    // Start daily run worker
+    try {
+      dailyRunWorker.start();
+      logger.info('Daily run worker started successfully');
+    } catch (error) {
+      logger.error('Failed to start daily run worker:', error);
+    }
   }
 
   // NOTE: Ingestion scheduler moved to ingestion-worker.js
@@ -226,22 +245,16 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/fi-email-
   // NOTE: Scan job processor removed from backend - now runs in worker.js
   // The backend API only enqueues jobs to Redis via scanJobQueue
 
-  // Reset stale processing items for restart safety
-  dailyRunService.resetStaleItems().then(count => {
+  // Reset stale processing items for restart safety. Left ungated: it is an idempotent
+  // updateMany, and both forks running it is harmless.
+  dailyRunService.resetStaleItems().then(result => {
+    const count = typeof result === 'number' ? result : (result?.modifiedCount || 0);
     if (count > 0) {
       logger.info(`♻️ Reset ${count} stale items on startup`);
     }
   }).catch(err => {
     logger.error('Failed to reset stale items:', err);
   });
-
-  // Start daily run worker
-  try {
-    dailyRunWorker.start();
-    logger.info('Daily run worker started successfully');
-  } catch (error) {
-    logger.error('Failed to start daily run worker:', error);
-  }
 })
 .catch((err) => {
   logger.error('MongoDB connection error:', err);
