@@ -282,24 +282,24 @@ The resend modal collects project IDs only (`reports-list.component.ts:939`) and
 | 10 | `runChat` crash on text completion; no 429/5xx retry | 2.3, 2.4 |
 | 11 | Silent successes: `SKIPPED` status, `needsReview`, coverage logging | 4 |
 
-**Tier 2 — deferred, tracked here**
+**Tier 2 — the reliability subset shipped in the Phase 2 pass (§7); the rest still open**
 
-| # | Finding | Section |
-|---|---|---|
-| 12 | Cluster mode fires every cron twice | 4.1 |
-| 13 | No backfill for missed days | 1.6 |
-| 14 | Text truncation hides late-document FI requests; dead page filter | 1.8 |
-| 15 | Jobs stuck PAUSED with no alerting or dead-letter | 1.9 |
-| 16 | Baseline markers excluding 60% of documents — verify cleanup | 1.10 |
-| 17 | Stage-3 vision service non-functional | 2.8 |
-| 18 | Contradictory policies between docfiles and per-document AI paths | 2.6 |
-| 19 | Fabricated confidence values | 2.7 |
-| 20 | Format exclusions (`.doc`, `.msg`, `.eml`), 25MB cap, 25s timeout | 1.7 |
-| 21 | Resend cannot deselect duplicates | 3.4 |
-| 22 | `DailyRun` counter drift leaves runs permanently `processing` | 4 |
-| 23 | Broken test scripts; no CI coverage for AI logic | 2.9 |
-| 24 | `scheduledJobManager.js:491, 744, 754` call methods that don't exist on `fiDetectionService` | — |
-| 25 | `S3_BUCKET` vs `S3_BUCKET_NAME` env split between scanner and services | — |
+| # | Finding | Section | Status |
+|---|---|---|---|
+| 12 | Cluster mode fires every cron twice | 4.1 | **Done** |
+| 13 | No backfill for missed days | 1.6 | **Done** |
+| 14 | Text truncation hides late-document FI requests; dead page filter | 1.8 | Open |
+| 15 | Jobs stuck PAUSED with no alerting or dead-letter | 1.9 | **Done** |
+| 16 | Baseline markers excluding 60% of documents — verify cleanup | 1.10 | **Done** |
+| 17 | Stage-3 vision service non-functional | 2.8 | Open |
+| 18 | Contradictory policies between docfiles and per-document AI paths | 2.6 | Open |
+| 19 | Fabricated confidence values | 2.7 | Open |
+| 20 | Format exclusions (`.doc`, `.msg`, `.eml`), 25MB cap, 25s timeout | 1.7 | Open |
+| 21 | Resend cannot deselect duplicates | 3.4 | **Done** |
+| 22 | `DailyRun` counter drift leaves runs permanently `processing` | 4 | **Done** |
+| 23 | Broken test scripts; no CI coverage for AI logic | 2.9 | Open |
+| 24 | `scheduledJobManager.js:491, 744, 754` call methods that don't exist on `fiDetectionService` | — | **Done** |
+| 25 | `S3_BUCKET` vs `S3_BUCKET_NAME` env split between scanner and services | — | **Done** |
 
 ---
 
@@ -348,7 +348,79 @@ real stored quotes and filenames rather than synthetic examples.
 
 **Not addressed in this pass** — Tier 2 above remains open, most importantly the absence
 of any backfill for missed days (§1.6) and the double-firing crons under cluster mode
-(§4.1).
+(§4.1). Both are addressed in §7.
+
+---
+
+## 7. Outcome of the Phase 2 (Tier 2 reliability) pass
+
+Scope was the subset of Tier 2 that silently loses leads or corrupts state: items
+**12, 13, 15, 16, 21, 22, 24, 25**. Recall work (14, 20), AI quality (17, 18, 19) and
+CI/test hygiene (23) were explicitly deferred to a Phase 3.
+
+| Item | Change | Commit |
+|---|---|---|
+| 25 | `backend/utils/awsConfig.js` — one resolver for bucket and region; boot asserts refuse to start when two spellings disagree | `6406d3d` |
+| 24 | Deleted `executeReportGeneration`, `executeFIDetection`, `createPreprocessSchedule` and the pre-processing triggers (−386 lines); retired job types blocked at creation and at boot | `829c7a3` |
+| 12 | `models/JobLock.js` + `services/jobLock.js` (`withLock`) and `utils/clusterRole.js`; 8 locked call sites; atomic `.part`→rename for the register CSV | `12e68c0` |
+| 22 | `$inc` by the count that actually inserted; `reconcileCounters()`; `checkRunCompletion` counts items, not counters; `POST /api/runs/:runId/reconcile` | `c878297` |
+| 15 | `ScanJob.recovery` sub-doc; `sweepStuckJobs()` every 15 min; dead-letter drain; `emailService.sendJobAlertEmail()`; per-`targetDate` Bull keys | `f99ac3a` |
+| 13 | `ScanJobDailyResult.scanAttempts`; `findCoverageGaps()`, `enqueueBackfill()`, `buildDeliveryWindowFilter()` | `7111c35` |
+| 16 | `hasBaselineMarker` fails closed and counts failures; single retention constant; marker written **before** the copies; ingestion jobs now alert | `025bb23` |
+| 21 | `selectProjectsForResend()` keyed on the subdocument `_id`; both modals send `includedMatchIds`; cards show the document name | `1310d60` |
+
+Three defects were found while writing the tests, and are worth recording because each
+would have shipped as a new bug:
+
+- **The sweeper would have started jobs nobody enabled.** `status` defaults to `PAUSED`
+  on the schema, so "PAUSED" means both "the worker failed this" and "an admin created
+  this and never turned it on". The recovery query now also requires
+  `recovery.consecutiveFailures >= 1`.
+- **Backfill could never have looked past yesterday.** The gap horizon was
+  `min(lookbackDays, 14)`, and `lookbackDays` is 1 on essentially every job — so the
+  horizon collapsed to the single day the nightly run had just enqueued. `lookbackDays`
+  governs *delivery* aggregation; coverage is now bounded by `SCAN_BACKFILL_HORIZON_DAYS`
+  alone.
+- **Day keys drifted by one on any non-UTC host.** `scanDate` is normalised with
+  `setHours(0,0,0,0)` (local midnight) but keys were formatted with `toISOString()`.
+  Agrees on a UTC server, off by a day anywhere else.
+
+Test coverage went from 35 tests in 2 suites to **161 tests in 11 suites**, all offline
+(no mongo, no redis, no S3, no OpenAI). `npm test` in `backend/` also exits cleanly now:
+`emailService` calls `dotenv.config()` at import and verified its SMTP transport, which
+left a live socket open and hung the runner.
+
+### Rollout order
+
+Each phase is independently deployable, in commit order. Two need care:
+
+1. **`ecosystem.config.js` changed** — needs `pm2 delete fi-email-backend && pm2 start
+   ecosystem.config.js`. `pm2 reload` does not pick up env changes.
+2. **Backfill ships disabled.** Run `node backend/scripts/audit-scan-coverage.js` first:
+   it reports the gap list *and* how many undelivered rows the widened delivery window
+   would sweep into the next send. If that number is large, backdate `delivered: true`
+   on rows older than the horizon before setting `SCAN_BACKFILL_ENABLED=true`, or the
+   first night dumps weeks of stale leads on customers.
+
+New environment variables, all with safe defaults: `SCAN_BACKFILL_ENABLED` (off),
+`SCAN_BACKFILL_HORIZON_DAYS` (14), `SCAN_BACKFILL_MAX_DAYS_PER_NIGHT` (1),
+`SCAN_STUCK_SWEEP_ENABLED` (on), `SCAN_MAX_AUTO_RECOVERY` (3), `ALERT_COOLDOWN_HOURS`
+(6), `ALERT_EMAIL`, `BASELINE_MARKER_RETENTION_DAYS` (2), `SCHEDULERS_ENABLED` (on).
+
+### Read-only verification scripts
+
+```sh
+node backend/scripts/audit-scan-coverage.js        # gap list + undelivered backlog
+node backend/scripts/audit-scheduled-jobs.js       # retired job types still active
+node backend/scripts/reconcile-daily-runs.js       # DailyRun counter drift (dry run)
+node document-register/audit-baseline-markers.js   # stale marker count
+node backend/scripts/audit-duplicate-results.js    # Tier 1 — must not regress
+```
+
+**Still open after this pass:** items 14, 17, 18, 19, 20 and 23 — the recall and AI-quality
+work. The `"kind regards"` class of false negative was fixed in Tier 1, but text
+truncation (§1.8) and the silent format/size/timeout exclusions (§1.7) remain the most
+likely remaining causes of the 0.13% match rate.
 
 ## Appendix — reproducing the evidence
 
