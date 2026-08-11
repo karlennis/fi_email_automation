@@ -13,10 +13,9 @@ const fiReportService = require('./fiReportService');
 const documentIngestionService = require('./documentIngestionService');
 const diskCleanupService = require('./diskCleanupService');
 const logger = require('../utils/logger');
-// Called through the module object rather than destructured: the recovery paths below
-// are unit-tested by spying on these, and a destructured binding would bypass the spy.
+// Always called through the module object, never destructured: a destructured binding
+// is captured at require time and silently bypasses a test's spy on the module.
 const scanJobQueue = require('./scanJobQueue');
-const { enqueueScanJob } = scanJobQueue;
 const optimizedPdfExtractor = require('./optimizedPdfExtractor');
 const StreamingDocumentProcessor = require('./streamingDocumentProcessor');
 const fs = require('fs');
@@ -220,7 +219,7 @@ class ScanJobProcessor {
                             logger.info(`🔄 Job ${job.jobId} needs to resume from checkpoint at ${job.checkpoint.processedCount} documents...`);
                         }
                         // Pass null - processJob will use checkpoint dates for resuming
-                        await enqueueScanJob(job.jobId, { targetDate: null });
+                        await scanJobQueue.enqueueScanJob(job.jobId, { targetDate: null });
                         continue;
                     }
 
@@ -234,7 +233,7 @@ class ScanJobProcessor {
                     }
 
                     // SCHEDULED DAILY RUN: Pass null - processJob will use lookback (yesterday)
-                    await enqueueScanJob(job.jobId, { targetDate: null });
+                    await scanJobQueue.enqueueScanJob(job.jobId, { targetDate: null });
 
                     // Then top up any earlier day this job never covered. Deliberately not
                     // reached from the resume branches above: a job that is mid-way through
@@ -2241,14 +2240,34 @@ class ScanJobProcessor {
      *
      * @returns {Promise<string[]>} YYYY-MM-DD, oldest first
      */
+    /**
+     * YYYY-MM-DD from a Date's LOCAL parts.
+     *
+     * scanDate is normalised with setHours(0,0,0,0), which is local midnight, so a day
+     * key must be read back the same way. Using toISOString() here would shift the key
+     * by a day on any host that is not UTC - which is every developer machine west or
+     * east of Greenwich, and any deployment whose TZ is set.
+     */
+    toLocalDateKey(date) {
+        const d = new Date(date);
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${d.getFullYear()}-${month}-${day}`;
+    }
+
     async findCoverageGaps(job, { horizonDays, endDate } = {}) {
         const MAX_EMPTY_ATTEMPTS = 2;
 
-        // A full bucket walk per day is expensive, so the horizon is capped hard: a job
-        // configured with lookbackDays 365 must not be able to request a year of them.
-        const configuredLookback = job.schedule?.lookbackDays || 1;
+        // How far back to look for gaps. Deliberately NOT job.schedule.lookbackDays:
+        // that governs delivery and is 1 for essentially every job, which would limit
+        // gap detection to yesterday - the one day the nightly run has just enqueued -
+        // and the feature would never find anything.
+        //
+        // It is the same horizon buildDeliveryWindowFilter uses for its backfillFloor,
+        // so a day that can be found can also be delivered. Capped because every extra
+        // day is a full bucket walk (~570k objects).
         const cap = parseInt(process.env.SCAN_BACKFILL_HORIZON_DAYS || '14', 10);
-        const horizon = Math.max(1, Math.min(horizonDays || configuredLookback, cap));
+        const horizon = Math.max(1, Math.min(horizonDays || cap, cap));
 
         // Yesterday is the newest day a scan can cover; today is still accumulating.
         const windowEnd = endDate ? new Date(endDate) : new Date();
@@ -2266,12 +2285,12 @@ class ScanJobProcessor {
 
         const byDate = new Map();
         for (const row of rows) {
-            byDate.set(new Date(row.scanDate).toISOString().split('T')[0], row);
+            byDate.set(this.toLocalDateKey(row.scanDate), row);
         }
 
         const gaps = [];
         for (let day = new Date(windowStart); day <= windowEnd; day.setDate(day.getDate() + 1)) {
-            const key = day.toISOString().split('T')[0];
+            const key = this.toLocalDateKey(day);
             const row = byDate.get(key);
 
             if (!row) {
@@ -2308,14 +2327,14 @@ class ScanJobProcessor {
 
             // Never hand a job a second copy of the day it is already part-way through.
             const inFlight = job.checkpoint?.isResuming && job.checkpoint?.scanStartDate
-                ? new Date(job.checkpoint.scanStartDate).toISOString().split('T')[0]
+                ? this.toLocalDateKey(job.checkpoint.scanStartDate)
                 : null;
 
             const candidates = gaps.filter(day => day !== inFlight).slice(0, limit);
 
             for (const targetDate of candidates) {
                 logger.info(`🕳️ Backfilling missed day ${targetDate} for job ${job.jobId} (${gaps.length} gap(s) outstanding)`);
-                await enqueueScanJob(job.jobId, { targetDate });
+                await scanJobQueue.enqueueScanJob(job.jobId, { targetDate });
             }
 
             if (gaps.length > candidates.length) {
@@ -2795,7 +2814,7 @@ class ScanJobProcessor {
 
             // Mark daily results as delivered
             await ScanJobDailyResult.updateMany(
-                { jobId: job.jobId, scanDate: { $gte: windowStart, $lte: windowEnd } },
+                deliveryWindow.filter,
                 { $set: { delivered: true, deliveredAt: new Date() } }
             );
 
