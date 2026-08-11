@@ -13,12 +13,19 @@
  * network. Tests that care about send behaviour spy on the service methods directly.
  *
  * This must be a `setupFiles` entry, not `setupFilesAfterEnv`: the transporter is built
- * in the module constructor, so the variables have to be gone before the first require.
+ * in the module constructor, so the variables have to be neutralised before the first
+ * require.
+ *
+ * They are set to '' rather than deleted. emailService calls dotenv.config() itself at
+ * import, and dotenv only skips a key that is already an own property of process.env -
+ * so a deleted variable is simply reloaded from backend/.env and the socket opens
+ * anyway. An empty string is an own property, so dotenv leaves it alone, and the
+ * service's `!process.env.SMTP_USER` guard treats it as unconfigured.
  */
 
-delete process.env.SMTP_USER;
-delete process.env.SMTP_PASS;
-delete process.env.SMTP_HOST;
+process.env.SMTP_USER = '';
+process.env.SMTP_PASS = '';
+process.env.SMTP_HOST = '';
 
 // Belt and braces: nothing in a test run should be talking to a real service.
 process.env.NODE_ENV = 'test';
