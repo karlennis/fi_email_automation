@@ -883,6 +883,98 @@ class EmailService {
       return { success: false, error: error.message };
     }
   }
+
+  /**
+   * Operational alert about a job that needs a human.
+   *
+   * Deliberately separate from sendScanSummaryEmail: that one takes a scan-shaped
+   * payload (processedCount, matchesFound, matches[]) and renders a "Scan Complete"
+   * subject, so reusing it for a failure would send an email that reads like a success.
+   *
+   * @param {string} toEmail
+   * @param {object} alert
+   * @param {'critical'|'warning'} alert.severity
+   * @param {string} alert.subject   short subject line, prefixed with the severity
+   * @param {string} alert.headline  one sentence: what happened
+   * @param {string} [alert.jobId]
+   * @param {string} [alert.jobName]
+   * @param {object} [alert.details] label -> value rows rendered as a table
+   * @param {string} [alert.action]  what the operator should do about it
+   */
+  async sendJobAlertEmail(toEmail, alert) {
+    try {
+      if (!this.transporter) {
+        logger.warn('Email service not configured, skipping job alert email');
+        return { success: false, reason: 'Email service not configured' };
+      }
+
+      const { severity = 'warning', subject, headline, jobId, jobName, details = {}, action } = alert;
+
+      const isCritical = severity === 'critical';
+      const accent = isCritical ? '#c62828' : '#ef6c00';
+      const banner = isCritical ? '🚨 CRITICAL' : '⚠️ WARNING';
+
+      const detailRows = Object.entries(details)
+        .filter(([, value]) => value !== undefined && value !== null && value !== '')
+        .map(([label, value]) => `
+          <tr>
+            <td style="border: 1px solid #ddd; padding: 8px; background-color: #fafafa; font-weight: 600; white-space: nowrap;">${label}</td>
+            <td style="border: 1px solid #ddd; padding: 8px;">${value}</td>
+          </tr>
+        `).join('');
+
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <body style="font-family: Arial, sans-serif; color: #333; margin: 0; padding: 20px;">
+          <div style="max-width: 700px; margin: 0 auto;">
+            <div style="background-color: ${accent}; color: #fff; padding: 16px 20px; border-radius: 4px 4px 0 0;">
+              <h2 style="margin: 0; font-size: 18px;">${banner} — FI Pipeline</h2>
+            </div>
+            <div style="border: 1px solid #ddd; border-top: none; padding: 20px; border-radius: 0 0 4px 4px;">
+              <p style="font-size: 15px; margin-top: 0;">${headline}</p>
+
+              ${jobId || jobName ? `<p style="color: #666; font-size: 14px;">Job: <strong>${jobName || ''}</strong>${jobId ? ` (<code>${jobId}</code>)` : ''}</p>` : ''}
+
+              ${detailRows ? `
+                <table style="border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14px;">
+                  <tbody>${detailRows}</tbody>
+                </table>
+              ` : ''}
+
+              ${action ? `
+                <div style="background-color: #fff8e1; border-left: 4px solid ${accent}; padding: 12px 16px; margin-top: 16px;">
+                  <strong>Action required</strong>
+                  <p style="margin: 6px 0 0 0; font-size: 14px;">${action}</p>
+                </div>
+              ` : ''}
+
+              <p style="color: #888; font-size: 12px; margin-top: 24px; border-top: 1px solid #eee; padding-top: 12px;">
+                Automated alert from the FI Email Automation system.<br>
+                Timestamp: ${new Date().toISOString()}
+              </p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `;
+
+      const result = await this.transporter.sendMail({
+        from: this.getFromAddress(),
+        replyTo: this.getReplyToEmail(),
+        to: toEmail,
+        subject: `[${isCritical ? 'CRITICAL' : 'WARNING'}] ${subject}`,
+        html: htmlContent
+      });
+
+      logger.info(`📧 Job alert email sent to ${toEmail}: ${subject}`);
+      return { success: true, messageId: result.messageId };
+
+    } catch (error) {
+      logger.error('Error sending job alert email:', error);
+      return { success: false, error: error.message };
+    }
+  }
 }
 
 module.exports = new EmailService();

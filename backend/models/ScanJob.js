@@ -82,6 +82,32 @@ const ScanJobSchema = new mongoose.Schema({
     },
     totalDocumentsRaw: Number
   },
+  // Failure tracking for the stuck-job sweeper.
+  //
+  // scanJobWorker sets status PAUSED on any failure and rethrows so Bull retries, but
+  // the recovery query only ever looked for ACTIVE/RUNNING. A job that exhausted its
+  // three Bull attempts was therefore never picked up again by any automated path, with
+  // no dead-letter consumer and no alert - it just silently stopped producing leads.
+  recovery: {
+    // Reset to 0 on every successful run. Caps how many times we auto-resume before
+    // deciding a human has to look.
+    consecutiveFailures: {
+      type: Number,
+      default: 0
+    },
+    lastFailureAt: Date,
+    lastFailureReason: String,
+    // When the job entered PAUSED. The sweeper waits out a grace period from here so
+    // Bull's own retries finish first.
+    pausedAt: Date,
+    // Last alert send, for rate limiting - otherwise a broken job emails every sweep.
+    alertedAt: Date,
+    // Auto-recovery exhausted; the sweeper will not enqueue this again.
+    needsAttention: {
+      type: Boolean,
+      default: false
+    }
+  },
   customers: [{
     customerId: {
       type: mongoose.Schema.Types.ObjectId,

@@ -13,7 +13,10 @@ const fiReportService = require('./fiReportService');
 const documentIngestionService = require('./documentIngestionService');
 const diskCleanupService = require('./diskCleanupService');
 const logger = require('../utils/logger');
-const { enqueueScanJob } = require('./scanJobQueue');
+// Called through the module object rather than destructured: the recovery paths below
+// are unit-tested by spying on these, and a destructured binding would bypass the spy.
+const scanJobQueue = require('./scanJobQueue');
+const { enqueueScanJob } = scanJobQueue;
 const optimizedPdfExtractor = require('./optimizedPdfExtractor');
 const StreamingDocumentProcessor = require('./streamingDocumentProcessor');
 const fs = require('fs');
@@ -62,6 +65,7 @@ class ScanJobProcessor {
         this.isRunning = false;
         this.scheduledJob = null;
         this.deliverySweepJob = null;
+        this.stuckJobSweepJob = null;
         this.lastProcessedDate = null; // Track last processed date to run once per day
     }
 
@@ -85,6 +89,19 @@ class ScanJobProcessor {
             this.deliverySweepJob = schedule.scheduleJob('*/1 * * * *', async () => {
                 await this.processPendingDeliveries();
             });
+
+            // Recover jobs that failed out of the queue entirely. Without this a job that
+            // exhausts its three Bull attempts sits in PAUSED forever - invisible to
+            // processActiveJobs, which only looks for ACTIVE/RUNNING - and silently stops
+            // producing leads for its customers.
+            if (process.env.SCAN_STUCK_SWEEP_ENABLED !== 'false') {
+                this.stuckJobSweepJob = schedule.scheduleJob('*/15 * * * *', async () => {
+                    await this.sweepStuckJobs();
+                });
+                logger.info(`✅ Stuck-job sweeper initialized - checks every 15 minutes`);
+            } else {
+                logger.info('⏭️ Stuck-job sweeper disabled (SCAN_STUCK_SWEEP_ENABLED=false)');
+            }
 
             logger.info(`✅ Scan Job Processor initialized - runs daily at 12:10 AM`);
             logger.info(`✅ Delivery sweeper initialized - checks pending sends every minute`);
@@ -1601,6 +1618,276 @@ class ScanJobProcessor {
     }
 
     /**
+     * Recover jobs that have fallen out of the pipeline, and alert when they cannot be.
+     *
+     * scanJobWorker sets PAUSED on failure and rethrows so Bull retries three times. But
+     * processActiveJobs only queries { status: { $in: ['ACTIVE','RUNNING'] } }, so once
+     * those attempts are exhausted nothing ever looks at the job again: no dead-letter
+     * consumer, no alert, and the job silently stops producing leads for its customers.
+     * scripts/check-stuck-jobs.js and clear-stuck-jobs.js exist because this happens.
+     */
+    async sweepStuckJobs() {
+        const outcome = await withLock(
+            'scan-stuck-job-sweep',
+            { ttlMs: 5 * 60 * 1000, skipMessage: false },
+            () => this.recoverStuckJobs()
+        );
+        return outcome.ran ? outcome.result : undefined;
+    }
+
+    async recoverStuckJobs() {
+        const maxAutoRecovery = parseInt(process.env.SCAN_MAX_AUTO_RECOVERY || '3', 10);
+        // Bull retries with exponential backoff from 5s over three attempts. Waiting out
+        // a grace period keeps the sweeper from racing those retries and double-queueing.
+        const graceMs = parseInt(process.env.SCAN_PAUSED_GRACE_MINUTES || '30', 10) * 60 * 1000;
+        const runningStaleMs = parseInt(process.env.SCAN_RUNNING_STALE_MINUTES || '60', 10) * 60 * 1000;
+        const now = Date.now();
+
+        const summary = { resumed: 0, needsAttention: 0, runningReset: 0, drained: 0 };
+
+        try {
+            const stuckJobs = await ScanJob.find({
+                $or: [
+                    // PAUSED is the schema default, so it also means "created but never
+                    // started". Only a job the worker actually failed carries a non-zero
+                    // consecutiveFailures - without this the sweeper would launch jobs an
+                    // admin had never enabled and email their customers unbidden.
+                    // (The memory circuit breaker throws into that same catch, so it is
+                    // covered too.)
+                    { status: 'PAUSED', 'recovery.consecutiveFailures': { $gte: 1 } },
+                    { status: 'RUNNING' }
+                ]
+            }).select('jobId name status checkpoint recovery');
+
+            for (const job of stuckJobs) {
+                try {
+                    if (job.status === 'PAUSED') {
+                        await this.recoverPausedJob(job, { now, graceMs, maxAutoRecovery, summary });
+                    } else {
+                        await this.recoverStalledRunningJob(job, { now, runningStaleMs, summary });
+                    }
+                } catch (error) {
+                    logger.error(`❌ Error recovering stuck job ${job.jobId}:`, error);
+                }
+            }
+
+            summary.drained = await this.drainFailedQueueJobs();
+
+            if (summary.resumed || summary.needsAttention || summary.runningReset || summary.drained) {
+                logger.info(
+                    `🩺 Stuck-job sweep: ${summary.resumed} resumed, ${summary.runningReset} stalled RUNNING reset, ` +
+                    `${summary.needsAttention} needing attention, ${summary.drained} dead-letter job(s) drained`
+                );
+            }
+
+            return summary;
+
+        } catch (error) {
+            logger.error('❌ Stuck-job sweep failed:', error);
+            return summary;
+        }
+    }
+
+    /**
+     * A PAUSED job: resume it, or give up and alert once.
+     */
+    async recoverPausedJob(job, { now, graceMs, maxAutoRecovery, summary }) {
+        const recovery = job.recovery || {};
+        const pausedAt = recovery.pausedAt ? new Date(recovery.pausedAt).getTime() : null;
+
+        // The worker always stamps pausedAt alongside the failure count, so anything
+        // reaching here has one. A job predating this field falls back to its checkpoint
+        // heartbeat; if it has neither it cannot be dated, and guessing would risk
+        // resuming something that was paused deliberately - leave it for
+        // scripts/check-stuck-jobs.js.
+        const referenceTime = pausedAt || (job.checkpoint?.lastCheckpointTime
+            ? new Date(job.checkpoint.lastCheckpointTime).getTime()
+            : null);
+
+        if (!referenceTime) {
+            logger.warn(
+                `⚠️ Job ${job.jobId} is PAUSED with ${recovery.consecutiveFailures || 0} failure(s) but no ` +
+                `pausedAt or checkpoint time - cannot date it, leaving for manual review`
+            );
+            return;
+        }
+
+        if (now - referenceTime < graceMs) {
+            return;   // still inside Bull's own retry window
+        }
+
+        const failures = recovery.consecutiveFailures || 0;
+
+        if (failures >= maxAutoRecovery) {
+            if (!recovery.needsAttention) {
+                job.recovery = { ...recovery, needsAttention: true };
+                await job.save();
+            }
+            summary.needsAttention++;
+
+            await this.sendJobAlert(job, {
+                severity: 'critical',
+                subject: `Scan job ${job.jobId} needs attention`,
+                headline:
+                    `This job has failed ${failures} consecutive times and automatic recovery has stopped. ` +
+                    `It is not scanning, and its customers are receiving no leads.`,
+                details: {
+                    'Consecutive failures': failures,
+                    'Last failure': recovery.lastFailureAt ? new Date(recovery.lastFailureAt).toISOString() : 'unknown',
+                    'Last error': recovery.lastFailureReason || 'unknown',
+                    'Progress at pause': `${job.checkpoint?.processedCount || 0} / ${job.checkpoint?.totalDocuments || 0} documents`
+                },
+                action:
+                    `Investigate the error above, then clear recovery.consecutiveFailures and set the job ` +
+                    `status back to ACTIVE to re-enable automatic recovery.`
+            });
+            return;
+        }
+
+        logger.warn(
+            `🔄 Job ${job.jobId} has been PAUSED for ${((now - referenceTime) / 60000).toFixed(0)} min ` +
+            `(${failures} consecutive failure(s)) - resuming`
+        );
+
+        job.status = 'ACTIVE';
+        job.checkpoint = job.checkpoint || {};
+        job.checkpoint.isResuming = true;
+        await job.save();
+
+        await scanJobQueue.enqueueScanJob(job.jobId, { targetDate: null });
+        summary.resumed++;
+
+        await this.sendJobAlert(job, {
+            severity: 'warning',
+            subject: `Scan job ${job.jobId} auto-resumed after failure`,
+            headline: `The job failed and was re-queued automatically (attempt ${failures + 1} of ${maxAutoRecovery}).`,
+            details: {
+                'Consecutive failures': failures,
+                'Last error': recovery.lastFailureReason || 'unknown',
+                'Progress at pause': `${job.checkpoint?.processedCount || 0} / ${job.checkpoint?.totalDocuments || 0} documents`
+            },
+            action: 'No action needed unless this repeats. Automatic recovery stops after ' + maxAutoRecovery + ' failures.'
+        });
+    }
+
+    /**
+     * A RUNNING job whose heartbeat stopped: the worker was killed (OOM, SIGKILL) without
+     * ever reaching the catch that would have set PAUSED, so nothing marks it recoverable.
+     */
+    async recoverStalledRunningJob(job, { now, runningStaleMs, summary }) {
+        const lastBeat = job.checkpoint?.lastCheckpointTime
+            ? new Date(job.checkpoint.lastCheckpointTime).getTime()
+            : null;
+
+        if (!lastBeat || now - lastBeat < runningStaleMs) {
+            return;   // genuinely running, or too soon to tell
+        }
+
+        // Confirm no live queue job before touching it - a slow-but-alive scan that simply
+        // has not checkpointed recently must not be duplicated.
+        try {
+            const queue = scanJobQueue.getScanQueue();
+            const existing = await queue.getJob(scanJobQueue.buildJobKey(job.jobId, null));
+            if (existing) {
+                const state = await existing.getState();
+                if (state === 'active') return;
+            }
+        } catch (error) {
+            // Redis unreachable: leave the job alone rather than guess.
+            logger.warn(`Could not check queue state for ${job.jobId}: ${error.message}`);
+            return;
+        }
+
+        logger.warn(
+            `🔄 Job ${job.jobId} is RUNNING but has not checkpointed for ` +
+            `${((now - lastBeat) / 60000).toFixed(0)} min and has no active queue job - resetting to ACTIVE`
+        );
+
+        job.status = 'ACTIVE';
+        job.checkpoint.isResuming = true;
+        job.recovery = job.recovery || {};
+        job.recovery.pausedAt = new Date();
+        await job.save();
+
+        await scanJobQueue.enqueueScanJob(job.jobId, { targetDate: null });
+        summary.runningReset++;
+    }
+
+    /**
+     * Drain Bull's failed set.
+     *
+     * removeOnFail: 100 keeps the last hundred failures in Redis with nothing consuming
+     * them. Left there, the fixed job key stays occupied and blocks every future enqueue
+     * for that job.
+     */
+    async drainFailedQueueJobs() {
+        let drained = 0;
+
+        try {
+            const queue = scanJobQueue.getScanQueue();
+            const failed = await queue.getFailed(0, 50);
+
+            for (const queueJob of failed) {
+                try {
+                    const jobId = queueJob.data?.jobId;
+                    const reason = queueJob.failedReason || 'unknown';
+
+                    if (jobId) {
+                        await ScanJob.updateOne(
+                            { jobId },
+                            {
+                                $set: {
+                                    'recovery.lastFailureAt': new Date(queueJob.finishedOn || Date.now()),
+                                    'recovery.lastFailureReason': String(reason).slice(0, 500)
+                                }
+                            }
+                        );
+                    }
+
+                    logger.warn(`🧹 Draining dead-letter queue job ${queueJob.id}: ${reason}`);
+                    await queueJob.remove();
+                    drained++;
+                } catch (error) {
+                    logger.warn(`Could not drain failed queue job ${queueJob.id}: ${error.message}`);
+                }
+            }
+        } catch (error) {
+            // Redis may be down; the sweep's other work is still worth doing.
+            logger.warn(`Could not drain the failed queue: ${error.message}`);
+        }
+
+        return drained;
+    }
+
+    /**
+     * Send an operational alert about a job, rate-limited per job.
+     *
+     * Without the cooldown a permanently broken job would email every 15 minutes.
+     */
+    async sendJobAlert(job, alert) {
+        const cooldownHours = parseFloat(process.env.ALERT_COOLDOWN_HOURS || '6');
+        const alertedAt = job.recovery?.alertedAt ? new Date(job.recovery.alertedAt).getTime() : 0;
+
+        if (alertedAt && Date.now() - alertedAt < cooldownHours * 3600000) {
+            return { success: false, reason: 'cooldown' };
+        }
+
+        const recipient = process.env.ALERT_EMAIL || process.env.ADMIN_EMAIL || 'afatogun@buildinginfo.com';
+
+        const result = await emailService.sendJobAlertEmail(recipient, {
+            ...alert,
+            jobId: job.jobId,
+            jobName: job.name
+        });
+
+        // Stamp regardless of send outcome: a failing transporter must not turn the
+        // cooldown off and let every subsequent sweep retry a send that cannot work.
+        await ScanJob.updateOne({ jobId: job.jobId }, { $set: { 'recovery.alertedAt': new Date() } });
+
+        return result;
+    }
+
+    /**
      * Stop the processor
      */
     stop() {
@@ -1609,6 +1896,9 @@ class ScanJobProcessor {
         }
         if (this.deliverySweepJob) {
             this.deliverySweepJob.cancel();
+        }
+        if (this.stuckJobSweepJob) {
+            this.stuckJobSweepJob.cancel();
         }
         logger.info('🛑 Scan Job Processor stopped');
     }

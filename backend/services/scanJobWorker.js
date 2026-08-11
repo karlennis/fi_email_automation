@@ -23,14 +23,31 @@ async function processScanJob(job) {
     await scanJobProcessor.processJob(scanJob, targetDate || null);
     scanJob.status = 'ACTIVE';
     scanJob.checkpoint.isResuming = false;
+
+    // A success clears the failure history, so an occasional transient error never
+    // accumulates toward the auto-recovery cap.
+    scanJob.recovery = scanJob.recovery || {};
+    scanJob.recovery.consecutiveFailures = 0;
+    scanJob.recovery.needsAttention = false;
+    scanJob.recovery.pausedAt = null;
+
     await scanJob.save();
     logger.info(`✅ Worker completed scan job: ${jobId}`);
   } catch (error) {
     logger.error(`❌ Worker failed scan job ${jobId}:`, error);
     scanJob.status = 'PAUSED';
     scanJob.checkpoint.isResuming = true;
+
+    // Recorded so sweepStuckJobs can tell a first failure (retry it) from a job that
+    // has been failing all week (alert instead of looping).
+    scanJob.recovery = scanJob.recovery || {};
+    scanJob.recovery.consecutiveFailures = (scanJob.recovery.consecutiveFailures || 0) + 1;
+    scanJob.recovery.lastFailureAt = new Date();
+    scanJob.recovery.lastFailureReason = String(error && error.message ? error.message : error).slice(0, 500);
+    scanJob.recovery.pausedAt = new Date();
+
     await scanJob.save();
-    throw error;
+    throw error;   // let Bull run its remaining attempts
   }
 }
 

@@ -90,9 +90,27 @@ function getScanQueue() {
   return scanQueue;
 }
 
+// A waiting/active Bull job older than this is presumed abandoned - its worker died
+// without Bull noticing. Bull's own stalled check (stalledInterval 10min,
+// maxStalledCount 2) is the normal recovery, but under Upstash it can give up quietly,
+// and the fixed job key then blocks every future enqueue for that job forever.
+const STALE_QUEUE_JOB_MS = parseInt(process.env.SCAN_STALE_QUEUE_JOB_MS || String(6 * 60 * 60 * 1000), 10);
+
+/**
+ * Bull job key for a scan.
+ *
+ * Keying by jobId alone meant a backfill for a specific day collided with the nightly
+ * run of the same job: the second enqueue found an existing key and silently returned
+ * without queueing anything. Days 2..N of a backfill would simply never run.
+ */
+function buildJobKey(jobId, targetDate) {
+  return targetDate ? `scan:${jobId}:${targetDate}` : `scan:${jobId}`;
+}
+
 async function enqueueScanJob(jobId, options = {}) {
   const queue = getScanQueue();
-  const jobKey = `scan:${jobId}`;
+  const targetDate = options.targetDate || null;
+  const jobKey = buildJobKey(jobId, targetDate);
 
   const existing = await queue.getJob(jobKey);
   if (existing) {
@@ -100,22 +118,33 @@ async function enqueueScanJob(jobId, options = {}) {
     const state = await existing.getState();
     const progress = await existing.progress();
 
-    logger.info(`📋 Job already exists: ${jobId} (state: ${state}, progress: ${progress})`);
+    logger.info(`📋 Job already exists: ${jobKey} (state: ${state}, progress: ${progress})`);
 
-    // If job is waiting or active, don't re-queue
+    // If job is waiting or active, don't re-queue - unless it has clearly been
+    // abandoned, in which case leaving it would block this job permanently.
     if (state === 'waiting' || state === 'active') {
-      logger.info(`⏭️ Job ${jobId} is already in queue with state: ${state}`);
-      return existing;
-    }
+      const startedAt = existing.processedOn || existing.timestamp || 0;
+      const ageMs = startedAt ? Date.now() - startedAt : 0;
 
-    // If job is completed/failed, remove it and re-queue
-    if (state === 'completed' || state === 'failed') {
-      logger.info(`🔄 Job ${jobId} is ${state}, removing and re-queueing...`);
+      if (startedAt && ageMs > STALE_QUEUE_JOB_MS) {
+        logger.warn(
+          `🧹 Queue job ${jobKey} has been ${state} for ${(ageMs / 3600000).toFixed(1)}h ` +
+          `(limit ${(STALE_QUEUE_JOB_MS / 3600000).toFixed(1)}h) - its worker is presumed dead. ` +
+          `Removing and re-queueing.`
+        );
+        await existing.remove();
+      } else {
+        logger.info(`⏭️ Job ${jobKey} is already in queue with state: ${state}`);
+        return existing;
+      }
+    } else if (state === 'completed' || state === 'failed') {
+      // If job is completed/failed, remove it and re-queue
+      logger.info(`🔄 Job ${jobKey} is ${state}, removing and re-queueing...`);
       await existing.remove();
     }
   }
 
-  logger.info(`📥 Enqueuing scan job: ${jobId}`);
+  logger.info(`📥 Enqueuing scan job: ${jobKey}`);
   return queue.add(
     'scan-job',
     { jobId, ...options },
@@ -125,5 +154,7 @@ async function enqueueScanJob(jobId, options = {}) {
 
 module.exports = {
   getScanQueue,
-  enqueueScanJob
+  enqueueScanJob,
+  buildJobKey,
+  STALE_QUEUE_JOB_MS
 };
