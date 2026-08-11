@@ -12,6 +12,7 @@
 const schedule = require('node-schedule');
 const documentIngestionService = require('./documentIngestionService');
 const s3Service = require('./s3Service');
+const emailService = require('./emailService');
 const logger = require('../utils/logger');
 const { withLock } = require('./jobLock');
 
@@ -145,6 +146,18 @@ class IngestionScheduler {
 
     } catch (error) {
       logger.error('❌ Routing job failed:', error);
+
+      // Routing feeds the FI scan 70 minutes later. If it fails, that night scans
+      // whatever happens to already be in planning-docs and nobody is told.
+      await this.sendAlert({
+        severity: 'critical',
+        subject: 'Document routing job failed',
+        headline:
+          'The nightly filter-docs → planning-docs routing job threw. Tonight\'s FI scan will run ' +
+          'against un-routed data, and routing will not retry for 24 hours.',
+        details: { 'Error': error.message },
+        action: 'Investigate, then call ingestionScheduler.triggerRouting() to re-run before the 12:10 AM scan.'
+      });
     } finally {
       this.isRunning = false;
     }
@@ -170,17 +183,61 @@ class IngestionScheduler {
     try {
       logger.info('🧹 Starting baseline marker cleanup...');
 
-      // Remove baseline markers older than 2 days (keep today + yesterday for timing edge cases)
-      const result = await s3Service.cleanupOldBaselineMarkers(2);
+      // Retention comes from s3Service, which is also what hasBaselineMarker looks back
+      // over. Passing a literal here is how the two drifted apart before.
+      const result = await s3Service.cleanupOldBaselineMarkers();
 
       if (result.failed > 0) {
         logger.warn(`⚠️ Cleanup finished with ${result.failed} markers it could not delete (removed ${result.deleted} of ${result.deleted + result.failed})`);
+
+        // A marker that survives cleanup keeps its project excluded from FI scanning
+        // indefinitely, so a persistent failure quietly shrinks the scanned corpus.
+        // 13,239 stale markers accumulated before anyone noticed.
+        await this.sendAlert({
+          severity: 'warning',
+          subject: 'Baseline marker cleanup could not delete some markers',
+          headline:
+            `${result.failed} stale baseline marker(s) could not be deleted (${result.deleted} were). ` +
+            `Every surviving marker keeps its project excluded from FI scanning.`,
+          details: {
+            'Deleted': result.deleted,
+            'Failed': result.failed,
+            'Objects scanned': result.objectsScanned,
+            'Cutoff date': result.cutoffDate
+          },
+          action: 'Check the S3 delete permissions on planning-docs/, then run document-register/audit-baseline-markers.js.'
+        });
       } else {
         logger.info(`✅ Cleanup complete: removed ${result.deleted} old baseline markers`);
       }
 
+      return result;
+
     } catch (error) {
       logger.error('❌ Cleanup job failed:', error);
+
+      await this.sendAlert({
+        severity: 'critical',
+        subject: 'Baseline marker cleanup failed',
+        headline: 'The nightly baseline marker cleanup threw and did not complete. It will not retry for 24 hours.',
+        details: { 'Error': error.message },
+        action: 'Investigate, then run ingestionScheduler.triggerCleanup() or the cleanup script manually.'
+      });
+    }
+  }
+
+  /**
+   * Both ingestion jobs previously swallowed every failure into a log line - no retry,
+   * no persisted state, and the next attempt 24 hours later. Nothing surfaced.
+   */
+  async sendAlert(alert) {
+    try {
+      const recipient = process.env.ALERT_EMAIL || process.env.ADMIN_EMAIL || 'afatogun@buildinginfo.com';
+      return await emailService.sendJobAlertEmail(recipient, alert);
+    } catch (error) {
+      // An alert that cannot be sent must not take the job down with it.
+      logger.error('Failed to send ingestion alert:', error);
+      return { success: false, error: error.message };
     }
   }
 

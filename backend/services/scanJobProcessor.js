@@ -403,6 +403,14 @@ class ScanJobProcessor {
         let vetoedDocuments = 0;    // Response documents that suppressed their project
         let unresolvedCount = 0;    // Could not be judged: parse/OCR/timeout/API failures
         const baselineProjectCache = new Map(); // Cache baseline check results per project
+        // Baseline checks fail closed (an S3 error reports "baselined"), which is right
+        // per-project but hides a bulk failure: a 403 on the prefix would make every
+        // project look baselined and the night would scan nothing.
+        s3Service.resetBaselineCheckErrorCount();
+        // hasBaselineMarker fails closed, which is right per-project but hides a bulk
+        // failure: a 403 on the whole prefix would make every project look baselined and
+        // the night would scan nothing at all. Reset here, checked after the stream.
+        s3Service.resetBaselineCheckErrorCount();
         let skipping = isResuming && (job.checkpoint.lastProcessedPath || job.checkpoint.lastProcessedFile);
         const resumePath = job.checkpoint.lastProcessedPath;
         const resumeFile = job.checkpoint.lastProcessedFile;
@@ -759,6 +767,65 @@ class ScanJobProcessor {
                 `🚨 Job ${job.jobId}: ${unresolvedCount}/${totalProcessed} documents could not be assessed. ` +
                 `Match count for this day is not trustworthy.`
             );
+        }
+
+        // Baseline checks fail closed, so a widespread S3 failure would silently baseline
+        // every project and produce a clean-looking scan of nothing at all.
+        const baselineErrors = s3Service.getBaselineCheckErrorCount();
+        if (baselineErrors > 0) {
+            const checked = baselineProjectCache.size || 1;
+            logger.error(
+                `🚨 Job ${job.jobId}: ${baselineErrors} baseline marker check(s) failed and were treated as ` +
+                `baselined. Those projects were skipped without being examined.`
+            );
+
+            if (baselineErrors / checked > 0.5) {
+                await this.sendJobAlert(job, {
+                    severity: 'critical',
+                    subject: `Scan job ${job.jobId} could not check baseline markers`,
+                    headline:
+                        `${baselineErrors} of ${checked} baseline checks failed. Failed checks are treated as ` +
+                        `"already baselined", so most of this night's projects were skipped rather than scanned. ` +
+                        `The scan will report success with few or no matches.`,
+                    details: {
+                        'Failed checks': baselineErrors,
+                        'Projects checked': checked,
+                        'Documents processed': totalProcessed,
+                        'Matches found': totalMatchesFound
+                    },
+                    action: 'Check S3 credentials and read permissions on planning-docs/, then re-run this day.'
+                });
+            }
+        }
+
+        // Baseline checks fail closed, so a widespread S3 failure presents as "everything
+        // is baselined" and the scan quietly covers nothing. Alert on the ratio.
+        const baselineCheckErrors = s3Service.getBaselineCheckErrorCount();
+        if (baselineCheckErrors > 0) {
+            const checked = baselineProjectCache.size || 1;
+            const ratio = baselineCheckErrors / checked;
+            logger.error(
+                `🚨 Job ${job.jobId}: ${baselineCheckErrors} baseline marker check(s) failed across ` +
+                `${baselineProjectCache.size} project(s). Failed checks are treated as baselined, so those ` +
+                `projects were skipped rather than scanned.`
+            );
+
+            if (ratio > 0.5) {
+                await this.sendJobAlert(job, {
+                    severity: 'critical',
+                    subject: `Scan job ${job.jobId} could not check baseline markers`,
+                    headline:
+                        `${baselineCheckErrors} of ${baselineProjectCache.size} baseline marker checks failed. ` +
+                        `Failed checks fail closed, so most of this night's projects were skipped rather than scanned.`,
+                    details: {
+                        'Failed checks': baselineCheckErrors,
+                        'Projects checked': baselineProjectCache.size,
+                        'Documents processed': totalProcessed,
+                        'Matches found': totalMatchesFound
+                    },
+                    action: 'Check S3 credentials and read permissions on planning-docs/, then re-run this day with a targetDate.'
+                });
+            }
         }
 
         // A resume that processes nothing means the checkpoint was past the end of the

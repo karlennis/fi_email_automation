@@ -192,6 +192,30 @@ class DocumentIngestionService {
         result.isBaselined = false;
         this.stats.newProjects++;
 
+        // MARKER FIRST, then the copies.
+        //
+        // This used to run the other way round, leaving a window - the whole parallel
+        // copy - in which a crash or restart left a fully populated new project with no
+        // marker. The next FI scan then treated that project's entire historical
+        // back-catalogue as fresh uploads and emailed customers every FI request in it.
+        //
+        // Ordering it first inverts the failure: a crash after the marker leaves a
+        // baselined project with some documents missing, and the next run re-copies them
+        // (the ETag/size comparison makes that idempotent). Worst case is one project
+        // skipped for the retention window instead of a mass false-lead send.
+        if (incomingBaselineTriggerCount > 0) {
+          try {
+            await s3Service.createBaselineMarker(projectId);
+            result.isBaselined = true;
+          } catch (error) {
+            // Copying unbaselined is the exact failure this ordering exists to prevent,
+            // so abandon the project for this run rather than proceed without a marker.
+            logger.error(`Failed to create baseline marker for ${projectId} - skipping its documents this run:`, error);
+            result.errors.push({ fileName: '_baseline_', error: error.message });
+            return result;
+          }
+        }
+
         // Parallel copy all documents
         const copyResults = await this.processInParallel(filterDocs, async (doc) => {
           const destKey = doc.key.replace('filter-docs/', 'planning-docs/');
@@ -212,10 +236,7 @@ class DocumentIngestionService {
           }
         }
 
-        // Create baseline marker to prevent FI scan only for first non-docfiles ingestion.
-        if (incomingBaselineTriggerCount > 0) {
-          await s3Service.createBaselineMarker(projectId);
-          result.isBaselined = true;
+        if (result.isBaselined) {
           logger.info(`📌 Project ${projectId} baselined with ${result.documentsCopied} documents (non-docfiles files in batch: ${incomingBaselineTriggerCount}, will skip FI scan)`);
         } else {
           logger.info(`ℹ️ Project ${projectId} routed with NEW semantics but no non-docfiles files in batch (docfiles/system-only); baseline marker not created yet`);

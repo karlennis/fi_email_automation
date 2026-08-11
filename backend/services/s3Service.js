@@ -4,6 +4,21 @@ const path = require('path');
 const winston = require('winston');
 const { getBucket, getRegion } = require('../utils/awsConfig');
 
+/**
+ * How many days a baseline marker lives.
+ *
+ * One number, three consumers that used to disagree: cleanupOldBaselineMarkers defaulted
+ * to 1, hasBaselineMarker looked at today+yesterday (i.e. 2), and
+ * document-register/audit-baseline-markers.js hardcoded 2 to decide what counts as
+ * stale. With cleanup on 1, yesterday's marker was deleted while the check still relied
+ * on it - reopening the 11PM-routing/12:10AM-scan gap the check exists to close.
+ *
+ * Must be >= 2 for that reason. Read lazily so tests can vary it.
+ */
+function getBaselineRetentionDays() {
+  return Math.max(2, parseInt(process.env.BASELINE_MARKER_RETENTION_DAYS || '2', 10));
+}
+
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
@@ -26,6 +41,10 @@ class S3Service {
 
     this.s3 = new AWS.S3();
     this.bucket = getBucket();
+
+    // Baseline checks fail closed; this counts how often, so a mass failure is visible
+    // rather than silently baselining every project and scanning nothing.
+    this.baselineCheckErrors = 0;
     this.downloadDir = process.env.DOWNLOAD_DIR || './temp/downloads';
 
     // Cache for listMainFolders to prevent hammering S3
@@ -851,40 +870,57 @@ class S3Service {
   }
 
   /**
-   * Check if a project has a baseline marker (any recent marker within last 24 hours)
-   * This handles the timing gap where routing runs at 11PM but FI scan runs at 12:10AM next day
+   * Check if a project has a recent baseline marker.
+   *
+   * Looks back over the retention window rather than a hardcoded today/yesterday, so the
+   * check and the cleanup cannot disagree about how long a marker lives. The window has
+   * to be at least 2 days to cover the 11PM routing → 12:10AM scan edge.
+   *
+   * FAILS CLOSED. An error here used to return false, which reads as "not baselined" and
+   * makes the scanner treat a brand-new project's entire historical back-catalogue as
+   * fresh uploads - emailing customers every FI request in it. Being wrong the other way
+   * costs one day of leads for one project, so on error we say "baselined" and count it.
+   *
    * @param {string} projectId - Project ID
    * @param {Date} date - Date to check from (defaults to now)
    */
   async hasBaselineMarker(projectId, date = new Date()) {
     try {
-      // Check for today's marker
-      const todayStr = date.toISOString().split('T')[0];
-      const todayKey = `planning-docs/${projectId}/_baseline_${todayStr}`;
+      for (let daysBack = 0; daysBack < getBaselineRetentionDays(); daysBack++) {
+        const day = new Date(date);
+        day.setDate(day.getDate() - daysBack);
+        const key = `planning-docs/${projectId}/_baseline_${day.toISOString().split('T')[0]}`;
 
-      const todayExists = await this.objectExists(todayKey);
-      if (todayExists) {
-        logger.debug(`📌 Found today's baseline marker for project ${projectId}: ${todayKey}`);
-        return true;
-      }
-
-      // Also check yesterday's marker (handles 11PM routing → 12:10AM scan edge case)
-      const yesterday = new Date(date);
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayStr = yesterday.toISOString().split('T')[0];
-      const yesterdayKey = `planning-docs/${projectId}/_baseline_${yesterdayStr}`;
-
-      const yesterdayExists = await this.objectExists(yesterdayKey);
-      if (yesterdayExists) {
-        logger.debug(`📌 Found yesterday's baseline marker for project ${projectId}: ${yesterdayKey}`);
-        return true;
+        if (await this.objectExists(key)) {
+          logger.debug(`📌 Found baseline marker for project ${projectId}: ${key}`);
+          return true;
+        }
       }
 
       return false;
     } catch (error) {
-      logger.error(`Error checking baseline marker for ${projectId}:`, error);
-      return false;
+      this.baselineCheckErrors++;
+      logger.error(
+        `Error checking baseline marker for ${projectId} - treating as BASELINED to avoid ` +
+        `emailing a full back-catalogue:`, error
+      );
+      return true;
     }
+  }
+
+  /**
+   * How many baseline checks have failed since the counter was last reset.
+   *
+   * Failing closed is right per-project but dangerous in bulk: a 403 on the whole prefix
+   * would make every project look baselined and the night would scan nothing at all,
+   * silently. The caller resets this before a scan and alerts if the ratio is high.
+   */
+  getBaselineCheckErrorCount() {
+    return this.baselineCheckErrors;
+  }
+
+  resetBaselineCheckErrorCount() {
+    this.baselineCheckErrors = 0;
   }
 
   /**
@@ -920,10 +956,13 @@ class S3Service {
    * deleted nothing at all unless the full multi-million-object listing completed,
    * so a single mid-scan failure silently skipped an entire night's cleanup.
    *
-   * @param {number} maxAgeDays - Maximum age in days (default: 1, keep only today's markers)
+   * @param {number} maxAgeDays - Maximum age in days. Defaults to the shared retention
+   *   window, which hasBaselineMarker also reads. It used to default to 1 while the
+   *   check relied on yesterday's marker, so an unqualified call deleted markers that
+   *   were still load-bearing.
    * @returns {object} { deleted, failed, objectsScanned, cutoffDate }
    */
-  async cleanupOldBaselineMarkers(maxAgeDays = 1) {
+  async cleanupOldBaselineMarkers(maxAgeDays = getBaselineRetentionDays()) {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - maxAgeDays);
     const cutoffStr = cutoffDate.toISOString().split('T')[0];

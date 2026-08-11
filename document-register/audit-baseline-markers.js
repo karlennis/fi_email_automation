@@ -4,7 +4,9 @@
  *
  * Baseline markers (planning-docs/<projectId>/_baseline_<YYYY-MM-DD>) mark a project
  * as a first-time ingestion so the FI scan skips it. They are meant to be removed by
- * ingestionScheduler's 12:05 AM cleanup job, which keeps only the last 2 days.
+ * ingestionScheduler's 12:05 AM cleanup job, which keeps the last
+ * BASELINE_MARKER_RETENTION_DAYS days (default 2 - the same window hasBaselineMarker
+ * looks back over, and never less, or a marker would expire while still load-bearing).
  *
  * This audits what is actually still in the bucket, so a build-up of stale markers
  * (and the date cleanup last succeeded) is visible.
@@ -85,9 +87,13 @@ async function main() {
     byDate[m.markerDate] = (byDate[m.markerDate] || 0) + 1;
   }
 
-  // What the cleanup job should be keeping: markers newer than 2 days
+  // Read the same variable s3Service uses, so this report cannot measure a different
+  // contract than the code enforces. (It is read directly rather than by requiring
+  // s3Service, which builds an S3 client and a winston logger at import time.)
+  const RETENTION_DAYS = Math.max(2, parseInt(process.env.BASELINE_MARKER_RETENTION_DAYS || '2', 10));
+
   const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 2);
+  cutoff.setDate(cutoff.getDate() - RETENTION_DAYS);
   const cutoffStr = cutoff.toISOString().split('T')[0];
   const stale = markers.filter(m => m.markerDate && m.markerDate < cutoffStr);
 
