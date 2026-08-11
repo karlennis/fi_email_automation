@@ -8,6 +8,9 @@
     "//": "Scoped to __tests__ so jest does not pick up routes/test.js, an Express router whose filename matches the default testMatch pattern and which fails the run with 'must contain at least one test'.",
     "testMatch": [
       "**/__tests__/**/*.test.js"
+    ],
+    "setupFiles": [
+      "<rootDir>/jest.setup.js"
     ]
   },
   "scripts": {

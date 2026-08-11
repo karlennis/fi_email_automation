@@ -40,6 +40,16 @@ const ScanJobDailyResultSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  // How many times this day has been scanned. Incremented on every save.
+  //
+  // Gap detection treats a day with processedCount 0 as unscanned, because a resume
+  // that never re-found its checkpoint marker skips every document and then writes a
+  // 0-match result that looks like a completed day. Without this counter a genuinely
+  // empty day - a bank holiday, say - would be re-scanned every night forever.
+  scanAttempts: {
+    type: Number,
+    default: 0
+  },
   // Set to true once results have been included in a customer delivery
   delivered: {
     type: Boolean,

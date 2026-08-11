@@ -235,6 +235,11 @@ class ScanJobProcessor {
 
                     // SCHEDULED DAILY RUN: Pass null - processJob will use lookback (yesterday)
                     await enqueueScanJob(job.jobId, { targetDate: null });
+
+                    // Then top up any earlier day this job never covered. Deliberately not
+                    // reached from the resume branches above: a job that is mid-way through
+                    // a day should finish it before being handed a second one.
+                    await this.enqueueBackfill(job);
                 } catch (error) {
                     logger.error(`❌ Error processing job ${job.jobId}:`, error);
                 }
@@ -2186,18 +2191,23 @@ class ScanJobProcessor {
             await ScanJobDailyResult.findOneAndUpdate(
                 { jobId: job.jobId, scanDate: scanDateNormalized },
                 {
-                    jobId: job.jobId,
-                    scanDate: scanDateNormalized,
-                    scanStartDate,
-                    scanEndDate,
-                    matches: mergedMatches,
-                    // Counts reflect the most complete pass, not the latest one.
-                    processedCount: Math.max(processedCount || 0, existing?.processedCount || 0),
-                    eligibleCount: Math.max(eligibleCount || 0, existing?.eligibleCount || 0),
-                    skippedBaseline: Math.max(skippedBaseline || 0, existing?.skippedBaseline || 0),
-                    baselinedProjects: Math.max(baselinedProjects || 0, existing?.baselinedProjects || 0),
-                    // Never un-deliver a day that has already gone out.
-                    delivered: existing?.delivered || false
+                    $set: {
+                        jobId: job.jobId,
+                        scanDate: scanDateNormalized,
+                        scanStartDate,
+                        scanEndDate,
+                        matches: mergedMatches,
+                        // Counts reflect the most complete pass, not the latest one.
+                        processedCount: Math.max(processedCount || 0, existing?.processedCount || 0),
+                        eligibleCount: Math.max(eligibleCount || 0, existing?.eligibleCount || 0),
+                        skippedBaseline: Math.max(skippedBaseline || 0, existing?.skippedBaseline || 0),
+                        baselinedProjects: Math.max(baselinedProjects || 0, existing?.baselinedProjects || 0),
+                        // Never un-deliver a day that has already gone out.
+                        delivered: existing?.delivered || false
+                    },
+                    // Counts passes, not documents. Gap detection uses it to stop
+                    // re-scanning a day that is genuinely empty rather than missed.
+                    $inc: { scanAttempts: 1 }
                 },
                 { upsert: true, new: true, setDefaultsOnInsert: true }
             );
@@ -2214,6 +2224,154 @@ class ScanJobProcessor {
             logger.error(`❌ Failed to save daily scan result for job ${job.jobId}:`, error);
             throw error;
         }
+    }
+
+    /**
+     * Days inside the horizon that this job has no usable result for, oldest first.
+     *
+     * A day counts as a gap when:
+     *   - there is no row at all (the scan never ran - an overrun scan means the next
+     *     day is never enqueued, and nothing ever goes back for it); or
+     *   - the row has processedCount 0 and fewer than MAX_EMPTY_ATTEMPTS attempts. A
+     *     resume that never re-finds its checkpoint marker skips every document and
+     *     then writes a 0-match result that is indistinguishable from a quiet day.
+     *
+     * After MAX_EMPTY_ATTEMPTS the day is accepted as genuinely empty, so a bank
+     * holiday is not re-scanned every night forever.
+     *
+     * @returns {Promise<string[]>} YYYY-MM-DD, oldest first
+     */
+    async findCoverageGaps(job, { horizonDays, endDate } = {}) {
+        const MAX_EMPTY_ATTEMPTS = 2;
+
+        // A full bucket walk per day is expensive, so the horizon is capped hard: a job
+        // configured with lookbackDays 365 must not be able to request a year of them.
+        const configuredLookback = job.schedule?.lookbackDays || 1;
+        const cap = parseInt(process.env.SCAN_BACKFILL_HORIZON_DAYS || '14', 10);
+        const horizon = Math.max(1, Math.min(horizonDays || configuredLookback, cap));
+
+        // Yesterday is the newest day a scan can cover; today is still accumulating.
+        const windowEnd = endDate ? new Date(endDate) : new Date();
+        if (!endDate) windowEnd.setDate(windowEnd.getDate() - 1);
+        windowEnd.setHours(0, 0, 0, 0);
+
+        const windowStart = new Date(windowEnd);
+        windowStart.setDate(windowStart.getDate() - horizon + 1);
+        windowStart.setHours(0, 0, 0, 0);
+
+        const rows = await ScanJobDailyResult.find({
+            jobId: job.jobId,
+            scanDate: { $gte: windowStart, $lte: windowEnd }
+        }).select('scanDate processedCount eligibleCount scanAttempts').lean();
+
+        const byDate = new Map();
+        for (const row of rows) {
+            byDate.set(new Date(row.scanDate).toISOString().split('T')[0], row);
+        }
+
+        const gaps = [];
+        for (let day = new Date(windowStart); day <= windowEnd; day.setDate(day.getDate() + 1)) {
+            const key = day.toISOString().split('T')[0];
+            const row = byDate.get(key);
+
+            if (!row) {
+                gaps.push(key);
+            } else if ((row.processedCount || 0) === 0 && (row.scanAttempts || 0) < MAX_EMPTY_ATTEMPTS) {
+                gaps.push(key);
+            }
+        }
+
+        return gaps;   // ascending, because the loop walks forward from windowStart
+    }
+
+    /**
+     * Queue a bounded number of missed days for this job.
+     *
+     * fastS3Scanner.streamDocumentsSince lists the whole planning-docs prefix and filters
+     * on LastModified client-side, so every backfill day costs a full bucket walk
+     * (~570k objects) regardless of how little it finds. One day per night by default;
+     * the oldest gap goes first so nothing starves.
+     */
+    async enqueueBackfill(job, { maxDays } = {}) {
+        if (process.env.SCAN_BACKFILL_ENABLED !== 'true') {
+            return { enqueued: [], skipped: 'disabled' };
+        }
+
+        const limit = maxDays || parseInt(process.env.SCAN_BACKFILL_MAX_DAYS_PER_NIGHT || '1', 10);
+
+        try {
+            const gaps = await this.findCoverageGaps(job);
+
+            if (gaps.length === 0) {
+                return { enqueued: [], skipped: 'no-gaps' };
+            }
+
+            // Never hand a job a second copy of the day it is already part-way through.
+            const inFlight = job.checkpoint?.isResuming && job.checkpoint?.scanStartDate
+                ? new Date(job.checkpoint.scanStartDate).toISOString().split('T')[0]
+                : null;
+
+            const candidates = gaps.filter(day => day !== inFlight).slice(0, limit);
+
+            for (const targetDate of candidates) {
+                logger.info(`🕳️ Backfilling missed day ${targetDate} for job ${job.jobId} (${gaps.length} gap(s) outstanding)`);
+                await enqueueScanJob(job.jobId, { targetDate });
+            }
+
+            if (gaps.length > candidates.length) {
+                logger.info(
+                    `🕳️ ${gaps.length - candidates.length} further gap(s) remain for job ${job.jobId}; ` +
+                    `capped at ${limit} per night (SCAN_BACKFILL_MAX_DAYS_PER_NIGHT)`
+                );
+            }
+
+            return { enqueued: candidates, outstanding: gaps.length };
+
+        } catch (error) {
+            // Backfill is best-effort - it must never take down the nightly run.
+            logger.error(`❌ Backfill check failed for job ${job.jobId}:`, error);
+            return { enqueued: [], skipped: 'error' };
+        }
+    }
+
+    /**
+     * The set of daily results a delivery should cover.
+     *
+     * Expressed once because three call sites need it and must not drift: the read, and
+     * the two updateMany calls that mark results delivered. A backfilled day falls
+     * outside the normal lookback window, so without the second clause it would be
+     * scanned and then never sent to anyone.
+     */
+    buildDeliveryWindowFilter(job, deliveryAnchorDate) {
+        const lookbackDays = job.schedule?.lookbackDays || 1;
+
+        const windowEnd = new Date(deliveryAnchorDate);
+        windowEnd.setHours(23, 59, 59, 999);
+
+        const windowStart = new Date(deliveryAnchorDate);
+        windowStart.setDate(windowStart.getDate() - lookbackDays + 1);
+        windowStart.setHours(0, 0, 0, 0);
+
+        // How far back a late-arriving backfill result may still be delivered.
+        const horizonDays = parseInt(process.env.SCAN_BACKFILL_HORIZON_DAYS || '14', 10);
+        const backfillFloor = new Date(windowEnd);
+        backfillFloor.setDate(backfillFloor.getDate() - horizonDays);
+        backfillFloor.setHours(0, 0, 0, 0);
+
+        return {
+            filter: {
+                jobId: job.jobId,
+                $or: [
+                    { scanDate: { $gte: windowStart, $lte: windowEnd } },
+                    // Older days only if they never went out, so a re-delivery cannot
+                    // resend weeks of leads a customer has already had.
+                    { scanDate: { $gte: backfillFloor, $lt: windowStart }, delivered: false }
+                ]
+            },
+            windowStart,
+            windowEnd,
+            backfillFloor
+        };
     }
 
     /**
@@ -2441,21 +2599,15 @@ class ScanJobProcessor {
      */
     async deliverResultsForJob(job, deliveryAnchorDate) {
         try {
-            const lookbackDays = job.schedule?.lookbackDays || 1;
-
-            const windowEnd = new Date(deliveryAnchorDate);
-            windowEnd.setHours(23, 59, 59, 999);
-
-            const windowStart = new Date(deliveryAnchorDate);
-            windowStart.setDate(windowStart.getDate() - lookbackDays + 1);
-            windowStart.setHours(0, 0, 0, 0);
+            // One definition, used by the read below and by both updateMany calls that
+            // mark results delivered - they must not drift, or a backfilled day would be
+            // sent and then never marked, or marked and never sent.
+            const deliveryWindow = this.buildDeliveryWindowFilter(job, deliveryAnchorDate);
+            const { windowStart, windowEnd } = deliveryWindow;
 
             const windowEndStr = windowEnd.toISOString().split('T')[0];
 
-            const dailyResults = await ScanJobDailyResult.find({
-                jobId: job.jobId,
-                scanDate: { $gte: windowStart, $lte: windowEnd }
-            });
+            const dailyResults = await ScanJobDailyResult.find(deliveryWindow.filter);
 
             const pendingDocs = await PendingMetadataMatch.find({
                 jobId: job.jobId,
@@ -2553,7 +2705,7 @@ class ScanJobProcessor {
             if (survivingMatches.length === 0) {
                 logger.info(`📭 No deliverable matches remain for job ${job.jobId} after project vetoes`);
                 await ScanJobDailyResult.updateMany(
-                    { jobId: job.jobId, scanDate: { $gte: windowStart, $lte: windowEnd } },
+                    deliveryWindow.filter,
                     { $set: { delivered: true, deliveredAt: new Date() } }
                 );
                 return;
