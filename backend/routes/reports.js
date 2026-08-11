@@ -164,6 +164,44 @@ router.get('/', async (req, res) => {
 });
 
 /**
+ * Choose which stored matches a resend should include.
+ *
+ * The resend modal renders one card per projectsFound entry, but it used to send back
+ * only the project IDs of the ticked ones. A report can hold several entries for the
+ * same project - different documents - so unticking one of two entries for project
+ * 404436 still sent both: the ID survived in the list and the filter re-admitted every
+ * entry carrying it. The UI promised one match and the customer received two.
+ *
+ * projectsFound subdocuments already carry an _id (the schema does not set _id: false)
+ * and GET /:reportId returns them un-projected, so the browser can address individual
+ * entries with no migration.
+ *
+ * Exported for testing, and kept pure - no express, no mongoose.
+ *
+ * @param {Array} projectsFound
+ * @param {object} selection
+ * @param {string[]} [selection.includedMatchIds]   preferred: subdocument _ids
+ * @param {string[]} [selection.includedProjectIds] legacy: project ids, still honoured
+ *   so an older cached frontend keeps working
+ * @returns {Array} the entries to send
+ */
+const selectProjectsForResend = (projectsFound, { includedMatchIds, includedProjectIds } = {}) => {
+  const entries = projectsFound || [];
+
+  if (Array.isArray(includedMatchIds) && includedMatchIds.length > 0) {
+    const wanted = new Set(includedMatchIds.map(id => String(id)));
+    return entries.filter(entry => wanted.has(String(entry._id)));
+  }
+
+  if (Array.isArray(includedProjectIds) && includedProjectIds.length > 0) {
+    const wanted = new Set(includedProjectIds.map(id => String(id)));
+    return entries.filter(entry => wanted.has(String(entry.projectId)));
+  }
+
+  return entries;
+};
+
+/**
  * Build a plain-text audit document for a set of reports.
  * Full-detail format: report header + every match with its matching quote.
  */
@@ -200,6 +238,9 @@ const buildAuditText = (reports) => {
       projects.forEach((p, pIdx) => {
         parts.push(`  Match ${pIdx + 1}: ${p.planningTitle || p.projectId || 'Untitled'}`);
         if (p.projectId) parts.push(`    Project ID:   ${p.projectId}`);
+        // The id a resend selects on, so an export can be cross-referenced with what
+        // was actually sent when a project appears more than once.
+        if (p._id) parts.push(`    Match ID:     ${p._id}`);
         const meta = [];
         if (p.planningStage) meta.push(`Stage: ${p.planningStage}`);
         if (p.planningCounty) meta.push(`County: ${p.planningCounty}`);
@@ -373,7 +414,7 @@ router.get('/customer/:customerId/stats', validateCustomerId, async (req, res) =
 router.post('/:reportId/resend', async (req, res) => {
   try {
     const { reportId } = req.params;
-    const { newRecipientEmail, customerId, includedProjectIds, subject } = req.body;
+    const { newRecipientEmail, customerId, includedMatchIds, includedProjectIds, subject } = req.body;
 
     if (!newRecipientEmail) {
       return res.status(400).json({
@@ -392,17 +433,21 @@ router.post('/:reportId/resend', async (req, res) => {
     // Prepare the report for resending
     const report = await fiReportService.resendReport(reportId, newRecipientEmail, customerId);
 
-    // Optionally restrict the projects included in this send
-    let projectsToSend = report.projectsFound || [];
-    if (Array.isArray(includedProjectIds) && includedProjectIds.length > 0) {
-      const includeSet = new Set(includedProjectIds.map(id => String(id)));
-      projectsToSend = projectsToSend.filter(project => includeSet.has(String(project.projectId)));
-    }
+    // Optionally restrict the matches included in this send. Prefers per-entry ids so a
+    // project appearing twice can have one of its two documents deselected.
+    const storedProjects = report.projectsFound || [];
+    const projectsToSend = selectProjectsForResend(storedProjects, { includedMatchIds, includedProjectIds });
 
     if (projectsToSend.length === 0) {
+      // Distinguish "you picked nothing" from "the ids you picked are not on this
+      // report", which means the browser is looking at a stale copy.
+      const staleSelection = storedProjects.length > 0 && Array.isArray(includedMatchIds) && includedMatchIds.length > 0;
+
       return res.status(400).json({
         success: false,
-        error: 'No matches selected to send'
+        error: staleSelection
+          ? 'The selected matches are no longer on this report - reload and try again'
+          : 'No matches selected to send'
       });
     }
 
@@ -458,6 +503,10 @@ router.post('/:reportId/resend', async (req, res) => {
           reportId: report.reportId,
           newRecipientEmail: recipientList.join(', '),
           projectsSent: matches.length,
+          // Explicit so the caller can confirm the send matched the selection - the
+          // whole point of item 21 was that these silently diverged.
+          sentMatchCount: matches.length,
+          totalMatchCount: storedProjects.length,
           messageId: emailResult.messageId
         }
       });
@@ -783,3 +832,5 @@ router.delete('/:reportId', async (req, res) => {
 });
 
 module.exports = router;
+// Exported for unit testing - pure, no express or mongoose involved.
+module.exports.selectProjectsForResend = selectProjectsForResend;

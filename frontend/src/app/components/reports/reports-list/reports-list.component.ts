@@ -314,7 +314,7 @@ interface ReportGroup {
                 <div *ngIf="!resendProjectsLoading && resendProjects.length === 0" class="panel-empty">No matches available.</div>
 
                 <div class="match-cards" *ngIf="!resendProjectsLoading && resendProjects.length > 0">
-                  <label class="match-card" *ngFor="let p of resendProjects" [class.match-card-included]="p.include">
+                  <label class="match-card" *ngFor="let p of resendProjects; trackBy: trackMatch" [class.match-card-included]="p.include">
                     <input type="checkbox" [(ngModel)]="p.include" [disabled]="resendLoading">
                     <div class="match-card-body">
                       <div class="match-card-title">{{ p.planningTitle || p.projectId }}</div>
@@ -322,6 +322,15 @@ interface ReportGroup {
                         <span *ngIf="p.planningStage" class="meta-tag">{{ p.planningStage }}</span>
                         <span *ngIf="p.planningCounty" class="meta-tag">{{ p.planningCounty }}</span>
                         <span *ngIf="p.planningValue" class="meta-tag value-tag">€{{ p.planningValue | number }}</span>
+                      </div>
+                      <!-- The document is what distinguishes two entries for the same
+                           project. Without it they render identically and there is no
+                           way to tell which one you are unticking. -->
+                      <div class="match-card-doc" *ngIf="p.metadata?.documentName">
+                        📄 {{ p.metadata.documentName }}
+                      </div>
+                      <div class="match-card-quote" *ngIf="p.metadata?.validationQuote">
+                        "{{ p.metadata.validationQuote }}"
                       </div>
                       <div class="match-card-indicators" *ngIf="p.fiIndicators?.length">
                         <span class="indicator-tag" *ngFor="let ind of p.fiIndicators">{{ ind }}</span>
@@ -588,6 +597,8 @@ interface ReportGroup {
     .match-card-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
     .meta-tag { padding: 1px 7px; background: var(--bg-secondary); border: 1px solid var(--border, #e0e0e0); color: var(--text-secondary); border-radius: 8px; font-size: 0.72rem; }
     .value-tag { color: var(--primary); border-color: var(--primary); }
+    .match-card-doc { color: var(--text-secondary); font-size: 0.75rem; margin-bottom: 4px; overflow-wrap: anywhere; }
+    .match-card-quote { color: var(--text-secondary); font-size: 0.75rem; font-style: italic; margin-bottom: 4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     .match-card-indicators { display: flex; flex-wrap: wrap; gap: 4px; }
     .indicator-tag { padding: 1px 7px; background: rgba(99,102,241,0.12); color: var(--primary); border-radius: 8px; font-size: 0.7rem; }
     .modal-footer { display: flex; align-items: center; gap: 16px; padding: 14px 20px; border-top: 1px solid var(--border, #ececec); flex-shrink: 0; }
@@ -922,6 +933,16 @@ export class ReportsListComponent implements OnInit {
     this.resendProjects.forEach(p => (p.include = include));
   }
 
+  /**
+   * Track matches by their subdocument id, not by index.
+   *
+   * Two entries for the same project are otherwise indistinguishable to Angular, so it
+   * reuses the DOM between them and a tick can appear to jump to the wrong card.
+   */
+  trackMatch(_index: number, match: any): string {
+    return match?._id || `${match?.projectId}::${match?.metadata?.documentName || _index}`;
+  }
+
   closeResend(): void {
     this.showResendModal = false;
     this.selectedReport = null;
@@ -936,8 +957,8 @@ export class ReportsListComponent implements OnInit {
 
   sendReport(): void {
     if (!this.selectedReport || this.resendRecipients.length === 0) return;
-    const includedProjectIds = this.resendProjects.filter(p => p.include).map(p => p.projectId);
-    if (this.resendProjects.length > 0 && includedProjectIds.length === 0) {
+    const selected = this.resendProjects.filter(p => p.include);
+    if (this.resendProjects.length > 0 && selected.length === 0) {
       this.toastr.error('Select at least one match to send');
       return;
     }
@@ -946,7 +967,12 @@ export class ReportsListComponent implements OnInit {
     const body: any = {
       newRecipientEmail: this.resendRecipients.join(', '),
       customerId: this.selectedReport.customerId,
-      includedProjectIds
+      // Per-entry ids: a report can hold two entries for the same project (different
+      // documents), and sending project ids alone re-admitted both when the user had
+      // deselected one of them.
+      includedMatchIds: selected.map(p => p._id).filter(Boolean),
+      // Kept for a backend that predates includedMatchIds.
+      includedProjectIds: [...new Set(selected.map(p => p.projectId))]
     };
     if (this.resendSubject?.trim()) body.subject = this.resendSubject.trim();
 
