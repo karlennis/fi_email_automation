@@ -611,7 +611,11 @@ class S3Service {
       }).promise();
       return true;
     } catch (error) {
-      if (error.code === 'NotFound') {
+      // headObject has no response body, so the SDK cannot always map the status to a
+      // code - a 404 sometimes arrives with code 'NotFound' and sometimes only as
+      // statusCode 404. Treating the latter as an error made a plain missing object
+      // look like an S3 outage to every caller.
+      if (error.code === 'NotFound' || error.statusCode === 404) {
         return false;
       }
       throw error;
