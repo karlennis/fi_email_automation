@@ -14,6 +14,7 @@ const documentIngestionService = require('./documentIngestionService');
 const s3Service = require('./s3Service');
 const emailService = require('./emailService');
 const logger = require('../utils/logger');
+const runContext = require('../utils/runContext');
 const { withLock } = require('./jobLock');
 
 class IngestionScheduler {
@@ -29,10 +30,8 @@ class IngestionScheduler {
    */
   async initialize() {
     try {
-      logger.info('📦 Initializing Ingestion Scheduler...');
-
       if (process.env.INGESTION_SCHEDULER_ENABLED === 'false') {
-        logger.info('⏭️ Ingestion scheduler disabled (INGESTION_SCHEDULER_ENABLED=false)');
+        logger.info('ingestion scheduler disabled (INGESTION_SCHEDULER_ENABLED=false)');
         return;
       }
 
@@ -47,12 +46,10 @@ class IngestionScheduler {
         await this.runCleanupJob();
       });
 
-      logger.info('✅ Ingestion Scheduler initialized:');
-      logger.info('   - Routing job: 11:00 PM daily');
-      logger.info('   - Cleanup job: 12:05 AM daily');
+      logger.info('ingestion scheduler ready', { routing: '23:00', cleanup: '00:05' });
 
     } catch (error) {
-      logger.error('❌ Failed to initialize Ingestion Scheduler:', error);
+      logger.error('ingestion scheduler failed to initialize', error);
     }
   }
 
@@ -60,31 +57,33 @@ class IngestionScheduler {
    * Run the routing job - move documents from filter-docs to planning-docs
    */
   async runRoutingJob() {
-    if (this.isRunning) {
-      logger.info('⏭️ Routing job already in progress, skipping...');
-      return;
-    }
+    return runContext.runWith({ runId: runContext.newRunId('ROUTE') }, async () => {
+      if (this.isRunning) {
+        logger.info('routing: already in progress, skipping');
+        return;
+      }
 
-    const today = new Date().toISOString().split('T')[0];
-    if (this.lastRunDate === today) {
-      logger.info('⏭️ Routing job already ran today, skipping...');
-      return;
-    }
+      const today = new Date().toISOString().split('T')[0];
+      if (this.lastRunDate === today) {
+        logger.info('routing: already ran today, skipping', { today });
+        return;
+      }
 
-    // isRunning and lastRunDate are both reset by a restart, so on their own they let a
-    // crash mid-run start a second pass on top of the first. This worker is instances: 1
-    // today, but the lock is what actually holds if that ever changes.
-    const outcome = await withLock(
-      'ingestion-routing',
-      {
-        ttlMs: 120 * 60 * 1000,
-        heartbeat: true,
-        skipMessage: '⏭️ Routing job held by another process, skipping...'
-      },
-      () => this.executeRoutingJob(today)
-    );
+      // isRunning and lastRunDate are both reset by a restart, so on their own they let a
+      // crash mid-run start a second pass on top of the first. This worker is instances: 1
+      // today, but the lock is what actually holds if that ever changes.
+      const outcome = await withLock(
+        'ingestion-routing',
+        {
+          ttlMs: 120 * 60 * 1000,
+          heartbeat: true,
+          skipMessage: 'routing: lock held by another process, skipping'
+        },
+        () => this.executeRoutingJob(today)
+      );
 
-    return outcome.ran ? outcome.result : undefined;
+      return outcome.ran ? outcome.result : undefined;
+    });
   }
 
   async executeRoutingJob(today) {
@@ -92,18 +91,16 @@ class IngestionScheduler {
     const startTime = Date.now();
 
     try {
-      logger.info('🚀 Starting scheduled routing job...');
-
       // Get all projects currently in filter-docs
       const stagedProjects = await documentIngestionService.listStagedProjects();
 
       if (stagedProjects.length === 0) {
-        logger.info('📭 No projects in filter-docs staging area');
+        logger.info('run start: routing — nothing staged in filter-docs');
         this.lastRunDate = today;
         return;
       }
 
-      logger.info(`📦 Found ${stagedProjects.length} projects in filter-docs to route`);
+      logger.info('run start: routing', { staged: stagedProjects.length });
 
       // Route all projects
       const results = await documentIngestionService.batchRouteToPlanning(stagedProjects);
@@ -121,31 +118,27 @@ class IngestionScheduler {
               await documentIngestionService.cleanupFilterDocs(result.projectId, result.handledKeys || []);
               cleanedUp++;
             } catch (error) {
-              logger.warn(`Failed to clean up filter-docs for ${result.projectId}:`, error.message);
+              logger.warn('routing: filter-docs cleanup failed', { proj: result.projectId, err: error.message });
             }
           }
         }
-      } else {
-        logger.info('⏭️ Skipping filter-docs cleanup (INGESTION_CLEANUP_FILTER_DOCS is not true)');
       }
 
-      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-
-      logger.info('✅ Routing job complete:');
-      logger.info(`   - Projects processed: ${results.total}`);
-      logger.info(`   - New projects (baselined): ${results.newProjects}`);
-      logger.info(`   - Existing projects (updated): ${results.existingProjects}`);
-      logger.info(`   - Documents routed: ${results.totalDocumentsRouted}`);
-      logger.info(`   - Filter-docs cleaned: ${cleanedUp}${shouldCleanupFilterDocs ? '' : ' (cleanup disabled)'}`);
-      logger.info(`   - Duration: ${duration}s`);
-      logger.info(`   📊 FI Scan Eligibility:`);
-      logger.info(`   - Skipping FI scan (baselined projects): ${results.docsSkippingFIScan} docs`);
-      logger.info(`   - Eligible for FI scan (existing projects): ${results.docsEligibleForFIScan} docs`);
+      logger.info('run end: routing', {
+        projects: results.total,
+        newBaselined: results.newProjects,
+        existing: results.existingProjects,
+        docsRouted: results.totalDocumentsRouted,
+        cleaned: shouldCleanupFilterDocs ? cleanedUp : 'disabled',
+        fiEligible: results.docsEligibleForFIScan,
+        fiSkipped: results.docsSkippingFIScan,
+        sec: Math.round((Date.now() - startTime) / 1000)
+      });
 
       this.lastRunDate = today;
 
     } catch (error) {
-      logger.error('❌ Routing job failed:', error);
+      logger.error('run end: routing FAILED', error);
 
       // Routing feeds the FI scan 70 minutes later. If it fails, that night scans
       // whatever happens to already be in planning-docs and nobody is told.
@@ -167,28 +160,34 @@ class IngestionScheduler {
    * Run the cleanup job - remove old baseline markers
    */
   async runCleanupJob() {
-    const outcome = await withLock(
-      'baseline-marker-cleanup',
-      {
-        ttlMs: 60 * 60 * 1000,
-        skipMessage: '⏭️ Baseline marker cleanup held by another process, skipping...'
-      },
-      () => this.executeCleanupJob()
-    );
+    return runContext.runWith({ runId: runContext.newRunId('MARKERS') }, async () => {
+      const outcome = await withLock(
+        'baseline-marker-cleanup',
+        {
+          ttlMs: 60 * 60 * 1000,
+          skipMessage: 'markers: cleanup lock held by another process, skipping'
+        },
+        () => this.executeCleanupJob()
+      );
 
-    return outcome.ran ? outcome.result : undefined;
+      return outcome.ran ? outcome.result : undefined;
+    });
   }
 
   async executeCleanupJob() {
     try {
-      logger.info('🧹 Starting baseline marker cleanup...');
+      logger.info('run start: baseline marker cleanup');
 
       // Retention comes from s3Service, which is also what hasBaselineMarker looks back
       // over. Passing a literal here is how the two drifted apart before.
       const result = await s3Service.cleanupOldBaselineMarkers();
 
       if (result.failed > 0) {
-        logger.warn(`⚠️ Cleanup finished with ${result.failed} markers it could not delete (removed ${result.deleted} of ${result.deleted + result.failed})`);
+        logger.warn('run end: baseline marker cleanup, some deletes failed', {
+          deleted: result.deleted,
+          failed: result.failed,
+          scanned: result.objectsScanned
+        });
 
         // A marker that survives cleanup keeps its project excluded from FI scanning
         // indefinitely, so a persistent failure quietly shrinks the scanned corpus.
@@ -208,13 +207,16 @@ class IngestionScheduler {
           action: 'Check the S3 delete permissions on planning-docs/, then run document-register/audit-baseline-markers.js.'
         });
       } else {
-        logger.info(`✅ Cleanup complete: removed ${result.deleted} old baseline markers`);
+        logger.info('run end: baseline marker cleanup', {
+          deleted: result.deleted,
+          scanned: result.objectsScanned
+        });
       }
 
       return result;
 
     } catch (error) {
-      logger.error('❌ Cleanup job failed:', error);
+      logger.error('run end: baseline marker cleanup FAILED', error);
 
       await this.sendAlert({
         severity: 'critical',
@@ -236,7 +238,7 @@ class IngestionScheduler {
       return await emailService.sendJobAlertEmail(recipient, alert);
     } catch (error) {
       // An alert that cannot be sent must not take the job down with it.
-      logger.error('Failed to send ingestion alert:', error);
+      logger.error('ingestion: alert email failed', error);
       return { success: false, error: error.message };
     }
   }
@@ -245,7 +247,7 @@ class IngestionScheduler {
    * Manually trigger the routing job
    */
   async triggerRouting() {
-    logger.info('🔧 Manual routing job triggered');
+    logger.info('routing: manual trigger');
     this.lastRunDate = null; // Reset to allow re-run
     await this.runRoutingJob();
   }
@@ -254,7 +256,7 @@ class IngestionScheduler {
    * Manually trigger the cleanup job
    */
   async triggerCleanup() {
-    logger.info('🔧 Manual cleanup job triggered');
+    logger.info('markers: manual cleanup trigger');
     await this.runCleanupJob();
   }
 
@@ -284,7 +286,7 @@ class IngestionScheduler {
       this.cleanupJob.cancel();
       this.cleanupJob = null;
     }
-    logger.info('🛑 Ingestion scheduler stopped');
+    logger.info('ingestion scheduler stopped');
   }
 }
 

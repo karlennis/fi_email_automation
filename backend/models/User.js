@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const logger = require('../utils/logger');
 
 const userSchema = new mongoose.Schema({
   name: {
@@ -141,14 +142,13 @@ userSchema.statics.ensurePrimaryAdmin = async function() {
       });
 
       await primaryAdmin.save();
-      console.log(`Primary admin created: ${adminEmail}`);
-      console.log('Default password: AdminPass123! (Please change immediately)');
+      logger.warn('primary admin created with the default password - change it immediately', { email: adminEmail });
       return primaryAdmin;
     }
 
     return existingAdmin;
   } catch (error) {
-    console.error('Error ensuring primary admin:', error);
+    logger.error('could not ensure primary admin', error);
     throw error;
   }
 };

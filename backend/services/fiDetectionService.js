@@ -4,19 +4,9 @@ const path = require('path');
 const { execSync } = require('child_process');
 const crypto = require('crypto');
 const pdf = require('pdf-parse');
-const winston = require('winston');
 require('dotenv').config(); // Load environment variables
 
-const logger = winston.createLogger({
-  level: process.env.LOG_LEVEL || 'info', // Set to 'debug' via env var for detailed logging
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console()
-  ]
-});
+const logger = require('../utils/logger');
 
 // Import FI Report Service for saving results
 const fiReportService = require('./fiReportService');
@@ -311,7 +301,7 @@ class FIDetectionService {
       const fs = require('fs');
       if (!fs.existsSync(this.ocrCacheDir)) {
         fs.mkdirSync(this.ocrCacheDir, { recursive: true });
-        logger.info(`Created OCR cache directory: ${this.ocrCacheDir}`);
+        logger.debug('ocr: cache directory created', { dir: this.ocrCacheDir });
       }
     } catch (error) {
       logger.error('Error creating OCR cache directory:', error);
@@ -360,10 +350,10 @@ class FIDetectionService {
         });
 
         await customer.save();
-        logger.info(`📊 Created new customer record for ${customerInfo.email}`, {
-          customerId: customer._id,
-          name: customer.name,
-          reportTypes: customer.reportTypes
+        logger.info('customer record created', {
+          email: customerInfo.email,
+          customerId: String(customer._id),
+          reportTypes: customer.reportTypes.join(',')
         });
       } else {
         // Update existing customer with new report types if needed
@@ -371,7 +361,7 @@ class FIDetectionService {
         if (newReportTypes.length > 0) {
           customer.reportTypes.push(...newReportTypes);
           await customer.save();
-          logger.info(`📈 Updated customer ${customerInfo.email} with new report types: ${newReportTypes.join(', ')}`);
+          logger.info('customer report types updated', { email: customerInfo.email, added: newReportTypes.join(',') });
         }
       }
 
@@ -632,12 +622,12 @@ Provide the exact sentence supporting your answer in "quote".`;
    */
   async ocrIfNeeded(filePath) {
     try {
-      logger.info(`Starting OCR processing for: ${filePath}`);
+      logger.debug('ocr: starting', { file: filePath });
 
       // Check if we have OCR cached
       const cacheKey = `ocr_${path.basename(filePath)}`;
       if (this._ocrCache && this._ocrCache[cacheKey]) {
-        logger.info('Using cached OCR result');
+        logger.debug('ocr: using cached result');
         return this._ocrCache[cacheKey];
       }
 
@@ -651,7 +641,7 @@ Provide the exact sentence supporting your answer in "quote".`;
           timeout: 120000 // 2 minute timeout
         });
 
-        logger.info(`OCR completed successfully: ${outputPath}`);
+        logger.debug('ocr: completed', { out: outputPath });
 
         // Cache the result
         if (!this._ocrCache) this._ocrCache = {};
@@ -659,7 +649,7 @@ Provide the exact sentence supporting your answer in "quote".`;
 
         return outputPath;
       } catch (ocrError) {
-        logger.warn(`OCR failed for ${filePath}, will use original: ${ocrError.message}`);
+        logger.warn('ocr: failed, using original', { file: filePath, err: ocrError.message });
         return filePath;
       }
     } catch (error) {
@@ -673,7 +663,7 @@ Provide the exact sentence supporting your answer in "quote".`;
    */
   async extractPdfText(filePath) {
     try {
-      logger.info(`Extracting text from: ${filePath}`);
+      logger.debug('extract: starting', { file: filePath });
 
       // Yield to event loop before heavy PDF parsing
       await new Promise(resolve => setImmediate(resolve));
@@ -685,11 +675,11 @@ Provide the exact sentence supporting your answer in "quote".`;
       const data = await pdfParse(pdfBuffer);
 
       if (!data.text || data.text.trim().length === 0) {
-        logger.warn(`No text extracted from ${filePath}, may need OCR`);
+        logger.debug('extract: no text found, may need OCR', { file: filePath });
         return '';
       }
 
-      logger.info(`Extracted ${data.text.length} characters from PDF`);
+      logger.debug('extract: text extracted', { chars: data.text.length });
       return data.text;
     } catch (error) {
       logger.error('Error extracting PDF text:', error);
@@ -783,7 +773,7 @@ Provide the exact sentence supporting your answer in "quote".`;
     const shouldReject = allRejectPatterns.some(pattern => filenameLower.includes(pattern));
 
     if (shouldReject) {
-      logger.info(`📛 Rejecting by filename pattern: ${fileName}`);
+      logger.debug('doc: rejected by filename pattern', { file: fileName });
     }
 
     return shouldReject;
@@ -845,7 +835,7 @@ Provide the exact sentence supporting your answer in "quote".`;
       if (requestLanguage) {
         // A council consultee report named like a deliverable, e.g. project 383115's
         // "Air_and_Noise_Report.pdf" asking for an NIA. Still a live lead.
-        logger.info(`📄 ${fileName} looks like a deliverable but requests ${reportType} - not vetoing`);
+        logger.debug('doc: looks like a deliverable but requests the report type, not vetoing', { file: fileName, type: reportType });
       } else {
         return { ...filenameVerdict, tentative: undefined };
       }
@@ -902,7 +892,7 @@ Provide the exact sentence supporting your answer in "quote".`;
         }
       } catch (error) {
         // Fail open: an unavailable classifier must not silently suppress live leads.
-        logger.warn(`FI response classification failed for ${fileName}; treating as not-a-response: ${error.message}`);
+        logger.warn('doc: FI response classification failed, treating as not-a-response', { file: fileName, err: error.message });
       }
     }
 
@@ -1280,14 +1270,14 @@ Answer with just YES or NO.`;
           const answer = result.choices[0].message.content.trim().toUpperCase();
           const passes = answer.includes('YES');
 
-          logger.info(`Cheap AI filter: ${passes ? 'PASS' : 'REJECT'} (answer: ${answer})`);
+          logger.debug('ai: cheap filter', { verdict: passes ? 'PASS' : 'REJECT', answer });
           return passes;
         } catch (attemptError) {
           lastError = attemptError;
           if (attempt < 2) {
             // Exponential backoff: 1s, 3s
             const delayMs = Math.pow(3, attempt) * 1000;
-            logger.warn(`Cheap AI filter attempt ${attempt + 1} failed, retrying in ${delayMs}ms...`, attemptError.message);
+            logger.warn('ai: cheap filter attempt failed, retrying', { attempt: attempt + 1, delayMs, err: attemptError.message });
             await new Promise(resolve => setTimeout(resolve, delayMs));
           }
         }
@@ -1394,7 +1384,7 @@ Answer with just YES or NO.`;
           );
 
           if (!quoteContainsReportType) {
-            logger.info(`Post-AI validation: Quote doesn't mention ${targetReportType}, marking as no valid evidence. Quote: "${validationQuote.substring(0, 100)}..."`);
+            logger.debug('ai: quote does not mention the target report type, no valid evidence', { type: targetReportType, quote: validationQuote.substring(0, 100) });
             validationQuote = 'No specific quote extracted';
           }
         }
@@ -1405,7 +1395,7 @@ Answer with just YES or NO.`;
       const hasValidEvidence = this.isValidCustomerEvidence(validationQuote, targetReportType);
       
       if (result.requestsReportType && !hasValidEvidence) {
-        logger.warn(`⚠️ AI match detected but evidence validation FAILED for ${targetReportType}. Quote: "${validationQuote.substring(0, 100)}..."`);
+        logger.debug('ai: match detected but evidence validation failed', { type: targetReportType, quote: validationQuote.substring(0, 100) });
         return {
           matches: false, // Do NOT emit as customer-eligible
           validationQuote: validationQuote,
@@ -2065,7 +2055,7 @@ Answer with just YES or NO.`;
       if (!matchesTargetType) {
         // If AI detected match but evidence failed, still reject for processFIRequest customer path
         if (matchResult.aiConfirmedMatchButWeakEvidence) {
-          logger.warn(`📋 processFIRequest: AI match detected but evidence validation failed`);
+          logger.debug('ai: processFIRequest match detected but evidence validation failed');
         }
         const result = {
           isFIRequest: true,
@@ -2092,7 +2082,7 @@ Answer with just YES or NO.`;
 
       // SUCCESS - Log exact matching phrase with validation quote
       const matchingSentence = this._lastMatchingSentence || 'N/A';
-      logger.info(`🎯 MATCH | File: ${fileName} | Type: ${targetReportType} | Phrase: "${matchingSentence}"`);
+      logger.debug('ai: match', { file: fileName, type: targetReportType, phrase: String(matchingSentence).substring(0, 120) });
 
       const result = {
         isFIRequest: true,
@@ -2202,7 +2192,7 @@ Answer with just YES or NO.`;
     const startTime = Date.now();
 
     try {
-      logger.info('🚀 Starting FI detection with API filtering + docfiles.txt optimization');
+      logger.info('run start: FI detection');
 
       // Import services
       const buildingInfoService = require('./buildingInfoService');
@@ -2214,26 +2204,26 @@ Answer with just YES or NO.`;
 
       // Step 1: Get filtered project IDs from API if filters are applied
       if (Object.keys(apiParams).length > 0) {
-        logger.info('🔍 Fetching projects from Building Info API with filters:', apiParams);
+        logger.debug('detection: fetching projects from Building Info API', { filters: JSON.stringify(apiParams) });
         const apiResult = await buildingInfoService.getProjectsByParams(apiParams);
         filteredProjectIds = apiResult.projectIds;
         projectData = apiResult.projectData;
 
-        logger.info(`✅ API returned ${filteredProjectIds.length} filtered project IDs`);
+        logger.info('detection: API returned filtered projects', { projects: filteredProjectIds.length });
         if (filteredProjectIds.length > 0) {
-          logger.info(`📋 First 10 project IDs: ${filteredProjectIds.slice(0, 10).join(', ')}${filteredProjectIds.length > 10 ? '...' : ''}`);
+          logger.debug('detection: first project ids', { sample: filteredProjectIds.slice(0, 10).join(',') });
         }
       } else {
         // If no API filters, get all projects from planning-docs folder
-        logger.info('ℹ️ No API filters applied, getting all projects from planning-docs');
+        logger.debug('detection: no API filters applied, using all planning-docs projects');
         const planningDocsProjects = await s3Service.listPlanningDocsProjects();
         filteredProjectIds = planningDocsProjects.map(p => p.projectId);
 
-        logger.info(`📂 Found ${filteredProjectIds.length} projects in planning-docs folder`);
+        logger.info('detection: projects found in planning-docs', { projects: filteredProjectIds.length });
       }
 
       if (filteredProjectIds.length === 0) {
-        logger.warn('No projects found with applied filters');
+        logger.warn('detection: no projects found with the applied filters');
         return {
           success: false,
           message: 'No projects found with the applied filters',
@@ -2242,7 +2232,7 @@ Answer with just YES or NO.`;
       }
 
       // Step 2: DOCFILES.TXT FIRST-PASS FILTER
-      logger.info('� Starting docfiles.txt analysis for rapid FI detection...');
+      logger.debug('detection: starting docfiles.txt analysis');
       const docfilesMatches = [];
       const projectsWithoutDocfiles = [];
       const processingStats = {
@@ -2342,25 +2332,26 @@ Answer with just YES or NO.`;
             projectsWithoutDocfiles.push(projectId);
           }
         } catch (error) {
-          logger.warn(`Error processing docfiles for project ${projectId}:`, error);
+          logger.warn('detection: docfiles processing failed', { proj: projectId, err: error.message });
           projectsWithoutDocfiles.push(projectId);
           processingStats.projectsWithoutDocfiles++;
         }
       }
 
-      logger.info(`📊 DOCFILES ANALYSIS COMPLETE:`);
-      logger.info(`   - Projects with docfiles.txt: ${processingStats.projectsWithDocfiles}`);
-      logger.info(`   - Projects without docfiles.txt: ${processingStats.projectsWithoutDocfiles}`);
-      logger.info(`   - FI matches found via docfiles: ${processingStats.docfilesMatches}`);
-      logger.info(`   - Projects needing individual doc analysis: ${projectsWithoutDocfiles.length}`);
+      logger.info('detection: docfiles analysis complete', {
+        withDocfiles: processingStats.projectsWithDocfiles,
+        withoutDocfiles: processingStats.projectsWithoutDocfiles,
+        matches: processingStats.docfilesMatches,
+        needIndividualAnalysis: projectsWithoutDocfiles.length
+      });
 
       // Step 3: FALLBACK TO INDIVIDUAL DOCUMENT ANALYSIS (only for projects without docfiles.txt)
       if (projectsWithoutDocfiles.length > 0) {
-        logger.info(`🔍 Processing ${projectsWithoutDocfiles.length} projects with individual document analysis...`);
+        logger.info('detection: falling back to individual document analysis', { projects: projectsWithoutDocfiles.length });
 
         // Get documents for projects without docfiles
         const documents = await s3Service.listFilteredProjectDocuments(projectsWithoutDocfiles);
-        logger.info(`📄 Found ${documents.length} individual documents to process`);
+        logger.debug('detection: individual documents to process', { documents: documents.length });
 
         // Group documents by project for early termination
         const documentsByProject = {};
@@ -2373,7 +2364,7 @@ Answer with just YES or NO.`;
 
         // Process each report type
         for (const reportType of reportTypes) {
-          logger.info(`🔍 Processing ${reportType} across projects without docfiles.txt`);
+          logger.debug('detection: processing report type across projects without docfiles', { type: reportType });
 
           let processedCount = 0;
           const projectsFoundForThisType = new Set();
@@ -2392,7 +2383,7 @@ Answer with just YES or NO.`;
 
                 // Log progress every 10 documents
                 if (processedCount % 10 === 0) {
-                  logger.info(`📈 Progress: ${processedCount}/${documents.length} individual docs processed for ${reportType} (${Math.round((processedCount/documents.length)*100)}%) - Found FI in ${projectsFoundForThisType.size} projects`);
+                  logger.info('detection: progress', { done: processedCount, of: documents.length, type: reportType, projectsWithFI: projectsFoundForThisType.size });
                 }
 
                 // Stream document for processing
@@ -2473,8 +2464,11 @@ Answer with just YES or NO.`;
       }
 
       // Log final statistics
-      logger.info(`📊 FI Detection Complete - Processed ${processingStats.totalProjects} projects, found ${processingStats.fiRequestsFound} FI requests`);
-      logger.info(`   Breakdown by type: ${JSON.stringify(processingStats.matchesByReportType)}`);
+      logger.info('run end: FI detection', {
+        projects: processingStats.totalProjects,
+        fiRequests: processingStats.fiRequestsFound,
+        byType: JSON.stringify(processingStats.matchesByReportType)
+      });
 
       // Step 4: Group results by customer if customer data provided
       // Apply county/sector filters based on each customer's subscription
@@ -2493,7 +2487,7 @@ Answer with just YES or NO.`;
 
             // Debug: Log customer filter settings
             if (hasActiveFilters) {
-              logger.info(`🔍 ${customer.email} subscription filters - Counties: [${allowedCounties.join(', ')}], Sectors: [${allowedSectors.join(', ')}]`);
+              logger.debug('detection: applying subscription filters', { to: customer.email, counties: allowedCounties.length, sectors: allowedSectors.length });
             }
 
             // Filter matches based on customer's subscription (county/sector)
@@ -2507,7 +2501,7 @@ Answer with just YES or NO.`;
 
                 // If no county/sector info, exclude (can't verify against active filters)
                 if (!projectCounty || projectCounty === 'Unknown' || projectCounty === 'N/A') {
-                  logger.warn(`⚠️ Project ${match.projectId}: No county data - EXCLUDING for ${customer.email}`);
+                  logger.warn('detection: project excluded, no county data', { proj: match.projectId, to: customer.email });
                   return false;
                 }
 
@@ -2525,14 +2519,14 @@ Answer with just YES or NO.`;
 
                 // Debug: Log filtering decisions for projects that fail
                 if (!countyOK || !sectorOK) {
-                  logger.info(`🚫 Project ${match.projectId} (${projectCounty}/${projectSector}) EXCLUDED for ${customer.email} - countyOK: ${countyOK}, sectorOK: ${sectorOK}`);
+                  logger.debug('detection: project excluded by filters', { proj: match.projectId, county: projectCounty, sector: projectSector, to: customer.email, countyOK, sectorOK });
                 }
 
                 return countyOK && sectorOK;
               });
 
               if (originalCount !== filteredMatches.length) {
-                logger.info(`📋 ${customer.email}: ${filteredMatches.length}/${originalCount} matches after applying subscription filters`);
+                logger.debug('detection: matches after filters', { to: customer.email, kept: filteredMatches.length, of: originalCount });
               }
             }
 

@@ -1,7 +1,6 @@
 const Queue = require('bull');
 const redis = require('redis');
 const schedule = require('node-schedule');
-const winston = require('winston');
 require('dotenv').config(); // Load environment variables
 const s3Service = require('./s3Service');
 const buildingInfoService = require('./buildingInfoService');
@@ -11,17 +10,7 @@ const emailService = require('./emailService');
 const Project = require('../models/Project');
 const Customer = require('../models/Customer');
 
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console(),
-    new winston.transports.File({ filename: 'logs/jobs.log' })
-  ]
-});
+const logger = require('../utils/logger');
 
 class JobSchedulerService {
   constructor() {

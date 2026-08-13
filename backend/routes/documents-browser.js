@@ -9,12 +9,11 @@ const Customer = require('../models/Customer');
 const Project = require('../models/Project');
 const emailService = require('../services/emailService');
 
-// Simple console logger to avoid winston issues
-const logger = {
-  info: (message, meta) => console.log('[INFO]', message, meta || ''),
-  error: (message, error) => console.error('[ERROR]', message, error || ''),
-  warn: (message, meta) => console.warn('[WARN]', message, meta || '')
-};
+// This file used to define a console-backed stand-in here "to avoid winston issues".
+// The effect was that its ~55 log calls never reached any log file, carried no level or
+// timestamp field, and could not be filtered by run - they existed only in PM2's raw
+// stdout capture.
+const logger = require('../utils/logger');
 
 /**
  * GET /api/documents/local/drives

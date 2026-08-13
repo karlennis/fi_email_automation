@@ -1,21 +1,10 @@
 const schedule = require('node-schedule');
-const winston = require('winston');
 const ScheduledJob = require('../models/ScheduledJob');
 const Customer = require('../models/Customer');
 const emailService = require('./emailService');
 const { withLock } = require('./jobLock');
 
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console(),
-    new winston.transports.File({ filename: 'logs/scheduled-jobs.log' })
-  ]
-});
+const logger = require('../utils/logger');
 
 class ScheduledJobManager {
   constructor() {

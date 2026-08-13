@@ -13,6 +13,7 @@ const fiReportService = require('./fiReportService');
 const documentIngestionService = require('./documentIngestionService');
 const diskCleanupService = require('./diskCleanupService');
 const logger = require('../utils/logger');
+const runContext = require('../utils/runContext');
 // Always called through the module object, never destructured: a destructured binding
 // is captured at require time and silently bypasses a test's spy on the module.
 const scanJobQueue = require('./scanJobQueue');
@@ -73,11 +74,10 @@ class ScanJobProcessor {
      */
     async initialize() {
         try {
-            logger.info('🤖 Initializing Scan Job Processor...');
-                if (process.env.SCAN_SCHEDULER_ENABLED === 'false') {
-                    logger.info('⏭️ Scan scheduler disabled (SCAN_SCHEDULER_ENABLED=false)');
-                    return;
-                }
+            if (process.env.SCAN_SCHEDULER_ENABLED === 'false') {
+                logger.info('scan scheduler disabled (SCAN_SCHEDULER_ENABLED=false)');
+                return;
+            }
 
             // Schedule to run once daily at 12:10 AM (5 minutes after document register generation)
             this.scheduledJob = schedule.scheduleJob('10 0 * * *', async () => {
@@ -97,18 +97,20 @@ class ScanJobProcessor {
                 this.stuckJobSweepJob = schedule.scheduleJob('*/15 * * * *', async () => {
                     await this.sweepStuckJobs();
                 });
-                logger.info(`✅ Stuck-job sweeper initialized - checks every 15 minutes`);
             } else {
-                logger.info('⏭️ Stuck-job sweeper disabled (SCAN_STUCK_SWEEP_ENABLED=false)');
+                logger.info('scan: stuck-job sweeper disabled (SCAN_STUCK_SWEEP_ENABLED=false)');
             }
 
-            logger.info(`✅ Scan Job Processor initialized - runs daily at 12:10 AM`);
-            logger.info(`✅ Delivery sweeper initialized - checks pending sends every minute`);
+            logger.info('scan job processor ready', {
+                nightly: '00:10',
+                delivery: 'every 1m',
+                stuckSweep: this.stuckJobSweepJob ? 'every 15m' : 'off'
+            });
 
             // Check if we should run on startup (if we haven't run today yet)
             const today = new Date().toISOString().split('T')[0];
             if (this.lastProcessedDate !== today) {
-                logger.info('🚀 Running initial scan on startup...');
+                logger.info('scan: running initial scan on startup');
                 setTimeout(() => this.processActiveJobs(), 5000);
             }
 
@@ -116,7 +118,7 @@ class ScanJobProcessor {
             setTimeout(() => this.processPendingDeliveries(), 10000);
 
         } catch (error) {
-            logger.error('❌ Failed to initialize Scan Job Processor:', error);
+            logger.error('scan job processor failed to initialize', error);
         }
     }
 
@@ -124,54 +126,63 @@ class ScanJobProcessor {
      * Process all active scan jobs
      */
     async processActiveJobs() {
-        if (this.isRunning) {
-            logger.info('⏭️ Scan job processing already in progress, skipping...');
-            return;
-        }
+        return runContext.runWith({ runId: runContext.newRunId('NIGHTLY') }, async () => {
+            if (this.isRunning) {
+                logger.info('nightly: already in progress, skipping');
+                return;
+            }
 
-        // Check if we've already run today
-        const today = new Date().toISOString().split('T')[0];
-        if (this.lastProcessedDate === today) {
-            logger.info('⏭️ Scan jobs already processed today, skipping...');
-            return;
-        }
+            // Check if we've already run today
+            const today = new Date().toISOString().split('T')[0];
+            if (this.lastProcessedDate === today) {
+                logger.info('nightly: already processed today, skipping', { today });
+                return;
+            }
 
-        // Defence in depth: this runs in the single fork-mode worker today, but both
-        // in-process guards above are wiped by a restart, so a crash-loop around 12:10 AM
-        // could enqueue the same job repeatedly.
-        const outcome = await withLock(
-            'scan-job-enqueue-daily',
-            {
-                ttlMs: 10 * 60 * 1000,
-                skipMessage: '⏭️ Daily scan enqueue held by another process, skipping...'
-            },
-            () => this.enqueueDueJobs(today)
-        );
+            // Defence in depth: this runs in the single fork-mode worker today, but both
+            // in-process guards above are wiped by a restart, so a crash-loop around 12:10 AM
+            // could enqueue the same job repeatedly.
+            const outcome = await withLock(
+                'scan-job-enqueue-daily',
+                {
+                    ttlMs: 10 * 60 * 1000,
+                    skipMessage: 'nightly: enqueue lock held by another process, skipping'
+                },
+                () => this.enqueueDueJobs(today)
+            );
 
-        return outcome.ran ? outcome.result : undefined;
+            return outcome.ran ? outcome.result : undefined;
+        });
     }
 
     async enqueueDueJobs(today) {
         this.isRunning = true;
+        let enqueued = 0, resumed = 0, skipped = 0, failed = 0;
 
         try {
             // Get all active and running jobs
             const activeJobs = await ScanJob.find({ status: { $in: ['ACTIVE', 'RUNNING'] } })
                 .populate('customers.customerId', 'email company name projectId filters');
 
-            // Log all jobs for debugging
+            // One line per job in the database, every night. Useful when a job has gone
+            // missing, noise the rest of the time - so it lands in debug-DATE.log only.
             const allJobs = await ScanJob.find({});
-            logger.info(`📊 Total jobs in database: ${allJobs.length}`);
             for (const job of allJobs) {
-                logger.info(`  - ${job.jobId}: status=${job.status}, checkpoint=${job.checkpoint?.processedCount || 0}/${job.checkpoint?.totalDocuments || 0}, isResuming=${job.checkpoint?.isResuming || false}`);
+                logger.debug('nightly: job state', {
+                    job: job.jobId,
+                    status: job.status,
+                    done: job.checkpoint?.processedCount || 0,
+                    total: job.checkpoint?.totalDocuments || 0,
+                    resuming: !!job.checkpoint?.isResuming
+                });
             }
 
             if (activeJobs.length === 0) {
-                logger.info('📋 No active/running scan jobs to process');
+                logger.info('run start: nightly enqueue — no active jobs', { today });
                 return;
             }
 
-            logger.info(`🔍 Processing ${activeJobs.length} active scan jobs for ${today}...`);
+            logger.info('run start: nightly enqueue', { today, jobs: activeJobs.length });
 
             for (const job of activeJobs) {
                 try {
@@ -187,7 +198,13 @@ class ScanJobProcessor {
                     const isActivelyScanning = lastBeat > 0 && heartbeatAgeMs < HEARTBEAT_STALE_MS;
 
                     if (isActivelyScanning) {
-                        logger.info(`⏭️ Job ${job.jobId} is actively scanning (last checkpoint ${(heartbeatAgeMs / 1000).toFixed(0)}s ago, ${job.checkpoint?.processedCount || 0}/${job.checkpoint?.totalDocuments || 0}) — leaving in place`);
+                        skipped++;
+                        logger.info('nightly: skip, already scanning', {
+                            job: job.jobId,
+                            beatAgeSec: Math.round(heartbeatAgeMs / 1000),
+                            done: job.checkpoint?.processedCount || 0,
+                            total: job.checkpoint?.totalDocuments || 0
+                        });
                         continue;
                     }
 
@@ -206,18 +223,24 @@ class ScanJobProcessor {
                                        job.checkpoint.processedCount < job.checkpoint.totalDocuments;
 
                     if (needsResume || wasInterrupted || isIncomplete) {
+                        // Why we are resuming matters when a job keeps restarting, so the
+                        // cause stays a field rather than three near-identical messages.
+                        const cause = wasInterrupted ? 'interrupted' : isIncomplete ? 'incomplete' : 'checkpoint';
                         if (wasInterrupted) {
-                            logger.info(`🔄 Job ${job.jobId} was interrupted mid-scan (found RUNNING status), resuming from ${job.checkpoint.processedCount} documents...`);
                             job.checkpoint.isResuming = true;
                             job.status = 'ACTIVE';
                             await job.save();
                         } else if (isIncomplete) {
-                            logger.info(`🔄 Job ${job.jobId} has incomplete scan (${job.checkpoint.processedCount}/${job.checkpoint.totalDocuments}), resuming...`);
                             job.checkpoint.isResuming = true;
                             await job.save();
-                        } else {
-                            logger.info(`🔄 Job ${job.jobId} needs to resume from checkpoint at ${job.checkpoint.processedCount} documents...`);
                         }
+                        resumed++;
+                        logger.info('nightly: enqueue resume', {
+                            job: job.jobId,
+                            cause,
+                            done: job.checkpoint.processedCount,
+                            total: job.checkpoint.totalDocuments || 0
+                        });
                         // Pass null - processJob will use checkpoint dates for resuming
                         await scanJobQueue.enqueueScanJob(job.jobId, { targetDate: null });
                         continue;
@@ -227,30 +250,35 @@ class ScanJobProcessor {
                     const shouldRun = this.shouldJobRun(job, today);
 
                     if (!shouldRun) {
-                        const scheduleType = job.schedule?.type || 'DAILY';
-                        logger.info(`⏭️ Job ${job.jobId} not scheduled to run (${scheduleType} schedule)`);
+                        skipped++;
+                        logger.info('nightly: skip, not scheduled today', {
+                            job: job.jobId,
+                            schedule: job.schedule?.type || 'DAILY'
+                        });
                         continue;
                     }
 
                     // SCHEDULED DAILY RUN: Pass null - processJob will use lookback (yesterday)
                     await scanJobQueue.enqueueScanJob(job.jobId, { targetDate: null });
+                    enqueued++;
 
                     // Then top up any earlier day this job never covered. Deliberately not
                     // reached from the resume branches above: a job that is mid-way through
                     // a day should finish it before being handed a second one.
                     await this.enqueueBackfill(job);
                 } catch (error) {
-                    logger.error(`❌ Error processing job ${job.jobId}:`, error);
+                    failed++;
+                    logger.error('nightly: enqueue failed', { job: job.jobId, err: error.message, stack: error.stack });
                 }
             }
 
             // Mark that we've processed today
             this.lastProcessedDate = today;
 
-            logger.info('✅ Completed processing all active jobs');
+            logger.info('run end: nightly enqueue', { enqueued, resumed, skipped, failed });
 
         } catch (error) {
-            logger.error('❌ Error processing active jobs:', error);
+            logger.error('run end: nightly enqueue FAILED', error);
         } finally {
             this.isRunning = false;
         }
@@ -262,11 +290,14 @@ class ScanJobProcessor {
      * @param {string} targetDate - Optional target date (YYYY-MM-DD) to scan documents from
      */
     async processJob(job, targetDate = null) {
-        logger.info(`📝 Processing job: ${job.jobId} (${job.name}) - ${job.documentType}`);
+        // The individual setup facts below are debug; what the run was configured to do
+        // is reported as one 'scan config' record once the dates are resolved.
+        logger.debug('scan: job loaded', { name: job.name, type: job.documentType });
 
         const startTime = Date.now();
 
         let scanStartDate, scanEndDate;
+        let scanMode = 'unknown';
 
         // Priority order for determining scan dates:
         // 1. Parameter targetDate (manual run - user just selected)
@@ -281,13 +312,13 @@ class ScanJobProcessor {
             scanStartDate.setHours(0, 0, 0, 0);
             scanEndDate = new Date(scanStartDate);
             scanEndDate.setHours(23, 59, 59, 999);
-            logger.info(`📅 MANUAL RUN: Scanning documents for ${targetDate}`);
+            scanMode = 'manual';
             // Note: Date is stored in checkpoint below, not in job.schedule
         } else if (isResuming && job.checkpoint.scanStartDate && job.checkpoint.scanEndDate) {
             // 2. RESUMING: Use stored dates from checkpoint
             scanStartDate = new Date(job.checkpoint.scanStartDate);
             scanEndDate = new Date(job.checkpoint.scanEndDate);
-            logger.info(`🔄 RESUMING: Original scan dates ${scanStartDate.toISOString().split('T')[0]} to ${scanEndDate.toISOString().split('T')[0]}`);
+            scanMode = 'resume';
         } else {
             // Scheduled recurring runs always scan only yesterday.
             // Delivery uses lookbackDays to aggregate recent daily results on delivery day.
@@ -306,34 +337,40 @@ class ScanJobProcessor {
             const startDateStr = scanStartDate.toISOString().split('T')[0];
             const endDateStr = scanEndDate.toISOString().split('T')[0];
 
-            if (lookbackDays === 1) {
-                logger.info(`📅 Scanning documents from ${endDateStr} (1 day lookback)`);
-            } else {
-                logger.info(`📅 Scanning documents from ${startDateStr} to ${endDateStr} (${lookbackDays} days lookback)`);
-            }
+            scanMode = `lookback-${lookbackDays}d`;
         }
 
         // Stream documents directly from S3 and process inline (no array accumulation)
-        logger.info(`🔍 Streaming S3 documents for date range: ${scanStartDate.toISOString()} to ${scanEndDate.toISOString()}`);
+        logger.info('scan config', {
+            mode: scanMode,
+            type: job.documentType,
+            from: scanStartDate.toISOString().split('T')[0],
+            to: scanEndDate.toISOString().split('T')[0],
+            customers: (job.customers || []).length
+        });
 
         // Use all customers assigned to this job
         const jobCustomers = job.customers.filter(c => c.customerId).map(c => c.customerId);
-        logger.info(`👥 Job has ${jobCustomers.length} customers assigned`);
+        logger.debug('scan: customers assigned', { customers: jobCustomers.length });
 
         if (jobCustomers.length === 0) {
-            logger.warn(`⚠️ Job ${job.jobId} has no customers assigned`);
+            logger.warn('scan: job has no customers assigned');
             return;
         }
 
         // Initialize or resume checkpoint
         const CHECKPOINT_INTERVAL = 10000; // Send progress email every 10,000 documents
+        // How often the run reports progress to the log. A 3,000-document night gets
+        // ~6 lines here instead of the ~12,000 the old per-document logging produced.
+        const PROGRESS_INTERVAL = parseInt(process.env.SCAN_PROGRESS_INTERVAL || '500', 10);
+        const scanStartedAt = Date.now();
         const SAVE_INTERVAL = 100; // Save checkpoint to DB every 100 docs (for crash recovery)
 
         // Always send progress/summary emails to admin
         const adminEmail = process.env.ADMIN_EMAIL || 'afatogun@buildinginfo.com';
 
         if (isResuming) {
-            logger.info(`🔄 Resuming scan after ${job.checkpoint.lastProcessedFile || 'unknown file'}`);
+            logger.info('scan: resuming after last processed file', { after: job.checkpoint.lastProcessedFile || 'unknown' });
 
             // Ensure triggeredBy uses admin email
             if (!job.checkpoint.triggeredBy?.email) {
@@ -343,23 +380,23 @@ class ScanJobProcessor {
                     timestamp: new Date()
                 };
                 await job.save();
-                logger.info(`📧 Progress/summary emails will go to admin: ${adminEmail}`);
+                logger.debug('scan: progress emails routed to admin', { to: adminEmail });
             }
 
             // Fix missing totalDocuments from older checkpoints
             if (!job.checkpoint.totalDocuments || job.checkpoint.totalDocuments === 0) {
-                logger.info(`📊 Counting documents for resumed job (missing totalDocuments)...`);
+                logger.debug('scan: counting documents for resumed job (totalDocuments missing)');
                 const totalDocumentCount = await fastS3Scanner.countDocumentsSince(scanStartDate, scanEndDate);
                 job.checkpoint.totalDocuments = totalDocumentCount;
                 await job.save();
-                logger.info(`📊 Total documents set to ${totalDocumentCount}`);
+                logger.debug('scan: total documents resolved', { total: totalDocumentCount });
             }
 
             // Fix missing scanStartTime from older checkpoints
             if (!job.checkpoint.scanStartTime) {
                 job.checkpoint.scanStartTime = new Date();
                 await job.save();
-                logger.info(`⏰ Fixed missing scanStartTime for resumed job`);
+                logger.debug('scan: filled in missing scanStartTime for resumed job');
             }
         } else {
             // COUNT TOTAL DOCUMENTS UPFRONT (once, not incrementally)
@@ -372,7 +409,7 @@ class ScanJobProcessor {
                 timestamp: new Date()
             };
 
-            logger.info(`📧 Progress/summary emails will be sent to admin: ${adminEmail}`);
+            logger.debug('scan: progress emails routed to admin', { to: adminEmail });
 
             job.checkpoint = {
                 lastProcessedIndex: 0,
@@ -391,7 +428,7 @@ class ScanJobProcessor {
                 allMatchDetails: []
             };
             await job.save();
-            logger.info(`💾 Checkpoint initialized: ${totalDocumentCount} documents to process`);
+            logger.info('scan: checkpoint initialised', { toProcess: totalDocumentCount });
         }
 
         let matches = []; // Use let instead of const so we can clear after sending
@@ -420,13 +457,13 @@ class ScanJobProcessor {
         // Mongoose strict mode), a resumed scan continues appending to the pre-crash
         // matches rather than starting from an empty array.
         if (isResuming && job.checkpoint.allMatchDetails?.length > 0) {
-            logger.info(`♻️ Resuming with ${job.checkpoint.allMatchDetails.length} match(es) recovered from the checkpoint`);
+            logger.info('scan: matches recovered from checkpoint', { matches: job.checkpoint.allMatchDetails.length });
         }
 
         // Log baseline check date range for debugging
         const today = new Date().toISOString().split('T')[0];
         const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-        logger.info(`📌 Baseline check enabled - will skip projects with markers from ${yesterday} or ${today}`);
+        logger.debug('scan: baseline check enabled', { window: `${yesterday}..${today}` });
 
         // Helper to calculate actual eligible documents (excluding baselined)
         const getEligibleCount = () => totalDocuments - skippedBaseline;
@@ -441,7 +478,7 @@ class ScanJobProcessor {
                         // CHECK FOR CANCELLATION before processing each document
                         const currentJob = await ScanJob.findOne({ jobId: job.jobId });
                         if (currentJob && currentJob.status === 'CANCELLING') {
-                            logger.warn(`🚫 Job ${job.jobId} is being cancelled - aborting processing`);
+                            logger.warn('scan: cancelled by user, aborting');
 
                             // Reset job status and checkpoint
                             currentJob.status = 'ACTIVE';
@@ -475,7 +512,7 @@ class ScanJobProcessor {
                                 const isBaselined = await documentIngestionService.shouldSkipFIScan(projectId);
                                 baselineProjectCache.set(projectId, isBaselined);
                                 if (isBaselined) {
-                                    logger.info(`📌 Project ${projectId} has baseline marker - all documents will be skipped`);
+                                    logger.debug('scan: project baselined, skipping its documents', { proj: projectId });
                                 }
                             }
 
@@ -519,12 +556,17 @@ class ScanJobProcessor {
 
                         totalProcessed++;
                         const eligibleCount = getEligibleCount();
-                        logger.info(`🔍 [${totalProcessed}/${eligibleCount}] Processing: ${document.fileName}${skippedBaseline > 0 ? ` (${skippedBaseline} baselined skipped)` : ''}`);
 
                         // Additional yield before heavy processing
                         await new Promise(resolve => setImmediate(resolve));
 
-                        const result = await this.processDocument(document, job);
+                        // Everything the document touches - extraction, OCR, AI detection -
+                        // is tagged with the file and project, so no downstream message has
+                        // to repeat them and an error can be traced to one document.
+                        const result = await runContext.runWith(
+                            { file: document.fileName, proj: document.projectId },
+                            () => this.processDocument(document, job)
+                        );
 
                         // Yield after processing each document
                         await new Promise(resolve => setImmediate(resolve));
@@ -541,19 +583,19 @@ class ScanJobProcessor {
                         // Force garbage collection every 10 documents
                         if (totalProcessed % 10 === 0 && global.gc) {
                             global.gc();
-                            logger.debug(`🗑️ Forced GC at document ${totalProcessed}`);
+                            logger.debug('scan: forced GC', { at: totalProcessed });
                         }
 
                         // Check memory usage and pause if approaching limit
                         const memUsage = process.memoryUsage();
                         if (memUsage.heapUsed > 1500 * 1024 * 1024) {
-                            logger.warn(`🚨 High memory usage: ${(memUsage.heapUsed / 1024 / 1024).toFixed(0)}MB - pausing briefly`);
+                            logger.warn('scan: high memory, pausing briefly', { heapMB: Math.round(memUsage.heapUsed / 1048576), at: totalProcessed });
                             await new Promise(resolve => setTimeout(resolve, 2000));
                             if (global.gc) global.gc();
                         }
 
                         if (result.isMatch) {
-                            logger.info(`✅ MATCH FOUND: ${document.fileName} (confidence: ${(result.confidence * 100).toFixed(1)}%)`);
+                            logger.info('MATCH', { type: job.documentType, confidence: (result.confidence * 100).toFixed(1) + '%' });
                             matches.push({
                                 document,
                                 result,
@@ -581,13 +623,13 @@ class ScanJobProcessor {
                             // instead of being visible only as a log line.
                             if (result.needsReview || result.stage === 'weak-evidence') {
                                 weakEvidenceCount++;
-                                logger.warn(`⚠️ NEEDS REVIEW: ${document.fileName} - AI matched ${job.documentType} but evidence validation failed`);
+                                logger.warn('NEEDS REVIEW: AI matched but evidence validation failed', { type: job.documentType });
                             } else if (result.stage === 'fi-response-veto') {
                                 vetoedDocuments++;
                             } else if (UNRESOLVED_STAGES.includes(result.stage)) {
                                 unresolvedCount++;
                             }
-                            logger.info(`❌ No match: ${document.fileName} (stage: ${result.stage})`);
+                            logger.debug('no match', { stage: result.stage });
                         }
 
                         // Update checkpoint after each document
@@ -599,6 +641,22 @@ class ScanJobProcessor {
                         job.checkpoint.totalDocuments = getEligibleCount();
                         job.checkpoint.totalDocumentsRaw = totalDocuments;
 
+                        // The one line per PROGRESS_INTERVAL documents that replaces the
+                        // four per document: enough to see the run moving and how fast,
+                        // without burying everything else. Deliberately outside the
+                        // checkpoint branch below, which only fires on multiples of 100.
+                        if (totalProcessed % PROGRESS_INTERVAL === 0) {
+                            const elapsedSec = (Date.now() - scanStartedAt) / 1000;
+                            logger.info('scan: progress', {
+                                done: totalProcessed,
+                                of: getEligibleCount(),
+                                matched: job.checkpoint.matchesFound || 0,
+                                unresolved: unresolvedCount,
+                                perSec: elapsedSec > 0 ? (totalProcessed / elapsedSec).toFixed(1) : '0',
+                                rssMB: Math.round(process.memoryUsage().rss / 1048576)
+                            });
+                        }
+
                         const shouldSave = totalProcessed <= 100 ||
                                          totalProcessed % SAVE_INTERVAL === 0 ||
                                          totalProcessed % CHECKPOINT_INTERVAL === 0;
@@ -606,14 +664,20 @@ class ScanJobProcessor {
                 if (shouldSave) {
                     job.checkpoint.lastCheckpointTime = new Date();
 
-                    // Log memory usage at checkpoints
                     const memUsage = process.memoryUsage();
                     const rssInMB = memUsage.rss / 1024 / 1024;
-                    logger.info(`💾 Memory: ${(memUsage.heapUsed / 1024 / 1024).toFixed(2)}MB / ${(memUsage.heapTotal / 1024 / 1024).toFixed(2)}MB (RSS: ${rssInMB.toFixed(2)}MB)`);
+                    logger.debug('scan: checkpoint memory', {
+                        heapMB: Math.round(memUsage.heapUsed / 1048576),
+                        rssMB: Math.round(rssInMB)
+                    });
 
                     // Circuit breaker: Stop if memory exceeds 1700MB (85% of 2GB Render limit)
                     if (rssInMB > 1700) {
-                        logger.error(`🚨 MEMORY LIMIT APPROACHING: ${rssInMB.toFixed(2)}MB / 2048MB - Stopping scan to prevent crash`);
+                        logger.error('scan: memory limit approaching, pausing scan', {
+                            rssMB: Math.round(rssInMB),
+                            limitMB: 2048,
+                            at: totalProcessed
+                        });
                         job.checkpoint.isResuming = true;
                         job.status = 'PAUSED';
                         await job.save();
@@ -623,21 +687,20 @@ class ScanJobProcessor {
                     // Force garbage collection if available (run with --expose-gc flag)
                     if (global.gc && totalProcessed % 100 === 0) {
                         global.gc();
-                        logger.info('🗑️ Forced garbage collection');
+                        logger.debug('scan: forced garbage collection');
                     }
 
                     await job.save();
 
                     // Only send progress email at CHECKPOINT_INTERVAL milestones
                     if (totalProcessed % CHECKPOINT_INTERVAL === 0) {
-                        logger.info(`💾 Checkpoint saved at ${totalProcessed} documents`);
 
                         // Never send customer emails at checkpoint milestones.
                         // Matches are persisted in checkpoint/allMatchDetails and delivered on delivery day.
                         // Clear local match buffer — matches are persisted in allMatchDetails (checkpoint)
                         // and will be delivered on the configured delivery day via deliverResultsForJob()
                         if (matches.length > 0) {
-                            logger.info(`📦 ${matches.length} matches accumulated at checkpoint — buffered for delivery day`);
+                            logger.info('scan: matches buffered for delivery day', { matches: matches.length, at: totalProcessed });
                             matches = [];
                         }
 
@@ -666,21 +729,17 @@ class ScanJobProcessor {
                                     validationQuote: m.validationQuote?.substring(0, 150) + (m.validationQuote?.length > 150 ? '...' : '')
                                 }))
                             });
-                            logger.info(`📧 Progress email sent to ${triggeredByEmail} (${totalProcessed} docs, ${job.checkpoint.matchesFound || 0} matches)`);
+                            logger.info('scan: progress email sent', { to: triggeredByEmail, done: totalProcessed, matched: job.checkpoint.matchesFound || 0 });
                         } else {
-                            logger.warn(`⚠️ No triggeredBy email found, skipping progress email`);
+                            logger.warn('scan: no triggeredBy address, progress email skipped');
                         }
-                    } else if (totalProcessed <= 100) {
-                        // Silent checkpoint save for first 100 docs (critical period)
-                        logger.debug(`💾 Checkpoint saved at ${totalProcessed} documents (early crash protection)`);
                     } else {
-                        // Silent checkpoint save (no email)
-                        logger.debug(`💾 Checkpoint saved at ${totalProcessed} documents (silent)`);
+                        logger.debug('scan: checkpoint saved', { at: totalProcessed });
                     }
                 }
 
                     } catch (error) {
-                        logger.error(`❌ Error processing document ${document.fileName}:`, error);
+                        logger.error('scan: document FAILED', { err: error.message, stack: error.stack });
 
                         // Save checkpoint even on error to allow resume
                         job.checkpoint.lastProcessedIndex = totalProcessed - 1;
@@ -701,11 +760,11 @@ class ScanJobProcessor {
         } catch (scanError) {
             // Handle user-initiated cancellation gracefully
             if (scanError.message === 'JOB_CANCELLED_BY_USER') {
-                logger.info(`✅ Job ${job.jobId} cancelled cleanly by user`);
+                logger.info('run end: scan cancelled by user');
                 return; // Exit gracefully without throwing error
             }
 
-            logger.error(`❌ Error streaming S3 documents:`, scanError);
+            logger.error('scan: S3 stream failed', scanError);
             throw scanError;
         }
 
@@ -714,16 +773,12 @@ class ScanJobProcessor {
         job.checkpoint.isResuming = false; // Clear resume flag
         await job.save();
 
-        if (skippedNonPdf > 0) {
-            logger.info(`⏭️  Skipped ${skippedNonPdf} unsupported files`);
-        }
-
-        if (skippedBaseline > 0) {
-            logger.info(`📌 Skipped ${skippedBaseline} documents from ${baselineProjectCache.size} baselined projects (first-time ingestion)`);
-        } else if (totalProcessed > 0 && baselineProjectCache.size === 0) {
-            logger.warn(`⚠️  No baseline markers found - all ${totalProcessed} documents were scanned. Check if routing job ran successfully.`);
-        } else {
-            logger.info(`📌 Baseline check completed - ${baselineProjectCache.size} projects checked, none had recent baseline markers`);
+        // Counts land in the run summary below; only the case that signals a broken
+        // pipeline is worth a line of its own.
+        if (skippedBaseline === 0 && totalProcessed > 0 && baselineProjectCache.size === 0) {
+            logger.warn('scan: no baseline markers found, every document was scanned - did the routing job run?', {
+                processed: totalProcessed
+            });
         }
 
         if (streamStats && streamStats.totalMatched !== undefined) {
@@ -736,90 +791,72 @@ class ScanJobProcessor {
         const totalMatchesFound = job.checkpoint.matchesFound || 0;
         const eligibleDocuments = getEligibleCount();
 
-        // Log clear breakdown of document processing
-        logger.info(`\n📊 ===== SCAN SUMMARY =====`);
-        logger.info(`   Total documents in date range: ${totalDocuments}`);
-        if (skippedBaseline > 0) {
-            logger.info(`   Baselined projects skipped: ${baselineProjectCache.size} projects, ${skippedBaseline} documents`);
-        }
-        logger.info(`   Eligible documents scanned: ${eligibleDocuments}`);
-        logger.info(`   Documents actually processed: ${totalProcessed}`);
-        if (resumeSkipped > 0) {
-            logger.info(`   Skipped as already processed before resume: ${resumeSkipped}`);
-        }
-        logger.info(`   FI matches found: ${totalMatchesFound}`);
-        if (vetoedDocuments > 0) {
-            logger.info(`   Response documents (project vetoed): ${vetoedDocuments}`);
-        }
+        // One record rather than the thirteen-line banner this used to print. Every number
+        // a post-mortem needs is a field, so `npm run logs -- --run <id>` shows the whole
+        // outcome on one line and --json | jq can pull any of it back out.
+        logger.info('scan summary', {
+            inRange: totalDocuments,
+            eligible: eligibleDocuments,
+            processed: totalProcessed,
+            matched: totalMatchesFound,
+            baselineSkipped: skippedBaseline,
+            baselineProjects: baselineProjectCache.size,
+            unsupportedSkipped: skippedNonPdf,
+            resumeSkipped,
+            vetoed: vetoedDocuments,
+            weakEvidence: weakEvidenceCount,
+            unresolved: unresolvedCount
+        });
+
+        // Promoted out of the summary because each means the counts above overstate what
+        // the night actually covered.
         if (weakEvidenceCount > 0) {
-            logger.warn(`   ⚠️ AI matched but evidence failed (needs review): ${weakEvidenceCount}`);
+            logger.warn('scan: AI matched but evidence validation failed - needs review', {
+                count: weakEvidenceCount
+            });
         }
         if (unresolvedCount > 0) {
             const pct = totalProcessed > 0 ? ((unresolvedCount / totalProcessed) * 100).toFixed(1) : '0.0';
-            logger.warn(`   ⚠️ Could not be judged (parse/OCR/timeout/API failure): ${unresolvedCount} (${pct}% of processed)`);
+            logger.warn('scan: documents could not be judged (parse/OCR/timeout/API failure)', {
+                count: unresolvedCount,
+                pctOfProcessed: pct
+            });
         }
-        logger.info(`✅ Job ${job.jobId} complete: ${totalMatchesFound} matches from ${totalProcessed}/${eligibleDocuments} eligible documents`);
 
         // A large unresolved fraction means the day's coverage is not what the counts
         // suggest - these documents were never actually assessed.
         if (totalProcessed > 0 && unresolvedCount / totalProcessed > 0.2) {
-            logger.error(
-                `🚨 Job ${job.jobId}: ${unresolvedCount}/${totalProcessed} documents could not be assessed. ` +
-                `Match count for this day is not trustworthy.`
-            );
-        }
-
-        // Baseline checks fail closed, so a widespread S3 failure would silently baseline
-        // every project and produce a clean-looking scan of nothing at all.
-        const baselineErrors = s3Service.getBaselineCheckErrorCount();
-        if (baselineErrors > 0) {
-            const checked = baselineProjectCache.size || 1;
-            logger.error(
-                `🚨 Job ${job.jobId}: ${baselineErrors} baseline marker check(s) failed and were treated as ` +
-                `baselined. Those projects were skipped without being examined.`
-            );
-
-            if (baselineErrors / checked > 0.5) {
-                await this.sendJobAlert(job, {
-                    severity: 'critical',
-                    subject: `Scan job ${job.jobId} could not check baseline markers`,
-                    headline:
-                        `${baselineErrors} of ${checked} baseline checks failed. Failed checks are treated as ` +
-                        `"already baselined", so most of this night's projects were skipped rather than scanned. ` +
-                        `The scan will report success with few or no matches.`,
-                    details: {
-                        'Failed checks': baselineErrors,
-                        'Projects checked': checked,
-                        'Documents processed': totalProcessed,
-                        'Matches found': totalMatchesFound
-                    },
-                    action: 'Check S3 credentials and read permissions on planning-docs/, then re-run this day.'
-                });
-            }
+            logger.error('scan: match count for this day is not trustworthy - too many documents unassessed', {
+                unresolved: unresolvedCount,
+                processed: totalProcessed
+            });
         }
 
         // Baseline checks fail closed, so a widespread S3 failure presents as "everything
-        // is baselined" and the scan quietly covers nothing. Alert on the ratio.
+        // is baselined" and the scan quietly covers nothing at all.
+        //
+        // This check used to be written out twice, in two consecutive blocks that called
+        // getBaselineCheckErrorCount() separately and logged and alerted on the same
+        // condition - so one bad night sent the operator two identical critical emails.
         const baselineCheckErrors = s3Service.getBaselineCheckErrorCount();
         if (baselineCheckErrors > 0) {
             const checked = baselineProjectCache.size || 1;
-            const ratio = baselineCheckErrors / checked;
-            logger.error(
-                `🚨 Job ${job.jobId}: ${baselineCheckErrors} baseline marker check(s) failed across ` +
-                `${baselineProjectCache.size} project(s). Failed checks are treated as baselined, so those ` +
-                `projects were skipped rather than scanned.`
-            );
+            logger.error('scan: baseline marker checks failed and were treated as baselined - those projects were skipped without being examined', {
+                failed: baselineCheckErrors,
+                checked
+            });
 
-            if (ratio > 0.5) {
+            if (baselineCheckErrors / checked > 0.5) {
                 await this.sendJobAlert(job, {
                     severity: 'critical',
                     subject: `Scan job ${job.jobId} could not check baseline markers`,
                     headline:
-                        `${baselineCheckErrors} of ${baselineProjectCache.size} baseline marker checks failed. ` +
-                        `Failed checks fail closed, so most of this night's projects were skipped rather than scanned.`,
+                        `${baselineCheckErrors} of ${checked} baseline checks failed. Failed checks are treated as ` +
+                        `"already baselined", so most of this night's projects were skipped rather than scanned. ` +
+                        `The scan will report success with few or no matches.`,
                     details: {
                         'Failed checks': baselineCheckErrors,
-                        'Projects checked': baselineProjectCache.size,
+                        'Projects checked': checked,
                         'Documents processed': totalProcessed,
                         'Matches found': totalMatchesFound
                     },
@@ -839,16 +876,15 @@ class ScanJobProcessor {
             );
         }
 
-        // Print validation quotes for any remaining matches (only those since last checkpoint)
-        if (matches.length > 0) {
-            logger.info('\n📋 ===== FINAL VALIDATION QUOTES =====');
-            matches.forEach((match, index) => {
-                const fileName = match.document.fileName;
-                const quote = match.result.validationQuote || 'No quote captured';
-                logger.info(`\n[${index + 1}] File: ${fileName}`);
-                logger.info(`    Quote: "${quote.substring(0, 300)}${quote.length > 300 ? '...' : ''}"`);
+        // Validation quotes for any remaining matches (only those since last checkpoint).
+        // Two lines and up to 300 characters per match at info level was the single
+        // largest thing between a reader and the summary above; the quotes themselves are
+        // also persisted on the match record, so debug is enough here.
+        for (const match of matches) {
+            logger.debug('scan: validation quote', {
+                file: match.document.fileName,
+                quote: (match.result.validationQuote || 'No quote captured').substring(0, 200)
             });
-            logger.info('\n========================================\n');
         }
 
         // Clear remaining local match buffer (all matches already in allMatchDetails via checkpoint)
@@ -886,9 +922,9 @@ class ScanJobProcessor {
                     validationQuote: m.validationQuote?.substring(0, 300) + (m.validationQuote?.length > 300 ? '...' : '')
                 }))
             });
-            logger.info(`📧 Final summary email sent to ${triggeredByEmail}`);
+            logger.info('scan: final summary email sent', { to: triggeredByEmail });
         } else {
-            logger.warn(`⚠️ No triggeredBy email found, skipping final summary email`);
+            logger.warn('scan: no triggeredBy address, final summary email skipped');
         }
 
         // Reset job status back to ACTIVE after completion (don't leave it as RUNNING)
@@ -910,15 +946,15 @@ class ScanJobProcessor {
         const autoProcess = job.config.autoProcess !== false;
         if (autoProcess && this.isDeliveryDay(job, today)) {
             if (!this.shouldApplyDeliveryTimeGate(job)) {
-                logger.info(`📬 Delivery day reached for job ${job.jobId} — sending immediately (no time gate for ${job.schedule?.type || 'DAILY'})`);
+                logger.info('delivery: due now, no time gate', { schedule: job.schedule?.type || 'DAILY' });
                 // Refresh recipients from DB so customers removed during this run are excluded
                 await this.refreshJobCustomers(job);
                 await this.deliverResultsForJob(job, scanDateKey);
                 this.markDeliverySent(job, today);
             } else if (job.deliveryState?.sentForDate === today) {
-                logger.info(`⏭️ Delivery already completed today for job ${job.jobId} (${today}), skipping duplicate send`);
+                logger.info('delivery: already sent today, skipping duplicate', { today });
             } else if (this.hasReachedDeliveryTime(job, new Date())) {
-                logger.info(`📬 Delivery day/time reached for job ${job.jobId} — aggregating and delivering now`);
+                logger.info('delivery: due now, aggregating');
                 // Refresh recipients from DB so customers removed during this run are excluded
                 await this.refreshJobCustomers(job);
                 // Deliver based on the latest fully scanned day (yesterday for scheduled runs).
@@ -927,7 +963,7 @@ class ScanJobProcessor {
             } else {
                 const anchorDateStr = scanDateKey.toISOString().split('T')[0];
                 this.markDeliveryPending(job, today, anchorDateStr);
-                logger.info(`⏳ Delivery deferred for job ${job.jobId} until ${this.getDeliveryTimeParts(job).timeLabel} (server local time)`);
+                logger.info('delivery: deferred', { until: this.getDeliveryTimeParts(job).timeLabel });
             }
         } else {
             // Not a configured delivery day at completion time. However, if this scan ran
@@ -947,12 +983,12 @@ class ScanJobProcessor {
             );
 
             if (missedDelivery) {
-                logger.info(`📮 Catch-up delivery for job ${job.jobId}: delivery day ${dueDateStr} was missed (scan finished ${today}, last sent ${lastSent || 'never'}) — delivering now`);
+                logger.info('delivery: catch-up for a missed delivery day', { due: dueDateStr, scanFinished: today, lastSent: lastSent || 'never' });
                 await this.refreshJobCustomers(job);
                 await this.deliverResultsForJob(job, scanDateKey);
                 this.markDeliverySent(job, today);
             } else {
-                logger.info(`📦 Results saved for job ${job.jobId} — not a delivery day (${job.schedule?.type || 'DAILY'})`);
+                logger.info('delivery: results saved, not a delivery day', { schedule: job.schedule?.type || 'DAILY' });
             }
         }
 
@@ -977,7 +1013,7 @@ class ScanJobProcessor {
         await diskCleanupService.runCleanup();
 
         const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-        logger.info(`⏱️ Job ${job.jobId} completed in ${duration}s - status reset to ACTIVE`);
+        logger.info('scan: job reset to ACTIVE', { sec: Math.round(Number(duration)) });
     }
 
     /**
@@ -988,7 +1024,7 @@ class ScanJobProcessor {
             const fileName = document.fileName;
             const documentType = job.documentType; // e.g., 'acoustic'
 
-            logger.info(`📄 Processing: ${fileName}`);
+            logger.debug('doc: start', { type: documentType });
 
             // Add processing timeout to prevent health check timeouts
             const PROCESSING_TIMEOUT = 25000; // 25 seconds (less than 30s health check timeout)
@@ -1012,7 +1048,7 @@ class ScanJobProcessor {
 
         } catch (error) {
             if (error.message.includes('Processing timeout')) {
-                logger.warn(`⏱️ ${error.message} - Skipping to prevent health check timeout`);
+                logger.warn('doc: skipped to prevent health check timeout', { err: error.message });
                 return {
                     isMatch: false,
                     stage: 'processing-timeout',
@@ -1085,7 +1121,7 @@ class ScanJobProcessor {
                     const head = await s3.headObject(params).promise();
                     sizeBytes = head.ContentLength || 0;
                     if (sizeBytes > maxBytes) {
-                        logger.warn(`⚠️ Skipping ${fileName} (${(sizeBytes / 1024 / 1024).toFixed(1)}MB) - exceeds ${maxDocMb}MB limit`);
+                        logger.warn('doc: skipped, over size limit', { sizeMB: (sizeBytes / 1048576).toFixed(1), limitMB: maxDocMb });
                         return {
                             isMatch: false,
                             stage: 'file-too-large',
@@ -1094,7 +1130,7 @@ class ScanJobProcessor {
                         };
                     }
                 } catch (headError) {
-                    logger.warn(`⚠️ Could not read size for ${fileName}: ${headError.message}`);
+                    logger.warn('doc: could not read size', { err: headError.message });
                 }
 
                 const isDocx = fileName.toLowerCase().endsWith('.docx');
@@ -1115,7 +1151,7 @@ class ScanJobProcessor {
                     await fsp.unlink(tempPath).catch(() => null);
 
                     if (!streamingResult?.text) {
-                        logger.error(`❌ Text extraction failed for ${fileName}: streaming extractor returned empty text`);
+                        logger.error('doc: text extraction failed, streaming extractor returned empty text');
                         return {
                             isMatch: false,
                             stage: 'pdf-stream-parse-error',
@@ -1154,7 +1190,7 @@ class ScanJobProcessor {
                         try {
                             await fsp.unlink(tempFilePath);
                         } catch (unlinkError) {
-                            logger.debug(`Could not delete temp file ${tempFilePath}: ${unlinkError.message}`);
+                            logger.debug('doc: could not delete temp file', { err: unlinkError.message });
                         }
                     }
 
@@ -1162,7 +1198,7 @@ class ScanJobProcessor {
                     fileBuffer = null;
 
                     if (!extractionResult.success) {
-                        logger.error(`❌ Text extraction failed for ${fileName}: ${extractionResult.error}`);
+                        logger.error('doc: text extraction failed', { err: extractionResult.error });
                         return {
                             isMatch: false,
                             stage: isDocx ? 'docx-parse-error' : 'pdf-parse-error',
@@ -1176,7 +1212,7 @@ class ScanJobProcessor {
                 }
 
                 if (!documentText || documentText.length < 100) {
-                    logger.warn(`⚠️ Insufficient text extracted from ${fileName} (${documentText.length} chars)`);
+                    logger.debug('doc: insufficient text extracted', { chars: documentText.length });
                     return {
                         isMatch: false,
                         stage: 'text-extraction',
@@ -1185,10 +1221,10 @@ class ScanJobProcessor {
                     };
                 }
 
-                logger.info(`✅ Extracted ${documentText.length} chars from ${fileName}`);
+                logger.debug('doc: text extracted', { chars: documentText.length });
 
             } catch (error) {
-                logger.error(`❌ Error downloading/extracting ${fileName}:`, error);
+                logger.error('doc: download/extract failed', { err: error.message, stack: error.stack });
                 return {
                     isMatch: false,
                     stage: 'download-error',
@@ -1248,7 +1284,7 @@ class ScanJobProcessor {
             // FI request letters are usually 2-5 pages
             const estimatedPages = Math.ceil(documentText.length / 2500); // ~2500 chars per page
             if (estimatedPages > 100) {
-                logger.info(`Rejecting long document: ${estimatedPages} estimated pages (>100)`);
+                logger.debug('doc: rejected, too long', { estPages: estimatedPages });
                 return {
                     isMatch: false,
                     stage: 'length-reject',
@@ -1268,7 +1304,7 @@ class ScanJobProcessor {
 
             const hasReportStructure = reportStructureMarkers.some(pattern => pattern.test(documentText));
             if (hasReportStructure) {
-                logger.info('Rejecting document with report structure markers');
+                logger.debug('doc: rejected, has report structure markers');
                 return {
                     isMatch: false,
                     stage: 'structure-reject',
@@ -1292,7 +1328,7 @@ class ScanJobProcessor {
             }
 
             // 🔍 LOG: Document passed Layer 2 - will process with full AI
-            logger.info(`✅ Layer 2 PASS: ${fileName} - Processing with full AI (${documentText.length} chars)`);
+            logger.debug('doc: layer 2 pass, sending to full AI', { chars: documentText.length });
 
             // LAYER 3: Full AI detection - only for promising candidates
             try {
@@ -1318,7 +1354,7 @@ class ScanJobProcessor {
                 const isValidatedMatch = matchResult.matches === true && matchResult.hasValidEvidence === true;
 
                 if (isValidatedMatch) {
-                    logger.info(`✅ FI REQUEST MATCH: ${fileName} requests ${documentType} report`);
+                    logger.debug('doc: FI request match', { type: documentType });
                     return {
                         isMatch: true,
                         stage: 'fi-detection',
@@ -1330,7 +1366,7 @@ class ScanJobProcessor {
                     };
                 } else if (matchResult.aiConfirmedMatchButWeakEvidence) {
                     // AI said yes but evidence failed - log but don't emit to customer
-                    logger.warn(`⚠️ AI match detected but evidence validation failed for ${fileName} (${documentType})`);
+                    logger.debug('doc: AI matched but evidence validation failed', { type: documentType });
                     return {
                         isMatch: false,
                         stage: 'weak-evidence',
@@ -1350,7 +1386,7 @@ class ScanJobProcessor {
                 }
 
             } catch (error) {
-                logger.error(`❌ Error in FI detection for ${fileName}:`, error);
+                logger.error('doc: FI detection failed', { err: error.message, stack: error.stack });
                 return {
                     isMatch: false,
                     stage: 'detection-error',
@@ -1360,7 +1396,7 @@ class ScanJobProcessor {
             }
 
         } catch (error) {
-            logger.error(`❌ Error processing document ${document.fileName}:`, error);
+            logger.error('doc: processing failed', { err: error.message, stack: error.stack });
             return {
                 isMatch: false,
                 stage: 'error',
@@ -1386,7 +1422,7 @@ class ScanJobProcessor {
      * Groups matches by customer and fetches project metadata from Building Info API
      */
     async sendMatchEmails(matches, job, prefetchedMetadataMap = null) {
-        logger.info(`📧 Preparing batch notifications for ${matches.length} matched documents...`);
+        logger.info('delivery: preparing batch notifications', { matches: matches.length });
 
         try {
             // Group matches by customer email
@@ -1407,9 +1443,9 @@ class ScanJobProcessor {
 
                         // Debug log customer filter setup
                         if (hasFilters) {
-                            logger.info(`📋 Customer ${email} loaded with filters - Counties: [${(customerFilters.allowedCounties || []).join(', ')}], Sectors: [${(customerFilters.allowedSectors || []).join(', ')}]`);
+                            logger.debug('delivery: customer filters loaded', { to: email, counties: (customerFilters.allowedCounties || []).length, sectors: (customerFilters.allowedSectors || []).length });
                         } else {
-                            logger.debug(`📋 Customer ${email} has no subscription filters (receives all matches)`);
+                            logger.debug('delivery: customer has no subscription filters', { to: email });
                         }
 
                         customerMatchesMap.set(email, {
@@ -1441,7 +1477,7 @@ class ScanJobProcessor {
                             projectMetadata: null // Will be populated below
                         });
                     } else {
-                        logger.debug(`⏭️ Skipping weak-evidence match for ${document.fileName}: "${validationQuote.substring(0, 80)}..."`);
+                        logger.debug('delivery: weak-evidence match skipped', { file: document.fileName, quote: validationQuote.substring(0, 80) });
                     }
                 }
             }
@@ -1457,7 +1493,7 @@ class ScanJobProcessor {
                     }
                 });
 
-                logger.info(`📡 Fetching metadata for ${uniqueProjectIds.size} projects from Building Info API...`);
+                logger.info('delivery: fetching project metadata', { projects: uniqueProjectIds.size });
 
                 // Fetch all project metadata from Building Info API
                 projectMetadataMap = new Map();
@@ -1468,7 +1504,7 @@ class ScanJobProcessor {
                             projectMetadataMap.set(projectId, metadata);
                         }
                     } catch (error) {
-                        logger.warn(`⚠️ Could not fetch metadata for project ${projectId}:`, error.message);
+                        logger.warn('delivery: project metadata fetch failed', { proj: projectId, err: error.message });
                     }
                 }
             }
@@ -1487,7 +1523,7 @@ class ScanJobProcessor {
             for (const customerData of customerMatchesMap.values()) {
                 customerData.matches = customerData.matches.filter(match => {
                     if (match.projectMetadata?.metadataUnavailable) {
-                        logger.warn(`⏸️ Project ${match.projectId}: metadata unavailable - excluding from email to ${customerData.email}`);
+                        logger.warn('delivery: project excluded, metadata unavailable', { proj: match.projectId, to: customerData.email });
                         return false;
                     }
                     return true;
@@ -1504,7 +1540,7 @@ class ScanJobProcessor {
 
                 // Debug: Log customer filter settings
                 if (hasActiveFilters) {
-                    logger.info(`🔍 ${customerData.email} subscription filters - Counties: [${allowedCounties.join(', ')}], Sectors: [${allowedSectors.join(', ')}]`);
+                    logger.debug('delivery: applying subscription filters', { to: customerData.email, counties: allowedCounties.length, sectors: allowedSectors.length });
                 }
 
                 // Filter matches based on customer's subscription
@@ -1520,7 +1556,7 @@ class ScanJobProcessor {
                     const projectSector = metadata?.planning_sector || 'NO_METADATA';
 
                     if (!metadata) {
-                        logger.warn(`⚠️ Project ${match.projectId}: No metadata - EXCLUDING (can't verify against active filters)`);
+                        logger.warn('delivery: project excluded, no metadata to check against filters', { proj: match.projectId });
                         return false; // Exclude if no metadata when filters are active
                     }
 
@@ -1541,14 +1577,14 @@ class ScanJobProcessor {
 
                     // Debug: Log filtering decisions for projects that fail
                     if (!countyOK || !sectorOK) {
-                        logger.info(`🚫 Project ${match.projectId} (${projectCounty}/${projectSector}) EXCLUDED for ${customerData.email} - countyOK: ${countyOK}, sectorOK: ${sectorOK}`);
+                        logger.debug('delivery: project excluded by filters', { proj: match.projectId, county: projectCounty, sector: projectSector, to: customerData.email, countyOK, sectorOK });
                     }
 
                     return countyOK && sectorOK;
                 });
 
                 if (originalCount !== customerData.matches.length) {
-                    logger.info(`📋 ${customerData.email}: ${customerData.matches.length}/${originalCount} matches after applying subscription filters (counties: ${allowedCounties.length || 'all'}, sectors: ${allowedSectors.length || 'all'})`);
+                    logger.debug('delivery: matches after filters', { to: customerData.email, kept: customerData.matches.length, of: originalCount });
                 }
             }
 
@@ -1558,7 +1594,7 @@ class ScanJobProcessor {
             for (const customerData of customerMatchesMap.values()) {
                 // Skip if no matches remain after filtering
                 if (customerData.matches.length === 0) {
-                    logger.info(`⏭️ Skipping ${customerData.email} - no matches after applying subscription filters`);
+                    logger.debug('delivery: customer skipped, no matches after filters', { to: customerData.email });
                     customersSkipped++;
                     continue;
                 }
@@ -1592,7 +1628,7 @@ class ScanJobProcessor {
                     } else {
                         emailsSent++;
                         emailStatus = 'SENT';
-                        logger.info(`✉️ Sent batch email to ${customerData.email} (${customerData.matches.length} matches)`);
+                        logger.info('delivery: email sent', { to: customerData.email, matches: customerData.matches.length });
                     }
 
                     // Update Customer record with email statistics - only when an email
@@ -1603,15 +1639,15 @@ class ScanJobProcessor {
                             : null;
                         if (customerRecord) {
                             await customerRecord.recordEmailSent();
-                            logger.info(`📈 Updated email stats for customer ${customerData.email}`);
+                            logger.debug('delivery: customer email stats updated', { to: customerData.email });
                         }
                     } catch (customerUpdateError) {
-                        logger.warn(`⚠️ Failed to update customer email stats for ${customerData.email}:`, customerUpdateError.message);
+                        logger.warn('delivery: customer email stats update failed', { to: customerData.email, err: customerUpdateError.message });
                     }
 
                 } catch (error) {
                     emailError = error.message;
-                    logger.error(`❌ Failed to send batch email to ${customerData.email}:`, error);
+                    logger.error('delivery: email FAILED', { to: customerData.email, err: error.message, stack: error.stack });
                 }
 
                 // Create FIReport record to track what was sent
@@ -1670,10 +1706,10 @@ class ScanJobProcessor {
                         sentAt: emailStatus === 'SENT' ? new Date() : undefined
                     });
 
-                    logger.info(`📊 Created FIReport for ${customerData.email} (${customerData.matches.length} matches, status: ${emailStatus})`);
+                    logger.debug('delivery: FIReport created', { to: customerData.email, matches: customerData.matches.length, status: emailStatus });
 
                 } catch (reportError) {
-                    logger.error(`❌ Failed to create FIReport for ${customerData.email}:`, reportError);
+                    logger.error('delivery: FIReport creation FAILED', { to: customerData.email, err: reportError.message, stack: reportError.stack });
                 }
             }
 
@@ -1681,10 +1717,10 @@ class ScanJobProcessor {
             job.statistics.totalEmailsSent = (job.statistics.totalEmailsSent || 0) + emailsSent;
             await job.save();
 
-            logger.info(`✅ Sent ${emailsSent} batch email notifications for ${matches.length} total matches (${customersSkipped} customers skipped due to filters)`);
+            logger.info('delivery summary', { emailsSent, matches: matches.length, customersSkippedByFilters: customersSkipped });
 
         } catch (error) {
-            logger.error('❌ Error sending batch emails:', error);
+            logger.error('delivery: batch email send FAILED', error);
         }
     }
 
@@ -1698,12 +1734,14 @@ class ScanJobProcessor {
      * scripts/check-stuck-jobs.js and clear-stuck-jobs.js exist because this happens.
      */
     async sweepStuckJobs() {
-        const outcome = await withLock(
-            'scan-stuck-job-sweep',
-            { ttlMs: 5 * 60 * 1000, skipMessage: false },
-            () => this.recoverStuckJobs()
-        );
-        return outcome.ran ? outcome.result : undefined;
+        return runContext.runWith({ runId: runContext.newRunId('SWEEP') }, async () => {
+            const outcome = await withLock(
+                'scan-stuck-job-sweep',
+                { ttlMs: 5 * 60 * 1000, skipMessage: false },
+                () => this.recoverStuckJobs()
+            );
+            return outcome.ran ? outcome.result : undefined;
+        });
     }
 
     async recoverStuckJobs() {
@@ -1738,7 +1776,7 @@ class ScanJobProcessor {
                         await this.recoverStalledRunningJob(job, { now, runningStaleMs, summary });
                     }
                 } catch (error) {
-                    logger.error(`❌ Error recovering stuck job ${job.jobId}:`, error);
+                    logger.error('sweep: stuck job recovery failed', { job: job.jobId, err: error.message, stack: error.stack });
                 }
             }
 
@@ -1754,7 +1792,7 @@ class ScanJobProcessor {
             return summary;
 
         } catch (error) {
-            logger.error('❌ Stuck-job sweep failed:', error);
+            logger.error('sweep: stuck-job sweep FAILED', error);
             return summary;
         }
     }
@@ -1865,7 +1903,7 @@ class ScanJobProcessor {
             }
         } catch (error) {
             // Redis unreachable: leave the job alone rather than guess.
-            logger.warn(`Could not check queue state for ${job.jobId}: ${error.message}`);
+            logger.warn('sweep: could not check queue state', { job: job.jobId, err: error.message });
             return;
         }
 
@@ -1915,16 +1953,16 @@ class ScanJobProcessor {
                         );
                     }
 
-                    logger.warn(`🧹 Draining dead-letter queue job ${queueJob.id}: ${reason}`);
+                    logger.warn('sweep: draining dead-letter queue job', { bullId: queueJob.id, reason });
                     await queueJob.remove();
                     drained++;
                 } catch (error) {
-                    logger.warn(`Could not drain failed queue job ${queueJob.id}: ${error.message}`);
+                    logger.warn('sweep: could not drain failed queue job', { bullId: queueJob.id, err: error.message });
                 }
             }
         } catch (error) {
             // Redis may be down; the sweep's other work is still worth doing.
-            logger.warn(`Could not drain the failed queue: ${error.message}`);
+            logger.warn('sweep: could not drain the failed queue', { err: error.message });
         }
 
         return drained;
@@ -1971,7 +2009,7 @@ class ScanJobProcessor {
         if (this.stuckJobSweepJob) {
             this.stuckJobSweepJob.cancel();
         }
-        logger.info('🛑 Scan Job Processor stopped');
+        logger.info('scan job processor stopped');
     }
 
     /**
@@ -2121,10 +2159,10 @@ class ScanJobProcessor {
                 .select('customers');
             if (fresh) {
                 job.customers = fresh.customers;
-                logger.info(`🔄 Refreshed recipient list for job ${job.jobId} — ${job.customers.length} customer(s) currently assigned`);
+                logger.debug('delivery: recipient list refreshed', { customers: job.customers.length });
             }
         } catch (error) {
-            logger.warn(`⚠️ Could not refresh customers for job ${job.jobId}, using snapshot from run start:`, error.message);
+            logger.warn('delivery: could not refresh customers, using snapshot from run start', { job: job.jobId, err: error.message });
         }
     }
 
@@ -2161,13 +2199,15 @@ class ScanJobProcessor {
     async processPendingDeliveries() {
         // Fires every minute. Locked so a second process can never send the same
         // customer their leads twice; silent on skip to keep the log readable.
-        const outcome = await withLock(
-            'scan-delivery-sweep',
-            { ttlMs: 5 * 60 * 1000, skipMessage: false },
-            () => this.deliverPendingJobs()
-        );
+        return runContext.runWith({ runId: runContext.newRunId('DELIVER') }, async () => {
+            const outcome = await withLock(
+                'scan-delivery-sweep',
+                { ttlMs: 5 * 60 * 1000, skipMessage: false },
+                () => this.deliverPendingJobs()
+            );
 
-        return outcome.ran ? outcome.result : undefined;
+            return outcome.ran ? outcome.result : undefined;
+        });
     }
 
     async deliverPendingJobs() {
@@ -2206,12 +2246,12 @@ class ScanJobProcessor {
                     const anchorDate = new Date(anchorDateStr);
                     anchorDate.setHours(0, 0, 0, 0);
 
-                    logger.info(`⏰ Pending delivery trigger fired for job ${job.jobId} at configured time (${job.schedule?.timeOfDay || '09:00'})`);
+                    logger.info('delivery: pending trigger fired at configured time', { job: job.jobId, at: job.schedule?.timeOfDay || '09:00' });
                     await this.deliverResultsForJob(job, anchorDate);
                     this.markDeliverySent(job, today);
                     await job.save();
                 } catch (error) {
-                    logger.error(`❌ Failed pending delivery for job ${job.jobId}:`, error);
+                    logger.error('delivery: pending delivery FAILED', { job: job.jobId, err: error.message, stack: error.stack });
                     if (!job.deliveryState) {
                         job.deliveryState = {};
                     }
@@ -2220,7 +2260,7 @@ class ScanJobProcessor {
                 }
             }
         } catch (error) {
-            logger.error('❌ Error processing pending deliveries:', error);
+            logger.error('delivery: pending delivery sweep FAILED', error);
         }
     }
 
@@ -2284,10 +2324,10 @@ class ScanJobProcessor {
                     `${existing.matches?.length || 0} existing + ${matches.length} from this pass = ${mergedMatches.length} (${addedCount} new)`
                 );
             } else {
-                logger.info(`💾 Daily result saved for job ${job.jobId} on ${scanDateNormalized.toISOString().split('T')[0]}: ${mergedMatches.length} matches`);
+                logger.info('scan: daily result saved', { date: scanDateNormalized.toISOString().split('T')[0], matches: mergedMatches.length });
             }
         } catch (error) {
-            logger.error(`❌ Failed to save daily scan result for job ${job.jobId}:`, error);
+            logger.error('scan: saving daily result FAILED', { job: job.jobId, err: error.message, stack: error.stack });
             throw error;
         }
     }
@@ -2400,7 +2440,7 @@ class ScanJobProcessor {
             const candidates = gaps.filter(day => day !== inFlight).slice(0, limit);
 
             for (const targetDate of candidates) {
-                logger.info(`🕳️ Backfilling missed day ${targetDate} for job ${job.jobId} (${gaps.length} gap(s) outstanding)`);
+                logger.info('backfill: enqueuing missed day', { job: job.jobId, date: targetDate, gapsOutstanding: gaps.length });
                 await scanJobQueue.enqueueScanJob(job.jobId, { targetDate });
             }
 
@@ -2415,7 +2455,7 @@ class ScanJobProcessor {
 
         } catch (error) {
             // Backfill is best-effort - it must never take down the nightly run.
-            logger.error(`❌ Backfill check failed for job ${job.jobId}:`, error);
+            logger.error('backfill: check FAILED', { job: job.jobId, err: error.message, stack: error.stack });
             return { enqueued: [], skipped: 'error' };
         }
     }
@@ -2484,7 +2524,7 @@ class ScanJobProcessor {
 
         const selected = [...best.values()];
         if (selected.length < matches.length) {
-            logger.info(`🧹 Collapsed ${matches.length} match(es) to ${selected.length} unique project/report-type row(s)`);
+            logger.info('delivery: matches collapsed to unique rows', { from: matches.length, to: selected.length });
         }
         return selected;
     }
@@ -2553,10 +2593,10 @@ class ScanJobProcessor {
             );
 
             if (!result) {
-                logger.info(`🚫 Vetoed project ${projectId} for ${canonicalType} via ${source}: ${reason} (${fileName})`);
+                logger.debug('veto: project vetoed', { proj: projectId, type: canonicalType, source, reason, file: fileName });
             }
         } catch (error) {
-            logger.warn(`⚠️ Could not record veto for project ${projectId}/${canonicalType}: ${error.message}`);
+            logger.warn('veto: could not record', { proj: projectId, type: canonicalType, err: error.message });
         }
     }
 
@@ -2573,7 +2613,7 @@ class ScanJobProcessor {
         } catch (error) {
             // Fail open: if the veto store is unreadable we deliver as before rather
             // than silently dropping every match.
-            logger.error(`❌ Could not load project vetoes, delivering unfiltered: ${error.message}`);
+            logger.error('veto: could not load vetoes, delivering unfiltered', { err: error.message });
             return new Set();
         }
     }
@@ -2601,7 +2641,7 @@ class ScanJobProcessor {
                 .lean();
             alreadyVetoed = new Set(existing.map(v => v.projectId));
         } catch (error) {
-            logger.warn(`⚠️ Could not read existing vetoes before sweep: ${error.message}`);
+            logger.warn('veto: could not read existing vetoes before sweep', { err: error.message });
         }
 
         for (const projectId of projectIds) {
@@ -2624,12 +2664,12 @@ class ScanJobProcessor {
                     }
                 }
             } catch (error) {
-                logger.warn(`⚠️ Response sweep failed for project ${projectId}: ${error.message}`);
+                logger.warn('veto: response sweep failed', { proj: projectId, err: error.message });
             }
         }
 
         if (vetoed > 0) {
-            logger.info(`🚫 Response sweep vetoed ${vetoed} project(s) for ${canonicalType}`);
+            logger.info('veto: response sweep complete', { vetoed, type: canonicalType });
         }
     }
 
@@ -2643,7 +2683,7 @@ class ScanJobProcessor {
             if (m.projectId) uniqueProjectIds.add(m.projectId);
         }
 
-        logger.info(`📡 Fetching metadata for ${uniqueProjectIds.size} projects from Building Info API...`);
+        logger.debug('delivery: fetching project metadata', { projects: uniqueProjectIds.size });
 
         const metadataMap = new Map();
         for (const projectId of uniqueProjectIds) {
@@ -2653,7 +2693,7 @@ class ScanJobProcessor {
                     metadataMap.set(projectId, metadata);
                 }
             } catch (error) {
-                logger.warn(`⚠️ Could not fetch metadata for project ${projectId}:`, error.message);
+                logger.warn('delivery: project metadata fetch failed', { proj: projectId, err: error.message });
             }
         }
 
@@ -2662,7 +2702,7 @@ class ScanJobProcessor {
         for (const m of rawMatches) {
             if (!m.projectId) {
                 // Retry can never succeed without a projectId — keep current behavior
-                logger.warn(`⚠️ Match ${m.fileName} has no projectId - delivering without metadata`);
+                logger.warn('delivery: match has no projectId, delivering without metadata', { file: m.fileName });
                 deliverable.push(m);
                 continue;
             }
@@ -2701,7 +2741,7 @@ class ScanJobProcessor {
             });
 
             if (dailyResults.length === 0 && pendingDocs.length === 0) {
-                logger.info(`📭 No stored results for job ${job.jobId} in window ${windowStart.toISOString().split('T')[0]} → ${windowEndStr}`);
+                logger.info('delivery: no stored results in window', { job: job.jobId, from: windowStart.toISOString().split('T')[0], to: windowEnd.toISOString().split('T')[0] });
                 return;
             }
 
@@ -2738,7 +2778,7 @@ class ScanJobProcessor {
             }
 
             if (pendingDocs.length > 0) {
-                logger.info(`🔁 Retrying ${pendingDocs.length} pending match(es) with previously unavailable metadata for job ${job.jobId}`);
+                logger.info('delivery: retrying pending matches with previously unavailable metadata', { job: job.jobId, matches: pendingDocs.length });
             }
 
             // PROJECT VETO - the authoritative gate.
@@ -2781,15 +2821,15 @@ class ScanJobProcessor {
                         { $set: { status: 'EXPIRED', lastAttemptAt: new Date() } }
                     );
                     if (closed.modifiedCount > 0) {
-                        logger.info(`🚫 Expired ${closed.modifiedCount} pending match(es) belonging to vetoed projects`);
+                        logger.info('delivery: expired pending matches for vetoed projects', { matches: closed.modifiedCount });
                     }
                 } catch (error) {
-                    logger.warn(`⚠️ Could not expire pending matches for vetoed projects: ${error.message}`);
+                    logger.warn('delivery: could not expire pending matches for vetoed projects', { err: error.message });
                 }
             }
 
             if (survivingMatches.length === 0) {
-                logger.info(`📭 No deliverable matches remain for job ${job.jobId} after project vetoes`);
+                logger.info('delivery: no deliverable matches remain after project vetoes', { job: job.jobId });
                 await ScanJobDailyResult.updateMany(
                     deliveryWindow.filter,
                     { $set: { delivered: true, deliveredAt: new Date() } }
@@ -2836,15 +2876,15 @@ class ScanJobProcessor {
                         },
                         { upsert: true }
                     );
-                    logger.info(`⏸️ Holding back match ${key} - metadata not yet available in Building Info API`);
+                    logger.debug('delivery: match held back, metadata not yet in Building Info API', { match: key });
                 }
             }
 
             if (held.length > 0) {
-                logger.info(`⏸️ ${held.length} match(es) held back pending Building Info metadata for job ${job.jobId}`);
+                logger.info('delivery: matches held back pending Building Info metadata', { job: job.jobId, held: held.length });
             }
 
-            logger.info(`📬 Delivering ${deliverable.length} deduplicated matches for job ${job.jobId} (${dailyResults.length} day(s) in window)`);
+            logger.info('delivery: delivering deduplicated matches', { job: job.jobId, matches: deliverable.length, dailyResults: dailyResults.length });
 
             if (deliverable.length > 0) {
                 // Reconstruct matches in the format sendMatchEmails expects
@@ -2861,7 +2901,7 @@ class ScanJobProcessor {
 
                 await this.sendMatchEmails(reconstructedMatches, job, metadataMap);
             } else {
-                logger.info(`📭 No matches to deliver for job ${job.jobId} in this window`);
+                logger.info('delivery: no matches to deliver in this window', { job: job.jobId });
             }
 
             // Resolve pending docs whose project metadata is now available
@@ -2876,7 +2916,7 @@ class ScanJobProcessor {
                     { _id: { $in: resolvedIds } },
                     { $set: { status: 'RESOLVED', lastAttemptAt: now } }
                 );
-                logger.info(`✅ Resolved ${resolvedIds.length} pending match(es) - metadata now available for job ${job.jobId}`);
+                logger.info('delivery: pending matches resolved, metadata now available', { job: job.jobId, resolved: resolvedIds.length });
             }
 
             // Mark daily results as delivered
@@ -2885,9 +2925,9 @@ class ScanJobProcessor {
                 { $set: { delivered: true, deliveredAt: new Date() } }
             );
 
-            logger.info(`✅ Marked ${dailyResults.length} daily result(s) as delivered for job ${job.jobId}`);
+            logger.debug('delivery: daily results marked delivered', { job: job.jobId, results: dailyResults.length });
         } catch (error) {
-            logger.error(`❌ Failed to deliver results for job ${job.jobId}:`, error);
+            logger.error('delivery: FAILED for job', { job: job.jobId, err: error.message, stack: error.stack });
             throw error;
         }
     }

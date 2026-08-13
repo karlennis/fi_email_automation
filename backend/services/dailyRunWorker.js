@@ -1,4 +1,5 @@
 const logger = require('../utils/logger');
+const runContext = require('../utils/runContext');
 const DailyRun = require('../models/DailyRun');
 const DailyRunItem = require('../models/DailyRunItem');
 const s3Service = require('./s3Service');
@@ -21,13 +22,13 @@ class DailyRunWorker {
    */
   start() {
     if (this.isRunning) {
-      logger.warn('⚠️ Worker already running');
+      logger.warn('daily run worker already running');
       return;
     }
 
     this.isRunning = true;
     this.totalProcessed = 0;
-    logger.info('🚀 Daily run worker started (concurrency: 1, polling every 2s)');
+    logger.info('daily run worker started', { concurrency: 1, pollSec: 2 });
 
     // Start memory monitoring
     this.startMemoryMonitoring();
@@ -44,7 +45,7 @@ class DailyRunWorker {
     if (this.memoryLogInterval) {
       clearInterval(this.memoryLogInterval);
     }
-    logger.info('🛑 Daily run worker stopped');
+    logger.info('daily run worker stopped');
   }
 
   /**
@@ -60,9 +61,9 @@ class DailyRunWorker {
       };
 
       if (memMB.heapUsed > 1500) {
-        logger.warn('🚨 High memory usage (worker):', memMB);
+        logger.warn('daily run worker: high memory usage', memMB);
       } else if (memMB.heapUsed > 1000) {
-        logger.info('📊 Memory usage (worker):', memMB);
+        logger.debug('daily run worker: memory', memMB);
       }
     }, 10000);
   }
@@ -75,7 +76,7 @@ class DailyRunWorker {
       try {
         await this.processNextItem();
       } catch (error) {
-        logger.error('❌ Error in worker loop:', error);
+        logger.error('daily run worker: loop error', error);
       }
 
       // Wait before next iteration
@@ -117,146 +118,151 @@ class DailyRunWorker {
         }
       );
 
-      logger.info(`⚙️ [RUN ${item.runId.slice(-8)}] Processing: ${item.projectId}/${item.fileName}`);
+      // Everything this item touches - s3Service, OCR, fiDetectionService - inherits
+      // the run's id from here, so a failure can be traced back to the run and the file
+      // without either being repeated in the message text.
+      return runContext.runWith({ runId: item.runId, file: item.fileName, proj: item.projectId }, async () => {
+        logger.debug('daily run: item start');
 
-      try {
-        // Download file using s3Service
-        const downloadResult = await s3Service.downloadDocument(item.s3Key);
-
-        if (!downloadResult || !downloadResult.localPath) {
-          throw new Error('Failed to download file from S3');
-        }
-
-        const tempFilePath = downloadResult.localPath;
-
-        // Extract text from PDF
-        let documentText = '';
         try {
-          documentText = await fiDetectionService.extractPdfText(tempFilePath);
+          // Download file using s3Service
+          const downloadResult = await s3Service.downloadDocument(item.s3Key);
 
-          // Truncate to max size for AI (32000 chars - matches fiDetectionService.MAX_MSG_CHARS)
-          if (documentText.length > 32000) {
-            documentText = documentText.substring(0, 32000);
+          if (!downloadResult || !downloadResult.localPath) {
+            throw new Error('Failed to download file from S3');
           }
-        } catch (extractError) {
-          logger.warn(`⚠️ Failed to extract text from ${item.fileName}, trying OCR...`);
+
+          const tempFilePath = downloadResult.localPath;
+
+          // Extract text from PDF
+          let documentText = '';
           try {
-            documentText = await fiDetectionService.ocrIfNeeded(tempFilePath);
+            documentText = await fiDetectionService.extractPdfText(tempFilePath);
+
+            // Truncate to max size for AI (32000 chars - matches fiDetectionService.MAX_MSG_CHARS)
             if (documentText.length > 32000) {
               documentText = documentText.substring(0, 32000);
             }
-          } catch (ocrError) {
-            throw new Error(`Text extraction failed: ${ocrError.message}`);
+          } catch (extractError) {
+            logger.debug('daily run: text extraction failed, falling back to OCR');
+            try {
+              documentText = await fiDetectionService.ocrIfNeeded(tempFilePath);
+              if (documentText.length > 32000) {
+                documentText = documentText.substring(0, 32000);
+              }
+            } catch (ocrError) {
+              throw new Error(`Text extraction failed: ${ocrError.message}`);
+            }
           }
-        }
 
-        // Run FI detection
-        let detectionResult = {
-          detected: false,
-          confidence: 0,
-          documentType: null,
-          method: 'none'
-        };
+          // Run FI detection
+          let detectionResult = {
+            detected: false,
+            confidence: 0,
+            documentType: null,
+            method: 'none'
+          };
 
-        if (documentText.length > 100) {
-          const isFIRequest = await fiDetectionService.detectFIRequest(documentText);
+          if (documentText.length > 100) {
+            const isFIRequest = await fiDetectionService.detectFIRequest(documentText);
 
-          if (isFIRequest) {
-            // Only mark detected when we have a validated report-type match
-            for (const docType of ['acoustic', 'transport', 'flood', 'contamination', 'ecology', 'arboricultural']) {
-              const matchResult = await fiDetectionService.matchFIRequestType(documentText, docType);
-              const isValidatedMatch = matchResult.matches === true && matchResult.hasValidEvidence === true;
+            if (isFIRequest) {
+              // Only mark detected when we have a validated report-type match
+              for (const docType of ['acoustic', 'transport', 'flood', 'contamination', 'ecology', 'arboricultural']) {
+                const matchResult = await fiDetectionService.matchFIRequestType(documentText, docType);
+                const isValidatedMatch = matchResult.matches === true && matchResult.hasValidEvidence === true;
 
-              if (isValidatedMatch) {
-                detectionResult.detected = true;
-                detectionResult.method = 'fi-detection';
-                detectionResult.documentType = docType;
-                detectionResult.confidence = 0.95;
-                break;
+                if (isValidatedMatch) {
+                  detectionResult.detected = true;
+                  detectionResult.method = 'fi-detection';
+                  detectionResult.documentType = docType;
+                  detectionResult.confidence = 0.95;
+                  break;
+                }
               }
             }
           }
-        }
 
-        // Clean up temp file
-        try {
-          await fs.unlink(tempFilePath);
-        } catch (err) {
-          // Ignore cleanup errors
-        }
+          // Clean up temp file
+          try {
+            await fs.unlink(tempFilePath);
+          } catch (err) {
+            // Ignore cleanup errors
+          }
 
-        // Update item with result
-        await DailyRunItem.updateOne(
-          { _id: item._id },
-          {
-            $set: {
-              status: 'completed',
-              processingCompletedAt: new Date(),
-              result: {
-                fiDetected: detectionResult.detected || false,
-                confidence: detectionResult.confidence,
-                documentType: detectionResult.documentType,
-                method: detectionResult.method
+          // Update item with result
+          await DailyRunItem.updateOne(
+            { _id: item._id },
+            {
+              $set: {
+                status: 'completed',
+                processingCompletedAt: new Date(),
+                result: {
+                  fiDetected: detectionResult.detected || false,
+                  confidence: detectionResult.confidence,
+                  documentType: detectionResult.documentType,
+                  method: detectionResult.method
+                }
               }
             }
-          }
-        );
+          );
 
-        // Update run counters
-        await DailyRun.updateOne(
-          { runId: item.runId },
-          {
-            $inc: {
-              'counters.processing': -1,
-              'counters.completed': 1
+          // Update run counters
+          await DailyRun.updateOne(
+            { runId: item.runId },
+            {
+              $inc: {
+                'counters.processing': -1,
+                'counters.completed': 1
+              }
+            }
+          );
+
+          logger.debug('daily run: item done', { fi: detectionResult.detected, type: detectionResult.documentType || '-' });
+
+          this.totalProcessed++;
+
+          // Log processing summary every 10 items
+          if (this.totalProcessed % 10 === 0) {
+            const run = await DailyRun.findOne({ runId: item.runId });
+            if (run) {
+              logger.info('daily run: progress', { completed: run.counters.completed, total: run.counters.totalItems, failed: run.counters.failed });
             }
           }
-        );
 
-        logger.info(`✅ Completed: ${item.fileName} (FI: ${detectionResult.detected})`);
+          // Check if run is complete
+          await this.checkRunCompletion(item.runId);
 
-        this.totalProcessed++;
+        } catch (error) {
+          logger.error('daily run: item FAILED', { item: String(item._id), err: error.message, stack: error.stack });
 
-        // Log processing summary every 10 items
-        if (this.totalProcessed % 10 === 0) {
-          const run = await DailyRun.findOne({ runId: item.runId });
-          if (run) {
-            logger.info(`📊 [RUN ${item.runId.slice(-8)}] Progress: ${run.counters.completed}/${run.counters.totalItems} completed, ${run.counters.failed} failed`);
-          }
+          // Update item as failed
+          await DailyRunItem.updateOne(
+            { _id: item._id },
+            {
+              $set: {
+                status: 'failed',
+                processingCompletedAt: new Date(),
+                error: error.message
+              }
+            }
+          );
+
+          // Update run counters
+          await DailyRun.updateOne(
+            { runId: item.runId },
+            {
+              $inc: {
+                'counters.processing': -1,
+                'counters.failed': 1
+              }
+            }
+          );
         }
-
-        // Check if run is complete
-        await this.checkRunCompletion(item.runId);
-
-      } catch (error) {
-        logger.error(`❌ Error processing item ${item._id}:`, error);
-
-        // Update item as failed
-        await DailyRunItem.updateOne(
-          { _id: item._id },
-          {
-            $set: {
-              status: 'failed',
-              processingCompletedAt: new Date(),
-              error: error.message
-            }
-          }
-        );
-
-        // Update run counters
-        await DailyRun.updateOne(
-          { runId: item.runId },
-          {
-            $inc: {
-              'counters.processing': -1,
-              'counters.failed': 1
-            }
-          }
-        );
-      }
+      });
 
     } catch (error) {
-      logger.error('❌ Error in processNextItem:', error);
+      logger.error('daily run: processNextItem failed', error);
     }
   }
 
@@ -288,11 +294,11 @@ class DailyRunWorker {
         const successRate = after.totalItems > 0
           ? ((after.completed / after.totalItems) * 100).toFixed(1)
           : 0;
-        logger.info(`🎉 [RUN ${runId.slice(-8)}] COMPLETE: ${after.completed}/${after.totalItems} succeeded (${successRate}%), ${after.failed} failed`);
+        logger.info('run end: daily run', { run: runId, succeeded: after.completed, total: after.totalItems, failed: after.failed, successPct: successRate });
       }
 
     } catch (error) {
-      logger.error(`❌ Error checking run completion for ${runId}:`, error);
+      logger.error('daily run: completion check failed', { run: runId, err: error.message, stack: error.stack });
     }
   }
 }

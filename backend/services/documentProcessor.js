@@ -1,20 +1,10 @@
 const fs = require('fs').promises;
 const path = require('path');
 const pdf = require('pdf-parse');
-const winston = require('winston');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
 
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console()
-  ]
-});
+const logger = require('../utils/logger');
 
 class DocumentProcessor {
   constructor() {

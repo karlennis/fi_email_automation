@@ -4,7 +4,6 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const dotenv = require('dotenv');
 const mongoose = require('mongoose');
-const winston = require('winston');
 const path = require('path');
 
 // Load environment variables from backend directory
@@ -40,25 +39,11 @@ const dailyRunService = require('./services/dailyRunService');
 const dailyRunWorker = require('./services/dailyRunWorker');
 const scheduledJobManager = require('./services/scheduledJobManager');
 
-// Configure logger
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.errors({ stack: true }),
-    winston.format.json()
-  ),
-  defaultMeta: { service: 'fi-email-backend' },
-  transports: [
-    new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
-    new winston.transports.File({ filename: 'logs/combined.log' }),
-    new winston.transports.Console({
-      format: process.env.NODE_ENV === 'production'
-        ? winston.format.json()
-        : winston.format.simple()
-    })
-  ]
-});
+// The shared logger. This file used to build a second winston instance of its own,
+// writing to CWD-relative logs/error.log and logs/combined.log - which is why the repo
+// grew both a logs/ and a backend/logs/ directory holding two halves of the same story.
+const logger = require('./utils/logger');
+const runContext = require('./utils/runContext');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -75,6 +60,14 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime()
   });
+});
+
+// Give every request its own id, so the lines a single API call produced can be pulled
+// out of a log that also holds two clustered instances and the schedulers.
+// /health fires constantly and logs nothing; wrapping it would be pure overhead.
+app.use((req, res, next) => {
+  if (req.path === '/health') return next();
+  runContext.runWith({ runId: runContext.newRunId('REQ'), route: req.path }, next);
 });
 
 // Monitor health check responses - log if ever non-200
@@ -142,9 +135,10 @@ app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Create necessary directories
+// Create necessary directories. 'logs' is no longer among them - utils/logger.js owns
+// LOG_DIR and creates it there.
 const fs = require('fs');
-const dirs = ['logs', 'temp', 'temp/ocr'];
+const dirs = ['temp', 'temp/ocr'];
 dirs.forEach(dir => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });

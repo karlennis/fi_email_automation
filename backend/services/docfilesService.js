@@ -1,18 +1,8 @@
 const { OpenAI } = require('openai');
-const winston = require('winston');
 const crypto = require('crypto');
 require('dotenv').config(); // Load environment variables
 
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console()
-  ]
-});
+const logger = require('../utils/logger');
 
 const { getQuoteTerms } = require('./reportTypes');
 const { runFunctionChat } = require('./openaiChat');

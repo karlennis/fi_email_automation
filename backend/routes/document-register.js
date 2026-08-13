@@ -377,8 +377,7 @@ router.get('/documents', async (req, res) => {
       });
     }
     
-    logger.error('❌ Error getting documents by date:', error);
-    logger.error('Stack trace:', error.stack);
+    logger.error('document-register: get documents by date failed', error);
     res.status(500).json({
       success: false,
       message: 'Failed to get documents',

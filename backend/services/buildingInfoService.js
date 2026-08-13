@@ -1,17 +1,7 @@
 const axios = require('axios');
-const winston = require('winston');
 require('dotenv').config(); // Load environment variables
 
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console()
-  ]
-});
+const logger = require('../utils/logger');
 
 class BuildingInfoService {
   constructor() {
@@ -356,7 +346,7 @@ class BuildingInfoService {
         await new Promise(resolve => setTimeout(resolve, 200));
 
       } catch (error) {
-        logger.error(`API call failed for batch starting at ${limitStart}:`, error.message);
+        logger.error('building-info: API call failed', { batchStart: limitStart, err: error.message, stack: error.stack });
         break;
       }
     }

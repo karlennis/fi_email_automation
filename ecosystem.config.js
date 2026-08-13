@@ -1,3 +1,12 @@
+// The out_file/error_file entries below are a safety net, not the log. They capture
+// crash output and uncaught exceptions that never reach winston, and PM2 does not rotate
+// them by date - backend/services/diskCleanupService.js keeps them under a size cap.
+//
+// The readable, searchable record is written by backend/utils/logger.js to
+// /var/log/fi_email/app-YYYY-MM-DD.log (plus debug- and error-), and read back with
+// `cd backend && npm run logs -- --runs`. The per-app *-combined.log entries were
+// removed: with out_file and error_file already present they were a third copy of every
+// line.
 module.exports = {
   apps: [
     {
@@ -21,7 +30,6 @@ module.exports = {
       },
       error_file: '/var/log/fi_email/backend-error.log',
       out_file: '/var/log/fi_email/backend-out.log',
-      log_file: '/var/log/fi_email/backend-combined.log',
       time_format: 'YYYY-MM-DD HH:mm:ss Z',
       max_memory_restart: '1G',
       autorestart: true,
@@ -41,7 +49,6 @@ module.exports = {
       },
       error_file: '/var/log/fi_email/worker-error.log',
       out_file: '/var/log/fi_email/worker-out.log',
-      log_file: '/var/log/fi_email/worker-combined.log',
       time_format: 'YYYY-MM-DD HH:mm:ss Z',
       max_memory_restart: '1200M',
       autorestart: true,
@@ -64,7 +71,6 @@ module.exports = {
       },
       error_file: '/var/log/fi_email/aws-ingestion-error.log',
       out_file: '/var/log/fi_email/aws-ingestion-out.log',
-      log_file: '/var/log/fi_email/aws-ingestion-combined.log',
       time_format: 'YYYY-MM-DD HH:mm:ss Z',
       max_memory_restart: '500M',
       autorestart: true,
@@ -85,7 +91,6 @@ module.exports = {
       },
       error_file: '/var/log/fi_email/frontend-error.log',
       out_file: '/var/log/fi_email/frontend-out.log',
-      log_file: '/var/log/fi_email/frontend-combined.log',
       time_format: 'YYYY-MM-DD HH:mm:ss Z',
       autorestart: true,
       max_restarts: 5,

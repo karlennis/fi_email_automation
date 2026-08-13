@@ -1,17 +1,7 @@
-const winston = require('winston');
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 const ocrService = require('./ocrService');
 
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console()
-  ]
-});
+const logger = require('../utils/logger');
 
 /**
  * OptimizedPDFExtractor - Zero-copy PDF text extraction

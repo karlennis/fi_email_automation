@@ -1,19 +1,9 @@
 const fs = require('fs');
 const path = require('path');
-const winston = require('winston');
 const { Readable } = require('stream');
 const ocrService = require('./ocrService');
 
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console()
-  ]
-});
+const logger = require('../utils/logger');
 
 /**
  * StreamingDocumentProcessor - Memory-efficient document processing

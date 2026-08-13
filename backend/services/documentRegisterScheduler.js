@@ -1,5 +1,6 @@
 const schedule = require('node-schedule');
 const logger = require('../utils/logger');
+const runContext = require('../utils/runContext');
 const fastS3Scanner = require('./fastS3Scanner');
 const fs = require('fs');
 const path = require('path');
@@ -32,9 +33,9 @@ class DocumentRegisterScheduler {
             
             // Log only if memory usage is concerning
             if (memMB.heapUsed > 1500) { // > 1.5GB on 2GB system
-                logger.warn('🚨 High memory usage detected:', memMB);
+                logger.warn('high memory usage', memMB);
             } else if (memMB.heapUsed > 1000) { // > 1GB
-                logger.info('📊 Memory usage:', memMB);
+                logger.debug('memory usage', memMB);
             }
         }, 10000); // Every 10 seconds
     }
@@ -50,7 +51,7 @@ class DocumentRegisterScheduler {
             await this.runDailyGeneration();
         });
 
-        logger.info('Document register scheduler initialized - runs daily at 12:05 AM');
+        logger.info('document register scheduler ready', { daily: '00:05' });
 
         // Disabled startup check to prevent memory issues on deployment
         // The scheduled job will run at 12:05 AM daily
@@ -67,30 +68,30 @@ class DocumentRegisterScheduler {
             const metadataPath = path.join(__dirname, 'outputs', `register-metadata-${today}.json`);
 
             if (fs.existsSync(metadataPath)) {
-                logger.info(`✅ Document register already generated for ${today} - skipping startup generation`);
+                logger.info('register: already generated, skipping startup run', { today });
 
                 // Load the metadata to set last run time
                 try {
                     const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
                     this.lastRunTime = new Date(metadata.generatedAt);
                     this.lastRunStatus = 'success';
-                    logger.info(`📋 Last generation was at ${this.lastRunTime.toLocaleString()}`);
+                    logger.debug('register: last generation', { at: this.lastRunTime.toISOString() });
                 } catch (err) {
-                    logger.warn('Could not read metadata file:', err.message);
+                    logger.warn('register: could not read metadata file', { err: err.message });
                 }
                 return;
             }
 
             // Check if we have run today based on lastRunTime
             if (this.lastRunTime && this.isSameDay(this.lastRunTime, new Date())) {
-                logger.info('✅ Document register already generated today - skipping startup generation');
+                logger.info('register: already generated today, skipping startup run');
                 return;
             }
 
-            logger.info('📋 No document register generated today - running startup generation');
+            logger.info('register: none generated today, running startup generation');
             await this.runDailyGeneration();
         } catch (error) {
-            logger.error('Error checking startup generation:', error);
+            logger.error('register: startup check failed', error);
         }
     }
 
@@ -99,24 +100,26 @@ class DocumentRegisterScheduler {
      * No longer accumulates documents in arrays - streams directly to CSV
      */
     async runDailyGeneration() {
-        // this.isRunning is the cheap in-process short-circuit; the Mongo lock is what
-        // actually prevents two PM2 cluster instances writing the same CSV concurrently.
-        if (this.isRunning) {
-            logger.warn('Document register generation already running, skipping...');
-            return this.skippedResult('Already running');
-        }
+        return runContext.runWith({ runId: runContext.newRunId('REGISTER') }, async () => {
+            // this.isRunning is the cheap in-process short-circuit; the Mongo lock is what
+            // actually prevents two PM2 cluster instances writing the same CSV concurrently.
+            if (this.isRunning) {
+                logger.warn('register: already running, skipping');
+                return this.skippedResult('Already running');
+            }
 
-        const outcome = await withLock(
-            'document-register-daily',
-            {
-                ttlMs: 60 * 60 * 1000,
-                heartbeat: true,
-                skipMessage: '⏭️ Document register generation held by another instance, skipping...'
-            },
-            () => this.generateDailyRegister()
-        );
+            const outcome = await withLock(
+                'document-register-daily',
+                {
+                    ttlMs: 60 * 60 * 1000,
+                    heartbeat: true,
+                    skipMessage: 'register: lock held by another instance, skipping'
+                },
+                () => this.generateDailyRegister()
+            );
 
-        return outcome.ran ? outcome.result : this.skippedResult(outcome.reason);
+            return outcome.ran ? outcome.result : this.skippedResult(outcome.reason);
+        });
     }
 
     skippedResult(reason) {
@@ -138,7 +141,7 @@ class DocumentRegisterScheduler {
     async generateDailyRegister() {
         this.isRunning = true;
         const startTime = new Date();
-        logger.info('⚡ Starting STREAMING document register generation (memory safe)...');
+        logger.info('run start: document register');
 
         // Declared out here so the failure path can clear them.
         const tempPaths = [];
@@ -161,7 +164,7 @@ class DocumentRegisterScheduler {
             tempPaths.push(csvTempPath);
 
             // STREAMING CSV GENERATION - No document arrays in memory
-            logger.info('📅 Starting streaming CSV generation for yesterday...');
+            logger.debug('register: streaming CSV for yesterday');
             const streamResult = await this.streamDailyRegisterToCSV({
                 csvPath: csvTempPath,
                 date: timestamp
@@ -194,17 +197,16 @@ class DocumentRegisterScheduler {
 
             // XLSX is disabled for memory safety (can be re-enabled with streaming XLSX writer)
             const xlsxPath = null;
-            logger.warn('📊 XLSX generation disabled for memory safety - use CSV instead');
+            logger.debug('register: XLSX output disabled for memory safety, CSV only');
 
             this.lastRunTime = new Date();
             this.lastRunStatus = 'success';
 
-            const totalDuration = ((new Date() - startTime) / 1000).toFixed(2);
-            logger.info(`✅ STREAMING document register completed in ${totalDuration}s`, {
-                totalDocuments: streamResult.totalDocuments,
-                uniqueProjects: streamResult.uniqueProjects,
-                csvPath,
-                metadataPath
+            logger.info('run end: document register', {
+                documents: streamResult.totalDocuments,
+                projects: streamResult.uniqueProjects,
+                csv: path.basename(csvPath),
+                sec: Math.round((new Date() - startTime) / 1000)
             });
 
             return {
@@ -220,8 +222,7 @@ class DocumentRegisterScheduler {
             this.lastRunTime = new Date();
             this.lastRunStatus = 'error';
 
-            logger.error('❌ Error in STREAMING document register generation:', error);
-            logger.error('Stack trace:', error.stack);
+            logger.error('run end: document register FAILED', error);
             throw error;
         } finally {
             // Partial output is never useful and would otherwise accumulate one file per
@@ -230,7 +231,7 @@ class DocumentRegisterScheduler {
                 try {
                     if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
                 } catch (cleanupError) {
-                    logger.warn(`Could not remove partial file ${tempPath}: ${cleanupError.message}`);
+                    logger.warn('register: could not remove partial file', { file: path.basename(tempPath), err: cleanupError.message });
                 }
             }
             this.isRunning = false;
@@ -255,7 +256,7 @@ class DocumentRegisterScheduler {
         const endDate = new Date(targetDate);
         endDate.setHours(23, 59, 59, 999);
 
-        logger.info(`📊 STREAMING CSV generation: ${targetDate.toDateString()}`);
+        logger.debug('register: CSV generation started', { date: targetDate.toISOString().split('T')[0] });
 
         // Create CSV write stream
         const csvStream = createWriteStream(csvPath, { encoding: 'utf8' });
@@ -297,12 +298,12 @@ class DocumentRegisterScheduler {
                 csvPath
             };
 
-            logger.info(`✅ CSV streaming complete: ${totalDocuments} documents, ${projectSet.size} projects`);
+            logger.debug('register: CSV streaming complete', { documents: totalDocuments, projects: projectSet.size });
             return result;
 
         } catch (error) {
             csvStream.end();
-            logger.error('❌ Error in streaming CSV generation:', error);
+            logger.error('register: CSV streaming failed', error);
             throw error;
         }
     }
@@ -340,7 +341,7 @@ class DocumentRegisterScheduler {
      * Manually trigger a document register generation
      */
     async runManual() {
-        logger.info('Manual document register generation triggered');
+        logger.info('register: manual trigger');
         return await this.runDailyGeneration();
     }
 
@@ -364,7 +365,7 @@ class DocumentRegisterScheduler {
         if (this.job) {
             this.job.cancel();
             this.job = null;
-            logger.info('Document register scheduler stopped');
+            logger.info('document register scheduler stopped');
         }
     }
 

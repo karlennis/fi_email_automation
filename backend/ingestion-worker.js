@@ -55,7 +55,7 @@ async function verifyS3Connection() {
     logger.info('✅ S3 connection verified');
     return true;
   } catch (error) {
-    logger.error('❌ S3 connection failed:', error.message);
+    logger.error('ingestion worker: S3 connection failed', error);
     return false;
   }
 }
@@ -65,7 +65,7 @@ async function ensureFilterDocsRootKeep() {
     await s3Service.ensureFilterDocsRootKeep();
     return true;
   } catch (error) {
-    logger.error('❌ Could not ensure filter-docs root keep file:', error.message);
+    logger.error('ingestion worker: could not ensure filter-docs root keep file', error);
     return false;
   }
 }

@@ -380,7 +380,7 @@ class DocumentRegisterService {
           }
 
         } catch (error) {
-          logger.error('S3 API error:', error.message);
+          logger.error('register: S3 API error', { err: error.message, stack: error.stack });
           if (error.$retryable || error.name === 'TimeoutError') {
             logger.warn('Timeout detected, retrying...');
             await new Promise(resolve => setTimeout(resolve, 2000));
@@ -503,7 +503,7 @@ class DocumentRegisterService {
           continuationToken = response.NextContinuationToken;
 
         } catch (error) {
-          logger.error('S3 API error:', error.message);
+          logger.error('register: S3 API error', { err: error.message, stack: error.stack });
           if (error.$retryable || error.name === 'TimeoutError') {
             logger.warn('Timeout detected, retrying...');
             await new Promise(resolve => setTimeout(resolve, 2000));

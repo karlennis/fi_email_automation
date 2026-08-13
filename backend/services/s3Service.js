@@ -1,7 +1,6 @@
 const AWS = require('aws-sdk');
 const fs = require('fs').promises;
 const path = require('path');
-const winston = require('winston');
 const { getBucket, getRegion } = require('../utils/awsConfig');
 
 /**
@@ -19,16 +18,7 @@ function getBaselineRetentionDays() {
   return Math.max(2, parseInt(process.env.BASELINE_MARKER_RETENTION_DAYS || '2', 10));
 }
 
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console()
-  ]
-});
+const logger = require('../utils/logger');
 
 class S3Service {
   constructor() {
@@ -163,7 +153,7 @@ class S3Service {
       const response = await this.s3.getObject(params).promise();
       await fs.writeFile(localPath, response.Body);
 
-      logger.info(`Downloaded ${s3Key} to ${localPath}`);
+      logger.debug('s3: downloaded', { key: s3Key });
 
       return {
         localPath,
@@ -243,17 +233,17 @@ class S3Service {
       // Check cache first
       const now = Date.now();
       if (this.mainFoldersCache && this.mainFoldersCacheExpiry && now < this.mainFoldersCacheExpiry) {
-        logger.info('✅ Returning cached main folders (avoiding S3 call)');
+        logger.debug('s3: returning cached main folders');
         return this.mainFoldersCache;
       }
 
       // Singleflight: if already in progress, wait for it
       if (this.inFlightPromise) {
-        logger.info('⏳ S3 call already in progress, waiting for result...');
+        logger.debug('s3: list already in flight, awaiting result');
         return await this.inFlightPromise;
       }
 
-      logger.info('🚀 Starting S3 call to list main folders:', this.bucket);
+      logger.debug('s3: listing main folders', { bucket: this.bucket });
 
       // Create the in-flight promise
       this.inFlightPromise = this._doListMainFolders();
@@ -273,7 +263,6 @@ class S3Service {
   async _doListMainFolders() {
     try {
       const now = Date.now(); // Define 'now' for cache expiry calculation
-      logger.info('Attempting to list main folders from S3 bucket:', this.bucket);
 
       const params = {
         Bucket: this.bucket,
@@ -281,9 +270,7 @@ class S3Service {
         MaxKeys: 1000
       };
 
-      logger.info('S3 listObjectsV2 parameters:', params);
       const response = await this.s3.listObjectsV2(params).promise();
-      logger.info('S3 listObjectsV2 response CommonPrefixes:', response.CommonPrefixes);
 
       const folders = response.CommonPrefixes
         .map(prefix => ({
@@ -293,12 +280,12 @@ class S3Service {
         }))
         .filter(folder => folder.name); // Filter out empty names
 
-      logger.info('Processed folders:', folders);
+      logger.debug('s3: folders resolved', { folders: folders.length });
 
       // Cache the result
       this.mainFoldersCache = folders;
       this.mainFoldersCacheExpiry = now + this.CACHE_TTL;
-      logger.info(`📦 Cached main folders for ${this.CACHE_TTL / 1000}s`);
+      logger.debug('s3: main folders cached', { ttlSec: this.CACHE_TTL / 1000 });
 
       return folders;
 
@@ -446,12 +433,12 @@ class S3Service {
         continuationToken = response.IsTruncated ? response.NextContinuationToken : null;
 
         if (continuationToken) {
-          logger.info(`Retrieved ${allProjects.length} projects so far, fetching more...`);
+          logger.debug('s3: paging projects', { soFar: allProjects.length });
         }
 
       } while (continuationToken);
 
-      logger.info(`Found ${allProjects.length} total projects in planning-docs folder`);
+      logger.debug('s3: projects listed', { projects: allProjects.length });
       return allProjects;
 
     } catch (error) {
@@ -540,7 +527,7 @@ class S3Service {
         }
       }
 
-      logger.info(`Found ${allDocuments.length} documents across ${filteredProjectIds.length} filtered projects`);
+      logger.debug('s3: documents listed across filtered projects', { documents: allDocuments.length, projects: filteredProjectIds.length });
       return allDocuments;
 
     } catch (error) {
@@ -578,7 +565,7 @@ class S3Service {
           folderPath: projectPath
         }));
 
-      logger.info(`Found ${documents.length} documents for project ${projectId} in planning-docs`);
+      logger.debug('s3: documents listed for project', { proj: projectId, documents: documents.length });
       return documents;
 
     } catch (error) {
@@ -610,7 +597,7 @@ class S3Service {
         }
       }
 
-      logger.info(`Cleaned up ${cleanedCount} old download files`);
+      logger.debug('s3: old download files cleaned', { files: cleanedCount });
       return cleanedCount;
 
     } catch (error) {
@@ -651,7 +638,7 @@ class S3Service {
       const exists = await this.objectExists(keepKey);
 
       if (exists) {
-        logger.info('✅ filter-docs root keep file already exists');
+        logger.debug('s3: filter-docs root keep file already exists');
         return { key: keepKey, created: false };
       }
 
@@ -661,7 +648,7 @@ class S3Service {
         { sentinel: 'true', purpose: 'preserve-prefix' }
       );
 
-      logger.info('✅ Created filter-docs root keep file');
+      logger.debug('s3: filter-docs root keep file created');
       return { key: keepKey, created: true };
     } catch (error) {
       logger.error('❌ Failed to ensure filter-docs root keep file:', error);
@@ -708,7 +695,7 @@ class S3Service {
       }
 
       await this.s3.putObject(params).promise();
-      logger.info(`📤 Uploaded document to ${s3Key}`);
+      logger.debug('s3: uploaded', { key: s3Key });
 
       return { key: s3Key, size: body.length };
     } catch (error) {
@@ -731,7 +718,7 @@ class S3Service {
       };
 
       await this.s3.copyObject(params).promise();
-      logger.info(`📋 Copied ${sourceKey} to ${destKey}`);
+      logger.debug('s3: copied', { from: sourceKey, to: destKey });
 
       return { sourceKey, destKey };
     } catch (error) {
@@ -752,7 +739,7 @@ class S3Service {
       };
 
       await this.s3.deleteObject(params).promise();
-      logger.info(`🗑️ Deleted ${s3Key}`);
+      logger.debug('s3: deleted', { key: s3Key });
 
       return { key: s3Key, deleted: true };
     } catch (error) {
@@ -861,7 +848,7 @@ class S3Service {
         ContentType: 'application/json'
       }).promise();
 
-      logger.info(`📌 Created baseline marker for project ${projectId}: ${markerKey}`);
+      logger.debug('s3: baseline marker created', { proj: projectId, key: markerKey });
       return { projectId, markerKey, date: dateStr };
     } catch (error) {
       logger.error(`Error creating baseline marker for ${projectId}:`, error);
@@ -985,7 +972,7 @@ class S3Service {
       try {
         await this.deleteDocuments(batch);
         totalDeleted += batch.length;
-        logger.info(`🧹 Deleted ${totalDeleted} stale baseline markers so far (${objectsScanned.toLocaleString()} objects scanned)`);
+        logger.debug('s3: stale baseline markers deleted so far', { deleted: totalDeleted, scanned: objectsScanned });
       } catch (error) {
         // One bad batch must not abandon the rest of the cleanup
         totalFailed += batch.length;

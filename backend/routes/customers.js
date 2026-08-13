@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const logger = require('../utils/logger');
 const Customer = require('../models/Customer');
 const emailService = require('../services/emailService');
 const Joi = require('joi');
@@ -199,7 +200,7 @@ router.post('/', async (req, res) => {
         customer.reportTypes
       );
     } catch (emailError) {
-      console.warn('Failed to send welcome email:', emailError.message);
+      logger.warn('customers: welcome email failed', { err: emailError.message });
       // Don't fail customer creation if email fails
     }
 

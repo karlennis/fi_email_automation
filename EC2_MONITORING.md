@@ -1,6 +1,53 @@
 # EC2 Monitoring & Troubleshooting Guide
 
-## Real-Time Monitoring
+## Reading the logs
+
+`pm2 logs` **tails** a file — it can only ever show you the end of a run, which is why
+`--lines 1000` runs out part-way through a night's scan. Use it to watch live; use
+`npm run logs` to read a run or a day in full.
+
+Every line carries the **run id** of the work that produced it (`SCAN-20260813-a4f1`,
+`NIGHTLY-…`, `ROUTE-…`, `DELIVER-…`, `REQ-…`), so one run can be pulled out of a file
+that also holds three schedulers and two clustered API instances.
+
+```bash
+cd ~/fi_email_automation/backend
+
+# What ran last night, did it finish, and how big was it?
+npm run logs -- --runs --date 2026-08-12
+
+# RUN                    START     END       OUTCOME     ERR  WARN  DETAIL
+# NIGHTLY-20260813-ridn  00:10:01  00:10:04  ok            0     0  enqueued=2 resumed=1
+# SCAN-20260813-38re     00:10:05  00:31:58  ok            7     1  matched=8 processed=3182
+# SCAN-20260813-uf6h     00:32:01  00:38:12  FAILED        3     1  job=SCAN-1099
+
+# One run, start to finish
+npm run logs -- --run SCAN-20260813-38re
+
+# Just what went wrong, and which document caused it
+npm run logs -- --date 2026-08-12 --level error
+
+# Everything that happened to one document / project / file
+npm run logs -- --date 2026-08-12 --debug --grep 1188422
+
+# Raw records for counting or charting
+npm run logs -- --date 2026-08-12 --json | jq -r 'select(.message=="scan summary")'
+
+# Which days are still on disk, and how big
+npm run logs -- --list
+```
+
+Files in `/var/log/fi_email`, all rotated by date:
+
+| File | Holds | Kept |
+| --- | --- | --- |
+| `app-YYYY-MM-DD.log` | INFO and above — the readable record of a day | 14 days |
+| `debug-YYYY-MM-DD.log` | Everything, including the per-document trail | 3 days |
+| `error-YYYY-MM-DD.log` | ERROR only | 30 days |
+| `*-out.log`, `*-error.log` | PM2's raw stdout — crash output that never reached the logger | size-capped |
+
+`LOG_LEVEL` controls **console output only**. The files are fixed, so raising it cannot
+cost you the `app-` record and lowering it cannot cost you the debug trail.
 
 ### PM2 Commands
 
@@ -16,12 +63,11 @@ pm2 show fi-email-backend
 pm2 show fi-email-worker
 pm2 show fi-email-frontend
 
-# View logs in real-time
+# Watch logs live (tail only - use `npm run logs` to read a whole run)
 pm2 logs                           # All services
 pm2 logs fi-email-backend          # Backend only
 pm2 logs fi-email-worker           # Worker only
-pm2 logs --err                     # Error logs only
-pm2 logs --lines 100               # Last 100 lines
+pm2 logs --err                     # Error output only
 pm2 logs --timestamp               # With timestamps
 ```
 
@@ -72,12 +118,14 @@ watch -n 1 'free -h && echo "---" && ps aux --sort=-%mem | head -5'
 
 ### GC Events (Critical)
 
-**What to Look For:**
+**What to Look For** (GC and memory sampling are debug-level, so pass `--debug`):
 ```
-🗑️ Forced GC after 5 documents (docs: 0005, mem: 289MB, heap: 156MB)
-🗑️ Forced GC after 5 documents (docs: 0010, mem: 301MB, heap: 158MB)
-🗑️ Forced GC after 5 documents (docs: 0015, mem: 287MB, heap: 152MB)
+$ cd backend && npm run logs -- --debug --grep "scan: forced"
+00:14:02 DEBUG [SCAN-20260813-a4f1] scan: forced GC  at=100
+00:14:19 DEBUG [SCAN-20260813-a4f1] scan: checkpoint memory  heapMB=289 rssMB=612
 ```
+The INFO-level `scan: progress` line also carries `rssMB`, so `npm run logs -- --grep
+"scan: progress"` shows the memory trend across a run without switching to debug.
 
 **If NOT seeing GC messages:**
 - `--expose-gc` flag missing (check `pm2 show` output)
@@ -103,7 +151,7 @@ watch -n 1 'free -h && echo "---" && ps aux --sort=-%mem | head -5'
 ### Disk Usage
 
 **Healthy:**
-- Logs: <500MB (rotated daily)
+- Logs: <500MB (dated files, 14d app / 3d debug / 30d error)
 - Temp files: Cleaned up
 - Free space: >5GB
 
@@ -112,7 +160,9 @@ watch -n 1 'free -h && echo "---" && ps aux --sort=-%mem | head -5'
 # Clean old logs
 sudo journalctl --vacuum=50M
 
-# Clean PM2 logs
+# The dated app-/debug-/error- files rotate and expire themselves (14d/3d/30d), and
+# diskCleanupService size-caps PM2's *-out.log / *-error.log every 30 minutes. Only
+# reach for pm2-logrotate if those PM2 files are still growing faster than the cap.
 pm2 install pm2-logrotate
 pm2 set pm2-logrotate:max_size 10M
 pm2 set pm2-logrotate:retain 10
@@ -128,8 +178,8 @@ find /home/ubuntu/fi_email_automation -type f -size +100M
 
 **Check logs:**
 ```bash
-pm2 logs fi-email-backend --err
-# Look for: error, exception, uncaught, crash
+cd backend && npm run logs -- --level error          # today's errors, with the run id
+pm2 logs fi-email-backend --err                      # crash output winston never saw
 ```
 
 **Common causes:**
@@ -161,8 +211,8 @@ pm2 restart all
 
 **Check if GC is working:**
 ```bash
-pm2 logs fi-email-worker | grep "Forced GC"
-# Should see messages every 5 documents
+cd backend && npm run logs -- --debug --grep "forced garbage collection"
+# GC is logged at debug, so this needs --debug (or debug-DATE.log directly)
 ```
 
 **If no GC messages:**
@@ -227,8 +277,8 @@ pm2 restart fi-email-backend
 
 **Check worker:**
 ```bash
-pm2 logs fi-email-worker
-# Look for: "Processing document", "Queue", "Job"
+cd backend && npm run logs -- --runs           # did a scan run start, and did it end?
+cd backend && npm run logs -- --run SCAN-...   # then read that run in full
 ```
 
 **Verify Redis:**
@@ -240,8 +290,7 @@ redis-cli dbsize
 
 **Check job queue:**
 ```bash
-# From application logs or database
-pm2 logs fi-email-worker | grep -i "job\|queue\|processing"
+cd backend && npm run logs -- --debug --grep queue
 ```
 
 **Fix:**
@@ -309,8 +358,9 @@ sudo systemctl restart nginx
 
 1. **Check for loops in logs:**
    ```bash
-   pm2 logs fi-email-backend | head -100
-   # Look for repeated lines or patterns
+   # Most frequent messages today - a runaway loop sits at the top
+   cd backend && npm run logs -- --debug --json \
+     | jq -r .message | sort | uniq -c | sort -rn | head -20
    ```
 
 2. **Reduce concurrent operations:**
@@ -412,7 +462,8 @@ pm2 restart all
 |------|---------|
 | View all processes | `pm2 list` |
 | Monitor in real-time | `pm2 monit` |
-| View specific logs | `pm2 logs fi-email-backend` |
+| Watch logs live | `pm2 logs fi-email-backend` |
+| Read a whole run | `cd backend && npm run logs -- --runs` |
 | Restart all | `pm2 restart all` |
 | Stop all | `pm2 stop all` |
 | Start all | `pm2 start all` |

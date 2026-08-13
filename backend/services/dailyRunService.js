@@ -1,4 +1,5 @@
 const logger = require('../utils/logger');
+const runContext = require('../utils/runContext');
 const DailyRun = require('../models/DailyRun');
 const DailyRunItem = require('../models/DailyRunItem');
 const { S3Client, ListObjectsV2Command } = require('@aws-sdk/client-s3');
@@ -26,26 +27,30 @@ class DailyRunService {
    * Streams S3 objects and writes matching items to DB immediately
    */
   async startScan(runId) {
-    if (this.isScanning) {
-      logger.warn(`⚠️ Scan already in progress for another run`);
-      return;
-    }
+    // The run already has an identity of its own, so reuse it rather than minting a
+    // second one - `npm run logs -- --run RUN_...` then covers scan and worker alike.
+    return runContext.runWith({ runId }, async () => {
+      if (this.isScanning) {
+        logger.warn('daily run: scan already in progress for another run');
+        return;
+      }
 
-    // This is reachable from POST /api/runs/daily, which PM2 load-balances across both
-    // cluster instances - so the in-process isScanning flag on one fork says nothing
-    // about the other. Two concurrent scans of the same run would double every counter.
-    const outcome = await withLock(
-      'daily-run-scan',
-      {
-        ttlMs: 120 * 60 * 1000,
-        heartbeat: true,
-        meta: { runId },
-        skipMessage: `⏭️ Daily run scan held by another process, skipping run ${runId}`
-      },
-      () => this.executeScan(runId)
-    );
+      // This is reachable from POST /api/runs/daily, which PM2 load-balances across both
+      // cluster instances - so the in-process isScanning flag on one fork says nothing
+      // about the other. Two concurrent scans of the same run would double every counter.
+      const outcome = await withLock(
+        'daily-run-scan',
+        {
+          ttlMs: 120 * 60 * 1000,
+          heartbeat: true,
+          meta: { runId },
+          skipMessage: 'daily run: scan lock held by another process, skipping'
+        },
+        () => this.executeScan(runId)
+      );
 
-    return outcome.ran ? outcome.result : undefined;
+      return outcome.ran ? outcome.result : undefined;
+    });
   }
 
   async executeScan(runId) {
@@ -70,21 +75,29 @@ class DailyRunService {
       const dayEnd = new Date(dayStart);
       dayEnd.setHours(23, 59, 59, 999);
 
-      logger.info(`🔍 Starting S3 scan for run ${runId}, date range: ${dayStart.toISOString()} to ${dayEnd.toISOString()}`);
+      logger.info('run start: daily run S3 scan', { from: dayStart.toISOString(), to: dayEnd.toISOString() });
 
       const startTime = Date.now();
       let objectsScanned = 0;
       let itemsCreated = 0;
       let continuationToken = run.scanProgress?.continuationToken || null;
 
-      // Memory logging
+      // Sampled every 10s for the whole scan. At info that was ~360 lines an hour of
+      // healthy numbers nobody reads, so the routine sample goes to debug and only a
+      // genuinely concerning heap is promoted - the same gate documentRegisterScheduler
+      // uses.
       const logMemory = () => {
         const mem = process.memoryUsage();
-        logger.info(`📊 Memory usage (scan):`, {
+        const memMB = {
           rssMB: Math.round(mem.rss / 1024 / 1024),
           heapUsedMB: Math.round(mem.heapUsed / 1024 / 1024),
           heapTotalMB: Math.round(mem.heapTotal / 1024 / 1024)
-        });
+        };
+        if (memMB.heapUsedMB > 1000) {
+          logger.warn('daily run: high memory usage', memMB);
+        } else {
+          logger.debug('daily run: memory', memMB);
+        }
       };
 
       logMemory();
@@ -200,7 +213,7 @@ class DailyRunService {
           }
 
           if (objectsScanned % 5000 === 0) {
-            logger.info(`📊 [RUN ${runId.slice(-8)}] Progress: ${objectsScanned.toLocaleString()} objects scanned, ${itemsCreated} items queued`);
+            logger.info('daily run: scan progress', { scanned: objectsScanned, queued: itemsCreated });
           }
 
         } while (continuationToken);
@@ -218,7 +231,7 @@ class DailyRunService {
           }
         );
 
-        logger.info(`✅ [RUN ${runId.slice(-8)}] Scan complete: ${itemsCreated} items queued from ${objectsScanned.toLocaleString()} objects (${duration}s)`);
+        logger.info('run end: daily run S3 scan', { scanned: objectsScanned, queued: itemsCreated, sec: Math.round(Number(duration)) });
 
         return {
           objectsScanned,
@@ -232,7 +245,7 @@ class DailyRunService {
       }
 
     } catch (error) {
-      logger.error(`❌ Error in S3 scan for run ${runId}:`, error);
+      logger.error('run end: daily run S3 scan FAILED', error);
       
       await DailyRun.updateOne(
         { runId },
@@ -302,15 +315,17 @@ class DailyRunService {
     await DailyRun.updateOne({ runId }, update);
 
     if (drifted) {
-      logger.info(
-        `♻️ Reconciled counters for run ${runId}: ` +
-        `queued ${before.queued}→${actual.queued}, processing ${before.processing}→${actual.processing}, ` +
-        `completed ${before.completed}→${actual.completed}, failed ${before.failed}→${actual.failed}, ` +
-        `total ${before.totalItems}→${actual.totalItems}`
-      );
+      logger.info('daily run: counters reconciled', {
+        run: runId,
+        queued: `${before.queued}->${actual.queued}`,
+        processing: `${before.processing}->${actual.processing}`,
+        completed: `${before.completed}->${actual.completed}`,
+        failed: `${before.failed}->${actual.failed}`,
+        total: `${before.totalItems}->${actual.totalItems}`
+      });
     }
     if (completed) {
-      logger.info(`🎉 Run ${runId} marked complete during reconciliation (no outstanding items)`);
+      logger.info('daily run: marked complete during reconciliation', { run: runId });
     }
 
     return { before, after: actual, drifted, completed };
@@ -340,7 +355,7 @@ class DailyRunService {
       );
 
       if (result.modifiedCount > 0) {
-        logger.info(`♻️ Reset ${result.modifiedCount} stale processing items to queued`);
+        logger.info('daily run: reset stale items to queued', { items: result.modifiedCount });
       }
 
       // Moving items between statuses invalidates the stored counters either way.
@@ -348,13 +363,13 @@ class DailyRunService {
         try {
           await this.reconcileCounters(runId);
         } catch (error) {
-          logger.error(`❌ Could not reconcile counters for run ${runId}:`, error);
+          logger.error('daily run: counter reconciliation failed', { run: runId, err: error.message, stack: error.stack });
         }
       }
 
       return { modifiedCount: result.modifiedCount, runIds };
     } catch (error) {
-      logger.error('❌ Error resetting stale items:', error);
+      logger.error('daily run: resetting stale items failed', error);
       throw error;
     }
   }
