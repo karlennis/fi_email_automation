@@ -44,17 +44,12 @@ try {
 }
 
 const isTest = process.env.NODE_ENV === 'test';
-const isProduction = process.env.NODE_ENV === 'production';
 
-// Where the box keeps its logs. Exported because scripts/logs.js has to find this
-// directory from a plain login shell, which has no NODE_ENV and so cannot rely on the
-// isProduction branch below.
-const PRODUCTION_LOG_DIR = '/var/log/fi_email';
-const DEVELOPMENT_LOG_DIR = path.join(__dirname, '../logs');
+// Paths live in their own side-effect-free module so a reader (scripts/logs.js) can ask
+// where the logs are without requiring this file and thereby creating them.
+const logPaths = require('./logPaths');
 
-const LOG_DIR =
-  process.env.LOG_DIR ||
-  (isProduction ? PRODUCTION_LOG_DIR : DEVELOPMENT_LOG_DIR);
+const LOG_DIR = logPaths.writeDir();
 
 if (!isTest) {
   // Created (and chowned to ubuntu) by deploy-ec2.sh on the box, but a fresh checkout
@@ -208,9 +203,6 @@ logger.stream = {
 };
 
 logger.logDir = LOG_DIR;
-// Both candidates, so scripts/logs.js can find the production directory from a login
-// shell that has no NODE_ENV set and would otherwise only ever see the development path.
-logger.logDirCandidates = [PRODUCTION_LOG_DIR, DEVELOPMENT_LOG_DIR];
 logger.rotationAvailable = rotationAvailable;
 // Shared with scripts/logs.js so the CLI renders a stored record exactly as the console
 // printed it live.

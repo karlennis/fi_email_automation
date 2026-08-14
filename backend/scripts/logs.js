@@ -81,36 +81,10 @@ function parseArgs(argv) {
   return opts;
 }
 
-const DATED_LOG_RE = /^(app|debug|error)-\d{4}-\d{2}-\d{2}\.log/;
-
-function hasDatedLogs(dir) {
-  try {
-    return fs.readdirSync(dir).some((name) => DATED_LOG_RE.test(name));
-  } catch (error) {
-    return false;
-  }
-}
-
-/**
- * Where to read from.
- *
- * The logger picks /var/log/fi_email only when NODE_ENV === 'production', which PM2 sets
- * for the app but a login shell does not - so asking it directly sent this CLI to
- * backend/logs on the box and it reported "no log for today" while the day sat in
- * /var/log/fi_email. Probe both candidates instead, preferring one that actually holds
- * dated logs.
- */
-function resolveLogDir(opts) {
-  if (opts.dir) return opts.dir;
-  if (process.env.LOG_DIR) return process.env.LOG_DIR;
-
-  const logger = require('../utils/logger');
-  const candidates = [logger.logDir, ...(logger.logDirCandidates || [])];
-
-  return candidates.find(hasDatedLogs)
-    || candidates.find((dir) => fs.existsSync(dir))
-    || logger.logDir;
-}
+// utils/logPaths is deliberately used here instead of utils/logger: requiring the logger
+// builds its transports, which creates the log directory and empty dated files. A tool
+// that reads logs must not create them.
+const logPaths = require('../utils/logPaths');
 
 /**
  * Every file holding a given day, in read order. A day that exceeded maxSize is split
@@ -239,7 +213,7 @@ function printRunIndex(runs) {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-  const dir = resolveLogDir(opts);
+  const dir = logPaths.readDir(opts.dir);
 
   if (opts.list) {
     const days = new Map();

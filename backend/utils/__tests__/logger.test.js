@@ -1,6 +1,7 @@
 const path = require('path');
 const Transport = require('winston-transport');
 const logger = require('../logger');
+const logPaths = require('../logPaths');
 const runContext = require('../runContext');
 
 describe('logger', () => {
@@ -23,11 +24,8 @@ describe('logger', () => {
     expect(path.isAbsolute(logger.logDir) || logger.logDir.length > 0).toBe(true);
   });
 
-  it('offers both candidate directories so a login shell can find the production one', () => {
-    // scripts/logs.js probes these. Without the production path it looked only in
-    // backend/logs and reported "no log for today" while the day sat in /var/log/fi_email.
-    expect(logger.logDirCandidates).toContain('/var/log/fi_email');
-    expect(logger.logDirCandidates.length).toBe(2);
+  it('takes its directory from logPaths', () => {
+    expect(logger.logDir).toBe(logPaths.writeDir());
   });
 
   describe('when winston-daily-rotate-file is not installed', () => {
