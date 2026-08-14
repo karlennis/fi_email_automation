@@ -61,34 +61,29 @@ describe('logPaths', () => {
       expect(logPaths.readDir()).toBe(tmp);
     });
 
-    it('ranks a directory by its freshest dated log, which is how the live one is chosen', () => {
-      // A login shell has no NODE_ENV, so the reader cannot infer which directory the
-      // running apps write to. Both candidates can hold dated files - one live, one left
-      // over - and choosing by list order picked the stale one on the box.
-      const stale = path.join(tmp, 'stale');
-      const live = path.join(tmp, 'live');
-      fs.mkdirSync(stale);
-      fs.mkdirSync(live);
-
-      fs.writeFileSync(path.join(stale, 'app-2026-08-14.log'), '');
-      fs.writeFileSync(path.join(live, 'app-2026-08-14.log'), '{}\n');
-
-      const yesterday = new Date(Date.now() - 86400000);
-      fs.utimesSync(path.join(stale, 'app-2026-08-14.log'), yesterday, yesterday);
-
-      expect(logPaths.datedLogFreshness(live))
-        .toBeGreaterThan(logPaths.datedLogFreshness(stale));
+    it('prefers the production directory whenever it exists, regardless of what is in it', () => {
+      // Not "whichever directory has the freshest logs". That heuristic failed on the
+      // box: maintenance scripts run from a login shell require the logger without
+      // NODE_ENV, which writes a brand-new backend/logs/app-DATE.log containing only
+      // their own startup lines. Freshness then chose that file and the reader reported
+      // "no runs found" while the night sat in /var/log/fi_email.
+      const spy = jest.spyOn(fs, 'existsSync').mockImplementation(
+        (p) => p === logPaths.PRODUCTION_LOG_DIR
+      );
+      try {
+        expect(logPaths.readDir()).toBe(logPaths.PRODUCTION_LOG_DIR);
+      } finally {
+        spy.mockRestore();
+      }
     });
 
-    it('scores a directory with no dated logs as zero, so it never wins', () => {
-      const empty = path.join(tmp, 'empty');
-      fs.mkdirSync(empty);
-      // The old size-rotated files and PM2's captures must not count as a day.
-      fs.writeFileSync(path.join(empty, 'combined1.log'), 'x');
-      fs.writeFileSync(path.join(empty, 'app.log'), 'x');
-
-      expect(logPaths.datedLogFreshness(empty)).toBe(0);
-      expect(logPaths.datedLogFreshness(path.join(tmp, 'does-not-exist'))).toBe(0);
+    it('falls back to the development directory when the production one is absent', () => {
+      const spy = jest.spyOn(fs, 'existsSync').mockReturnValue(false);
+      try {
+        expect(logPaths.readDir()).toBe(logPaths.DEVELOPMENT_LOG_DIR);
+      } finally {
+        spy.mockRestore();
+      }
     });
 
     it('matches the dated filenames the logger actually writes, including size suffixes', () => {
