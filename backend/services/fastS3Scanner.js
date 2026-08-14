@@ -34,7 +34,10 @@ class FastS3Scanner {
         const { maxObjects = null, timeoutSeconds = null } = options;
         const startTime = Date.now();
         
-        logger.info(`📅 STREAMING scan: ${sinceDate.toISOString()} to ${endDate ? endDate.toISOString() : 'now'}`);
+        logger.debug('s3 scan: streaming', {
+            from: sinceDate.toISOString(),
+            to: endDate ? endDate.toISOString() : 'now'
+        });
 
         let totalScanned = 0;
         let totalMatched = 0;
@@ -107,13 +110,13 @@ class FastS3Scanner {
                 // Timeout protection (only if timeoutSeconds is set)
                 const elapsed = (Date.now() - startTime) / 1000;
                 if (timeoutSeconds !== null && elapsed > timeoutSeconds) {
-                    logger.warn(`⏱️ Stopping scan after ${timeoutSeconds}s timeout (scanned ${totalScanned} objects)`);
+                    logger.warn('s3 scan: stopped on timeout', { timeoutSec: timeoutSeconds, scanned: totalScanned });
                     break;
                 }
                 
                 // Progress logging
                 if (totalScanned % 10000 === 0) {
-                    logger.info(`📊 Streaming: ${totalScanned} scanned, ${totalMatched} matched (${elapsed.toFixed(1)}s)`);
+                    logger.debug('s3 scan: streaming progress', { scanned: totalScanned, matched: totalMatched, sec: elapsed.toFixed(1) });
                 }
                 
                 // Memory management
@@ -123,7 +126,7 @@ class FastS3Scanner {
             }
 
             const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-            logger.info(`✅ STREAMING scan complete: ${totalMatched} documents streamed in ${duration}s (scanned ${totalScanned} objects)`);
+            logger.info('s3 scan: complete', { matched: totalMatched, scanned: totalScanned, sec: duration });
 
             return {
                 totalScanned,
@@ -132,7 +135,7 @@ class FastS3Scanner {
             };
 
         } catch (error) {
-            logger.error('❌ Error in streaming S3 scan:', error);
+            logger.error('s3 scan: streaming failed', error);
             throw error;
         }
     }
@@ -142,7 +145,7 @@ class FastS3Scanner {
      * Kept for backward compatibility but limited to prevent OOM
      */
     async getDocumentsModifiedSince(sinceDate, maxDocuments = 100) {
-        logger.warn('⚠️ DEPRECATED: getDocumentsModifiedSince() - use streamDocumentsSince() instead');
+        logger.warn('s3 scan: getDocumentsModifiedSince() is deprecated, use streamDocumentsSince()');
         
         const documents = [];
         await this.streamDocumentsSince(sinceDate, null, async (doc) => {
@@ -167,7 +170,7 @@ class FastS3Scanner {
         const endOfYesterday = new Date(yesterday);
         endOfYesterday.setHours(23, 59, 59, 999);
 
-        logger.info(`📅 STREAMING yesterday's documents: ${yesterday.toDateString()}`);
+        logger.debug('s3 scan: streaming yesterday', { date: yesterday.toISOString().split('T')[0] });
         return await this.streamDocumentsSince(yesterday, endOfYesterday, onDocument);
     }
 
@@ -175,7 +178,7 @@ class FastS3Scanner {
      * LEGACY - DEPRECATED: Use streamYesterdaysDocuments instead
      */
     async getYesterdaysDocuments() {
-        logger.warn('⚠️ DEPRECATED: getYesterdaysDocuments() - use streamYesterdaysDocuments() instead');
+        logger.warn('s3 scan: getYesterdaysDocuments() is deprecated, use streamYesterdaysDocuments()');
         return await this.getDocumentsModifiedSince(
             (() => {
                 const yesterday = new Date();
@@ -194,7 +197,7 @@ class FastS3Scanner {
      * @returns {Promise<Array>}
      */
     async getDocumentsByDateRange(startDate, endDate) {
-        logger.info(`📅 Getting documents from ${startDate.toDateString()} to ${endDate.toDateString()}`);
+        logger.debug('s3 scan: listing date range', { from: startDate.toISOString().split('T')[0], to: endDate.toISOString().split('T')[0] });
 
         const allDocuments = await this.getDocumentsModifiedSince(startDate);
 
@@ -204,7 +207,7 @@ class FastS3Scanner {
             return docDate <= endDate;
         });
 
-        logger.info(`✅ Found ${filteredDocuments.length} documents in date range`);
+        logger.debug('s3 scan: documents in range', { documents: filteredDocuments.length });
         return filteredDocuments;
     }
 
@@ -216,7 +219,7 @@ class FastS3Scanner {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        logger.info(`📅 Getting documents for today (${today.toDateString()})`);
+        logger.debug('s3 scan: listing today', { date: today.toISOString().split('T')[0] });
         return await this.getDocumentsModifiedSince(today);
     }
 
@@ -230,7 +233,7 @@ class FastS3Scanner {
         sinceDate.setDate(sinceDate.getDate() - days);
         sinceDate.setHours(0, 0, 0, 0);
 
-        logger.info(`📅 Getting documents from last ${days} days`);
+        logger.debug('s3 scan: listing recent days', { days });
         return await this.getDocumentsModifiedSince(sinceDate);
     }
 
@@ -242,7 +245,7 @@ class FastS3Scanner {
      * @returns {Promise<number>} Total matching document count
      */
     async countDocumentsSince(sinceDate, endDate = null) {
-        logger.info(`📊 Counting documents: ${sinceDate.toISOString()} to ${endDate ? endDate.toISOString() : 'now'}`);
+        logger.debug('s3 scan: counting', { from: sinceDate.toISOString(), to: endDate ? endDate.toISOString() : 'now' });
         
         let totalCount = 0;
         let continuationToken = null;
@@ -289,11 +292,11 @@ class FastS3Scanner {
                 hasMore = !!continuationToken;
             }
         } catch (error) {
-            logger.error(`❌ Error counting documents: ${error.message}`);
+            logger.error('s3 scan: counting failed', error);
             throw error;
         }
 
-        logger.info(`📊 Total documents in date range: ${totalCount}`);
+        logger.info('s3 scan: documents in date range', { total: totalCount });
         return totalCount;
     }
 

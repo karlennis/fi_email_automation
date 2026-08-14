@@ -9,7 +9,7 @@ function getRedisConfig() {
     const redisHost = process.env.REDIS_URL.includes('@')
       ? process.env.REDIS_URL.split('@')[1].split(':')[0]
       : 'localhost';
-    logger.info(`[scanJobQueue] Using Redis host: ${redisHost}`);
+    logger.debug('queue: redis host', { host: redisHost });
     return process.env.REDIS_URL;
   }
 
@@ -80,9 +80,9 @@ function getScanQueue() {
       // interrupted when the Redis connection drops). Bull recovers automatically;
       // log as warn to avoid false-alarm alerts.
       if (err.message && err.message.includes('caller gone')) {
-        logger.warn('⚠️ Scan queue: Redis connection dropped and reconnecting (ERR caller gone)');
+        logger.warn('queue: redis dropped, reconnecting');
       } else {
-        logger.error('❌ Scan queue error:', err);
+        logger.error('queue: error', err);
       }
     });
   }
@@ -118,7 +118,7 @@ async function enqueueScanJob(jobId, options = {}) {
     const state = await existing.getState();
     const progress = await existing.progress();
 
-    logger.info(`📋 Job already exists: ${jobKey} (state: ${state}, progress: ${progress})`);
+    logger.debug('queue: job already exists', { key: jobKey, state, progress });
 
     // If job is waiting or active, don't re-queue - unless it has clearly been
     // abandoned, in which case leaving it would block this job permanently.
@@ -134,17 +134,17 @@ async function enqueueScanJob(jobId, options = {}) {
         );
         await existing.remove();
       } else {
-        logger.info(`⏭️ Job ${jobKey} is already in queue with state: ${state}`);
+        logger.info('queue: skip enqueue, already queued', { key: jobKey, state });
         return existing;
       }
     } else if (state === 'completed' || state === 'failed') {
       // If job is completed/failed, remove it and re-queue
-      logger.info(`🔄 Job ${jobKey} is ${state}, removing and re-queueing...`);
+      logger.warn('queue: removing abandoned job and re-queueing', { key: jobKey, state });
       await existing.remove();
     }
   }
 
-  logger.info(`📥 Enqueuing scan job: ${jobKey}`);
+  logger.info('queue: enqueued scan job', { key: jobKey });
   return queue.add(
     'scan-job',
     { jobId, ...options },
