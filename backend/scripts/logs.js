@@ -81,11 +81,35 @@ function parseArgs(argv) {
   return opts;
 }
 
+const DATED_LOG_RE = /^(app|debug|error)-\d{4}-\d{2}-\d{2}\.log/;
+
+function hasDatedLogs(dir) {
+  try {
+    return fs.readdirSync(dir).some((name) => DATED_LOG_RE.test(name));
+  } catch (error) {
+    return false;
+  }
+}
+
+/**
+ * Where to read from.
+ *
+ * The logger picks /var/log/fi_email only when NODE_ENV === 'production', which PM2 sets
+ * for the app but a login shell does not - so asking it directly sent this CLI to
+ * backend/logs on the box and it reported "no log for today" while the day sat in
+ * /var/log/fi_email. Probe both candidates instead, preferring one that actually holds
+ * dated logs.
+ */
 function resolveLogDir(opts) {
   if (opts.dir) return opts.dir;
   if (process.env.LOG_DIR) return process.env.LOG_DIR;
-  // Ask the logger rather than duplicating its production/development fallback.
-  return require('../utils/logger').logDir;
+
+  const logger = require('../utils/logger');
+  const candidates = [logger.logDir, ...(logger.logDirCandidates || [])];
+
+  return candidates.find(hasDatedLogs)
+    || candidates.find((dir) => fs.existsSync(dir))
+    || logger.logDir;
 }
 
 /**
@@ -253,10 +277,20 @@ async function main() {
   }
 
   if (files.length === 0) {
-    process.stderr.write(
-      `No ${prefixes.join('/')} log for ${opts.date} in ${dir}.\n` +
-      `Try: npm run logs -- --list\n`
-    );
+    process.stderr.write(`No ${prefixes.join('/')} log for ${opts.date} in ${dir}.\n`);
+
+    // The undated names are the logger's degraded mode - it could not load
+    // winston-daily-rotate-file, so nothing is split by day. Say so, rather than letting
+    // this read as "that day has no logs".
+    if (prefixes.some((p) => fs.existsSync(path.join(dir, `${p}.log`)))) {
+      process.stderr.write(
+        `\nFound undated ${prefixes.join('/')}.log instead. The logger falls back to these when\n` +
+        `winston-daily-rotate-file is missing, so there are no per-day files to read.\n` +
+        `Fix with: cd backend && npm install\n`
+      );
+    } else {
+      process.stderr.write(`Try: npm run logs -- --list\n`);
+    }
     process.exit(1);
   }
 

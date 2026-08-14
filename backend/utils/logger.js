@@ -22,16 +22,39 @@
 const fs = require('fs');
 const path = require('path');
 const winston = require('winston');
-require('winston-daily-rotate-file');
 
 const runContext = require('./runContext');
+
+// Registers winston.transports.DailyRotateFile as a side effect.
+//
+// Guarded, because an unguarded require here once took the entire pipeline down: a deploy
+// pulled the code without running `npm install`, the module was absent, and every process
+// that requires this file - worker.js, server.js, ingestion-worker.js - died at startup.
+// PM2 exhausted max_restarts and left them all `errored`. Nothing scanned that night.
+//
+// Logging must never be the reason a scan does not run. Without the module we fall back
+// to plain size-rotated files below and say so loudly; documents still get processed.
+let rotationAvailable = true;
+let rotationError = null;
+try {
+  require('winston-daily-rotate-file');
+} catch (error) {
+  rotationAvailable = false;
+  rotationError = error.message;
+}
 
 const isTest = process.env.NODE_ENV === 'test';
 const isProduction = process.env.NODE_ENV === 'production';
 
+// Where the box keeps its logs. Exported because scripts/logs.js has to find this
+// directory from a plain login shell, which has no NODE_ENV and so cannot rely on the
+// isProduction branch below.
+const PRODUCTION_LOG_DIR = '/var/log/fi_email';
+const DEVELOPMENT_LOG_DIR = path.join(__dirname, '../logs');
+
 const LOG_DIR =
   process.env.LOG_DIR ||
-  (isProduction ? '/var/log/fi_email' : path.join(__dirname, '../logs'));
+  (isProduction ? PRODUCTION_LOG_DIR : DEVELOPMENT_LOG_DIR);
 
 if (!isTest) {
   // Created (and chowned to ubuntu) by deploy-ec2.sh on the box, but a fresh checkout
@@ -89,18 +112,40 @@ function formatLine(info, colour) {
 const useColour = Boolean(process.stdout.isTTY);
 const consoleLine = winston.format.printf((info) => formatLine(info, useColour));
 
+// '50m' -> 52428800. winston's File transport wants bytes where DailyRotateFile takes a
+// human string, so the fallback can reuse the same numbers.
+function toBytes(size) {
+  const match = /^(\d+)([kmg])$/i.exec(String(size));
+  if (!match) return undefined;
+  const unit = { k: 1024, m: 1024 * 1024, g: 1024 * 1024 * 1024 }[match[2].toLowerCase()];
+  return Number(match[1]) * unit;
+}
+
 function rotatingFile(prefix, level, maxFiles, maxSize) {
-  return new winston.transports.DailyRotateFile({
-    filename: path.join(LOG_DIR, `${prefix}-%DATE%.log`),
-    datePattern: 'YYYY-MM-DD',
+  if (rotationAvailable) {
+    return new winston.transports.DailyRotateFile({
+      filename: path.join(LOG_DIR, `${prefix}-%DATE%.log`),
+      datePattern: 'YYYY-MM-DD',
+      level,
+      maxFiles,
+      maxSize,
+      // Not gzipped: a compressed day cannot be grepped, which is the whole point of
+      // keeping it. Retention is short enough that the space does not matter.
+      zippedArchive: false,
+      // Rotation happens on the local day boundary, matching the 12:10 AM scan schedule.
+      utc: false
+    });
+  }
+
+  // Degraded mode: same three streams, same levels, but size-rotated with no date in the
+  // name. Deliberately NOT the `<prefix>-YYYY-MM-DD.log` shape, so neither
+  // scripts/logs.js nor diskCleanupService's DATED_LOG_RE mistakes these for real
+  // rotated days and applies date-based retention to them.
+  return new winston.transports.File({
+    filename: path.join(LOG_DIR, `${prefix}.log`),
     level,
-    maxFiles,
-    maxSize,
-    // Not gzipped: a compressed day cannot be grepped, which is the whole point of
-    // keeping it. Retention is short enough that the space does not matter.
-    zippedArchive: false,
-    // Rotation happens on the local day boundary, matching the 12:10 AM scan schedule.
-    utc: false
+    maxsize: toBytes(maxSize),
+    maxFiles: 5
   });
 }
 
@@ -143,6 +188,18 @@ const logger = winston.createLogger({
   exitOnError: false
 });
 
+// Emitted through the logger itself, after construction, so the degraded state is
+// recorded in the log rather than only on a console nobody is watching. Repeated on every
+// boot on purpose - this should be impossible to miss and trivial to fix.
+if (!isTest && !rotationAvailable) {
+  logger.warn(
+    'winston-daily-rotate-file is not installed - logging to size-rotated app.log/debug.log/error.log ' +
+    'instead of dated files. `npm run logs` will not find a day until this is fixed. ' +
+    'Fix with: cd backend && npm install',
+    { err: rotationError }
+  );
+}
+
 // Create a stream object for HTTP request logging
 logger.stream = {
   write: (message) => {
@@ -151,6 +208,10 @@ logger.stream = {
 };
 
 logger.logDir = LOG_DIR;
+// Both candidates, so scripts/logs.js can find the production directory from a login
+// shell that has no NODE_ENV set and would otherwise only ever see the development path.
+logger.logDirCandidates = [PRODUCTION_LOG_DIR, DEVELOPMENT_LOG_DIR];
+logger.rotationAvailable = rotationAvailable;
 // Shared with scripts/logs.js so the CLI renders a stored record exactly as the console
 // printed it live.
 logger.formatLine = formatLine;

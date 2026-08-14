@@ -174,6 +174,31 @@ find /home/ubuntu/fi_email_automation -type f -size +100M
 
 ## Common Issues & Fixes
 
+### Issue: `Cannot find module '...'` — every app errored after a deploy
+
+**Symptom:** `pm2 list` shows `errored` with a high restart count, and PM2 has stopped
+retrying (`max_restarts: 10`, `min_uptime: 30s`). All three Node apps go together, since
+they share `utils/logger.js`.
+
+**Cause:** a `git pull` brought code that needs a new dependency, and `npm install` was
+not run **inside `backend/`**. There is no `package.json` at the repo root, so running it
+there installs nothing.
+
+```bash
+cd ~/fi_email_automation/backend && npm install
+NODE_ENV=production node -e "require('./utils/logger'); console.log('ok')"
+cd ~/fi_email_automation && pm2 delete all && pm2 start ecosystem.config.js && pm2 save
+```
+
+See "Updating a running deployment" in EC2_DEPLOYMENT.md for the full sequence.
+
+### Issue: `npm run logs` says "no log for today" but the app is running
+
+Check which directory it read — the message names it. If it says `backend/logs` while the
+files are in `/var/log/fi_email`, pass `--dir /var/log/fi_email`. If it reports finding an
+undated `app.log`, the logger is in its fallback mode because
+`winston-daily-rotate-file` is missing: `cd backend && npm install`.
+
 ### Issue: Backend process crashes
 
 **Check logs:**

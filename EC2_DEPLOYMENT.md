@@ -589,4 +589,32 @@ sudo systemctl restart nginx
 - **Memory Optimization**: The streaming document processor limits memory growth. Monitor with `pm2 monit` - should see stable ~300MB per backend process.
 - **GC Critical**: `--expose-gc --max-old-space-size=1536` must be in PM2 startup args. This is already configured in `ecosystem.config.js`.
 - **Failover**: Set up Route 53 health checks if you add another instance.
-- **Updates**: Run `git pull && npm install` to update code, then `pm2 restart all`.
+- **Updates**: See below. `npm install` must be run **inside `backend/`** — there is no
+  `package.json` at the repo root, so running it there installs nothing.
+
+## Updating a running deployment
+
+```bash
+cd ~/fi_email_automation
+git pull origin main
+
+# There is no package.json at the repo root. `npm install` here installs nothing, and a
+# pull that adds a dependency will then crash every app at startup with
+# "Cannot find module ..." until this is run in the right directory.
+cd backend && npm install
+
+# Confirm the new code can actually load before restarting anything
+NODE_ENV=production node -e "require('./utils/logger'); console.log('ok')"
+
+# delete + start, not restart: `pm2 restart` does not re-read ecosystem.config.js, so
+# changes to instances, node_args, env or log paths are silently ignored
+cd ~/fi_email_automation
+pm2 delete all
+pm2 start ecosystem.config.js
+pm2 save
+
+pm2 list                      # every app online, restart count staying at 0
+cd backend && npm run logs -- --runs
+```
+
+If the frontend changed, also `cd frontend && npm install --include=dev && npm run build`.

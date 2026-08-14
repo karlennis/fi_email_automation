@@ -23,6 +23,50 @@ describe('logger', () => {
     expect(path.isAbsolute(logger.logDir) || logger.logDir.length > 0).toBe(true);
   });
 
+  it('offers both candidate directories so a login shell can find the production one', () => {
+    // scripts/logs.js probes these. Without the production path it looked only in
+    // backend/logs and reported "no log for today" while the day sat in /var/log/fi_email.
+    expect(logger.logDirCandidates).toContain('/var/log/fi_email');
+    expect(logger.logDirCandidates.length).toBe(2);
+  });
+
+  describe('when winston-daily-rotate-file is not installed', () => {
+    // The incident this guards against: a deploy pulled the code without running
+    // npm install, the unguarded require threw, and worker.js, server.js and
+    // ingestion-worker.js all died at startup. PM2 exhausted max_restarts and left them
+    // errored - the whole pipeline down because a log transport was missing.
+    let degraded;
+
+    beforeAll(() => {
+      jest.resetModules();
+      jest.doMock('winston-daily-rotate-file', () => {
+        const error = new Error("Cannot find module 'winston-daily-rotate-file'");
+        error.code = 'MODULE_NOT_FOUND';
+        throw error;
+      });
+      degraded = require('../logger');
+    });
+
+    afterAll(() => {
+      jest.dontMock('winston-daily-rotate-file');
+      jest.resetModules();
+    });
+
+    it('still loads instead of throwing', () => {
+      expect(degraded).toBeDefined();
+      expect(typeof degraded.info).toBe('function');
+    });
+
+    it('reports that rotation is unavailable', () => {
+      expect(degraded.rotationAvailable).toBe(false);
+      expect(logger.rotationAvailable).toBe(true);
+    });
+
+    it('still logs without throwing', () => {
+      expect(() => degraded.info('scan: progress', { done: 500 })).not.toThrow();
+    });
+  });
+
   describe('formatLine', () => {
     const line = (info) => logger.formatLine(info, false);
 
