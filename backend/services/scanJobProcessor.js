@@ -896,13 +896,29 @@ class ScanJobProcessor {
         job.statistics.totalMatches = (job.statistics.totalMatches || 0) + totalMatchesFound;
         job.statistics.lastScanDate = new Date();
 
+        // The day this run covers. Computed here rather than alongside
+        // saveDailyScanResult below because it also keys the summary-email claim.
+        const scanDateKey = new Date(scanEndDate);
+        scanDateKey.setHours(0, 0, 0, 0);
+
         // SEND FINAL SUMMARY EMAIL TO ADMIN (always, even if zero matches)
         const triggeredByEmail = job.checkpoint.triggeredBy?.email || adminEmail;
-        if (triggeredByEmail) {
+        const summaryEmailClaimed = triggeredByEmail
+            ? await this.claimSummaryEmailSend(job.jobId, scanDateKey, triggeredByEmail)
+            : false;
+
+        if (!triggeredByEmail) {
+            logger.warn('scan: no triggeredBy address, final summary email skipped');
+        } else if (!summaryEmailClaimed) {
+            logger.warn('scan: summary email already sent for this day, not sending again', {
+                to: triggeredByEmail,
+                date: this.toLocalDateKey(scanDateKey)
+            });
+        } else {
             const duration = ((Date.now() - startTime) / 1000).toFixed(2);
             const allMatchDetails = job.checkpoint.allMatchDetails || [];
 
-            await emailService.sendScanSummaryEmail(triggeredByEmail, {
+            const sendResult = await emailService.sendScanSummaryEmail(triggeredByEmail, {
                 jobName: job.name,
                 documentType: job.documentType,
                 startTime: job.checkpoint.scanStartTime,
@@ -922,15 +938,20 @@ class ScanJobProcessor {
                     validationQuote: m.validationQuote?.substring(0, 300) + (m.validationQuote?.length > 300 ? '...' : '')
                 }))
             });
-            logger.info('scan: final summary email sent', { to: triggeredByEmail });
-        } else {
-            logger.warn('scan: no triggeredBy address, final summary email skipped');
+            if (sendResult && sendResult.success === false) {
+                // Nothing actually went out. Hand the claim back so a later pass can
+                // still deliver the report instead of it being silently swallowed.
+                await this.releaseSummaryEmailClaim(job.jobId, scanDateKey);
+                logger.error('scan: final summary email FAILED, claim released', {
+                    to: triggeredByEmail,
+                    err: sendResult.error || sendResult.reason
+                });
+            } else {
+                logger.info('scan: final summary email sent', { to: triggeredByEmail });
+            }
         }
 
-        // Reset job status back to ACTIVE after completion (don't leave it as RUNNING)
         // SAVE TODAY'S SCAN RESULT (crash-safe — persisted independently per day)
-        const scanDateKey = new Date(scanEndDate);
-        scanDateKey.setHours(0, 0, 0, 0);
         await this.saveDailyScanResult(job, {
             scanDate: scanDateKey,
             scanStartDate,
@@ -2261,6 +2282,70 @@ class ScanJobProcessor {
             }
         } catch (error) {
             logger.error('delivery: pending delivery sweep FAILED', error);
+        }
+    }
+
+    /**
+     * Claim the right to send this day's summary email, atomically.
+     *
+     * Bull re-delivers a job whose lock lapsed, and a scan long enough to block the
+     * event loop past lockDuration does exactly that: on 2026-08-30 a single nightly
+     * enqueue ran twice, 5h21m each, and emailed two identical reports. The raised
+     * lockDuration in scanJobQueue.js makes that rarer; this makes the second send
+     * impossible, and also covers the `attempts: 3` retry path, which would re-send
+     * just as happily.
+     *
+     * The filter matches only a row that has NOT sent yet. Where one has, the filter
+     * finds nothing, the upsert tries to insert, and the unique {jobId, scanDate} index
+     * turns that into a duplicate-key error - the losing outcome. "No row yet" and "row
+     * already sent" therefore resolve through one atomic operation with exactly one
+     * winner, the same pattern as services/jobLock.js.
+     *
+     * @returns {Promise<boolean>} true if this caller should send.
+     */
+    async claimSummaryEmailSend(jobId, scanDate, toEmail) {
+        const scanDateNormalized = new Date(scanDate);
+        scanDateNormalized.setHours(0, 0, 0, 0);
+
+        try {
+            await ScanJobDailyResult.findOneAndUpdate(
+                { jobId, scanDate: scanDateNormalized, summaryEmailSentAt: null },
+                {
+                    $set: {
+                        jobId,
+                        scanDate: scanDateNormalized,
+                        summaryEmailSentAt: new Date(),
+                        summaryEmailTo: toEmail,
+                        summaryEmailRunId: runContext.getRunId() || null
+                    }
+                },
+                { upsert: true, new: true, setDefaultsOnInsert: true }
+            );
+            return true;
+        } catch (error) {
+            if (error && (error.code === 11000 || error.code === 11001)) return false;
+
+            // A claim we cannot evaluate must not become a claim we ignore: a duplicate
+            // report is the failure being fixed here, and the scan itself still succeeded.
+            logger.error('scan: could not claim summary email send', { job: jobId, err: error.message });
+            return false;
+        }
+    }
+
+    /**
+     * Hand back a claim whose send never actually went out.
+     */
+    async releaseSummaryEmailClaim(jobId, scanDate) {
+        const scanDateNormalized = new Date(scanDate);
+        scanDateNormalized.setHours(0, 0, 0, 0);
+
+        try {
+            await ScanJobDailyResult.updateOne(
+                { jobId, scanDate: scanDateNormalized },
+                { $set: { summaryEmailSentAt: null, summaryEmailTo: null, summaryEmailRunId: null } }
+            );
+        } catch (error) {
+            logger.warn('scan: could not release summary email claim', { job: jobId, err: error.message });
         }
     }
 

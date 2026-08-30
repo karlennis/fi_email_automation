@@ -3,6 +3,21 @@ const logger = require('../utils/logger');
 
 let scanQueue;
 
+// How long Bull's lock on an active job stays valid without renewal.
+//
+// Renewal is a timer (guardInterval below), so any stretch where the scan blocks the
+// event loop for longer than this loses the lock - and the stalled sweep then treats the
+// job as abandoned and re-queues it while the original is still running. At the previous
+// 90s that happened on 2026-08-30: a 7m29s block in the final aggregation of a 15,734
+// document day cost the lock, the completion could not be recorded ("Missing lock for
+// job ..."), and the whole 5h21m scan ran a second time and emailed a second report.
+//
+// The trade-off is recovery latency - a genuinely dead worker's job is only reclaimed
+// once this elapses. 15 minutes clears the longest block observed by roughly 2x and is
+// still far inside the nightly cycle. scanJobProcessor.claimSummaryEmailSend is the
+// correctness backstop for the times this is not enough.
+const SCAN_JOB_LOCK_MS = parseInt(process.env.SCAN_JOB_LOCK_MS || String(15 * 60 * 1000), 10);
+
 function getRedisConfig() {
   if (process.env.REDIS_URL) {
     // Log Redis connection info (without exposing full credentials)
@@ -70,7 +85,7 @@ function getScanQueue() {
         stalledInterval: 600000,  // Check for stalled jobs every 10 minutes (was 60s)
         maxStalledCount: 2,       // Max times a job can be recovered
         guardInterval: 30000,     // Renew lock every 30s (was 10s)
-        lockDuration: 90000,      // Lock duration 90s (was 30s)
+        lockDuration: SCAN_JOB_LOCK_MS,
         drainDelay: 1000          // 1s delay between checks (was 5ms) - CRITICAL for reducing EVALSHA
       }
     });
@@ -156,5 +171,6 @@ module.exports = {
   getScanQueue,
   enqueueScanJob,
   buildJobKey,
-  STALE_QUEUE_JOB_MS
+  STALE_QUEUE_JOB_MS,
+  SCAN_JOB_LOCK_MS
 };

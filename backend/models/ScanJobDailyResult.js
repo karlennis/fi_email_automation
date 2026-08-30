@@ -55,7 +55,15 @@ const ScanJobDailyResultSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  deliveredAt: Date
+  deliveredAt: Date,
+  // Claimed atomically immediately before the run-summary email goes out, so a second
+  // execution of the same run cannot send the report twice. Bull re-delivers a job whose
+  // lock lapsed - a scan long enough to block the event loop past lockDuration does
+  // exactly that - and on 2026-08-30 one nightly enqueue ran end to end twice and emailed
+  // two identical reports. See scanJobProcessor.claimSummaryEmailSend.
+  summaryEmailSentAt: Date,
+  summaryEmailTo: String,
+  summaryEmailRunId: String
 }, {
   timestamps: true
 });
