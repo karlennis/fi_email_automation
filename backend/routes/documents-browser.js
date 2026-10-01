@@ -14,61 +14,93 @@ const emailService = require('../services/emailService');
 // timestamp field, and could not be filtered by run - they existed only in PM2's raw
 // stdout capture.
 const logger = require('../utils/logger');
+const {
+  isLocalBrowserEnabled,
+  getLocalBrowseRoot,
+  isInsideRoot,
+  resolveInsideRoot,
+  normaliseS3Folder,
+  isSafeProjectId
+} = require('../utils/pathGuards');
+
+// ---------------------------------------------------------------------------
+// Access rules for this router
+//
+// The whole router is admin-only; that is applied where it is mounted, in
+// routes/index.js.
+//
+// /local/* reads the filesystem of the machine the API runs on, from paths in the
+// request. On the production server that machine holds backend/.env. So:
+//   - the routes do not exist (404) unless ENABLE_LOCAL_FILE_BROWSER=true, and never
+//     exist when NODE_ENV=production;
+//   - when they do exist, every path in a request must resolve inside
+//     LOCAL_BROWSE_ROOT, or the request is rejected with 400.
+// Both are read per request rather than at require time so a changed environment
+// cannot be outlived by a cached decision.
+// ---------------------------------------------------------------------------
+router.use('/local', (req, res, next) => {
+  if (!isLocalBrowserEnabled()) {
+    return res.status(404).json({ error: 'Route not found' });
+  }
+
+  if (!getLocalBrowseRoot()) {
+    return res.status(400).json({
+      success: false,
+      error: 'Local file browser has no root configured. Set LOCAL_BROWSE_ROOT.'
+    });
+  }
+
+  next();
+});
+
+/**
+ * Resolve a request-supplied path, or return null if it must be refused.
+ * The lexical check stops ../ traversal; the realpath check stops a symlink or junction
+ * inside the root from pointing back out of it.
+ */
+async function resolveLocalPath(requested) {
+  const root = getLocalBrowseRoot();
+  const absolute = resolveInsideRoot(root, requested);
+  if (!absolute) return null;
+
+  try {
+    const [realRoot, realPath] = await Promise.all([fs.realpath(root), fs.realpath(absolute)]);
+    if (!isInsideRoot(realRoot, realPath)) return null;
+  } catch (error) {
+    // Does not exist (yet): nothing to follow, and the caller's own access check will
+    // report it as not found.
+  }
+
+  return absolute;
+}
+
+function rejectOutsideRoot(res) {
+  return res.status(400).json({
+    success: false,
+    error: 'Path is outside the allowed folder'
+  });
+}
 
 /**
  * GET /api/documents/local/drives
- * Get available drives (Windows) or root directories (Unix)
+ * The starting points the browser may offer. This used to enumerate every drive letter
+ * (or /, /home, ...) plus the home directory; it now offers the allowed root only.
  */
 router.get('/local/drives', async (req, res) => {
   try {
-    const drives = [];
-
-    if (os.platform() === 'win32') {
-      // Windows: Get available drives
-      for (let i = 65; i <= 90; i++) {
-        const drive = String.fromCharCode(i) + ':';
-        try {
-          await fs.access(drive + '\\');
-          drives.push({
-            name: drive,
-            path: drive + '\\',
-            type: 'drive'
-          });
-        } catch (error) {
-          // Drive not available
-        }
-      }
-    } else {
-      // Unix/Linux/macOS: Common root directories
-      const commonDirs = ['/', '/home', '/Users', '/Documents', '/Desktop'];
-      for (const dir of commonDirs) {
-        try {
-          await fs.access(dir);
-          drives.push({
-            name: dir,
-            path: dir,
-            type: 'directory'
-          });
-        } catch (error) {
-          // Directory not available
-        }
-      }
-    }
-
-    // Add user home directory
-    const homeDir = os.homedir();
-    drives.push({
-      name: 'Home',
-      path: homeDir,
-      type: 'home'
-    });
+    const root = getLocalBrowseRoot();
+    const drives = [{
+      name: path.basename(root) || root,
+      path: root,
+      type: 'directory'
+    }];
 
     res.json({
       success: true,
       data: {
         drives,
         platform: os.platform(),
-        homeDir
+        homeDir: root
       }
     });
 
@@ -88,10 +120,12 @@ router.get('/local/drives', async (req, res) => {
  */
 router.get('/local/browse', async (req, res) => {
   try {
-    const { path: browsePath = os.homedir() } = req.query;
+    const { path: browsePath = getLocalBrowseRoot() } = req.query;
 
-    // Security check: ensure path is absolute and exists
-    const absolutePath = path.resolve(browsePath);
+    const absolutePath = await resolveLocalPath(browsePath);
+    if (!absolutePath) {
+      return rejectOutsideRoot(res);
+    }
 
     try {
       await fs.access(absolutePath);
@@ -105,9 +139,9 @@ router.get('/local/browse', async (req, res) => {
     const items = [];
     const entries = await fs.readdir(absolutePath, { withFileTypes: true });
 
-    // Add parent directory option (except for root)
+    // Add parent directory option (never above the allowed root)
     const parentDir = path.dirname(absolutePath);
-    if (parentDir !== absolutePath) {
+    if (parentDir !== absolutePath && isInsideRoot(getLocalBrowseRoot(), parentDir)) {
       items.push({
         name: '..',
         path: parentDir,
@@ -204,7 +238,10 @@ router.post('/local/scan-projects', async (req, res) => {
       });
     }
 
-    const absolutePath = path.resolve(rootPath);
+    const absolutePath = await resolveLocalPath(rootPath);
+    if (!absolutePath) {
+      return rejectOutsideRoot(res);
+    }
 
     try {
       await fs.access(absolutePath);
@@ -342,8 +379,15 @@ router.get('/aws/folders', async (req, res) => {
  */
 router.get('/aws/folders/:folderName/projects', async (req, res) => {
   try {
-    const { folderName } = req.params;
+    const folderName = normaliseS3Folder(req.params.folderName);
     const { limit = 50, offset = 0 } = req.query;
+
+    if (!folderName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Folder must be planning-docs or filter-docs'
+      });
+    }
 
     const folderPrefix = folderName + '/';
     const allProjects = await s3Service.listProjectsInFolder(folderPrefix);
@@ -474,6 +518,13 @@ router.get('/aws/projects/:projectId', async (req, res) => {
   try {
     const { projectId } = req.params;
 
+    if (!isSafeProjectId(projectId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid project ID'
+      });
+    }
+
     // Get documents and metadata in parallel
     const [documents, metadata] = await Promise.all([
       s3Service.listProjectDocuments(projectId),
@@ -565,11 +616,20 @@ router.post('/aws/process-folder', async (req, res) => {
       });
     }
 
+    // Folder names become S3 prefixes; only the two document folders are allowed.
+    const allowedFolders = folderNames.map(normaliseS3Folder);
+    if (allowedFolders.some(folder => !folder)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Folders must be planning-docs or filter-docs'
+      });
+    }
+
     logger.info(`Starting FI processing for ${folderNames.length} folders`);
 
     // Get all projects from all folders
     const allProjectIds = [];
-    for (const folderName of folderNames) {
+    for (const folderName of allowedFolders) {
       try {
         const folderPrefix = folderName + '/';
         const projects = await s3Service.listProjectsInFolder(folderPrefix);
@@ -669,6 +729,14 @@ router.post('/aws/process-fi', async (req, res) => {
       });
     }
 
+    // Project ids become part of an S3 prefix.
+    if (!projectIds.every(isSafeProjectId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid project ID'
+      });
+    }
+
     logger.info(`Starting FI processing for ${projectIds.length} projects`);
 
     // Process projects
@@ -743,13 +811,24 @@ router.post('/local/process-folder', async (req, res) => {
       });
     }
 
+    // Refuse the whole request if any one path escapes the allowed root - before any
+    // file is read or any email is sent.
+    const resolvedFolders = [];
+    for (const folderPath of folderPaths) {
+      const absolutePath = await resolveLocalPath(folderPath);
+      if (!absolutePath) {
+        return rejectOutsideRoot(res);
+      }
+      resolvedFolders.push(absolutePath);
+    }
+
     logger.info(`Starting local FI processing for ${folderPaths.length} folders`);
 
     // Get all projects from all folders
     const allProjects = [];
-    for (const folderPath of folderPaths) {
+    for (const folderPath of resolvedFolders) {
       try {
-        const absolutePath = path.resolve(folderPath);
+        const absolutePath = folderPath;
         const projects = await getLocalProjectsFromFolder(absolutePath);
         allProjects.push(...projects);
         logger.info(`Found ${projects.length} projects in folder ${folderPath}`);
@@ -847,12 +926,21 @@ router.post('/local/process-fi', async (req, res) => {
       });
     }
 
+    // Refuse the whole request if any one path escapes the allowed root.
+    const resolvedProjectPaths = [];
+    for (const projectPath of projectPaths) {
+      const absolutePath = await resolveLocalPath(projectPath);
+      if (!absolutePath) {
+        return rejectOutsideRoot(res);
+      }
+      resolvedProjectPaths.push(absolutePath);
+    }
+
     logger.info(`Starting local FI processing for ${projectPaths.length} projects`);
 
     // Convert paths to project objects
     const projects = [];
-    for (const projectPath of projectPaths) {
-      const absolutePath = path.resolve(projectPath);
+    for (const absolutePath of resolvedProjectPaths) {
       const folderName = path.basename(absolutePath);
       const match = folderName.match(/^(?:downloads_)?(\d+)$/);
       const projectId = match ? match[1] : folderName; // Fallback to folder name if no numeric match

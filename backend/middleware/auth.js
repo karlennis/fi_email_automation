@@ -16,7 +16,7 @@ const authenticate = async (req, res, next) => {
       });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     const user = await User.findById(decoded.userId).select('-password');
 
     if (!user || !user.isActive) {
@@ -34,24 +34,40 @@ const authenticate = async (req, res, next) => {
       });
     }
 
-    // Update last activity
-    user.lastActivity = new Date();
-    await user.save();
+    // Update last activity. Best effort: every API route now passes through here, and a
+    // failed bookkeeping write must not turn a valid session into a logout.
+    try {
+      user.lastActivity = new Date();
+      await user.save();
+    } catch (saveError) {
+      logger.warn('could not record last activity', { error: saveError.message });
+    }
 
     req.user = user;
     next();
   } catch (error) {
-    if (error.name === 'JsonWebTokenError') {
+    if (error.name === 'JsonWebTokenError' || error.name === 'NotBeforeError') {
       return res.status(401).json({
         success: false,
         error: 'Invalid token format'
       });
     }
 
+    // An expired token is the ordinary end of a session, not a fault: answer 401 so the
+    // frontend sends the user to /login, and keep it out of the error log.
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({
+        success: false,
+        error: 'Token expired'
+      });
+    }
+
+    // Anything else is our fault (the database, usually), not the caller's. Answering 401
+    // would make the frontend log everybody out on a database blip.
     logger.error('Authentication error:', error);
-    res.status(401).json({
+    res.status(503).json({
       success: false,
-      error: 'Authentication failed'
+      error: 'Authentication is temporarily unavailable'
     });
   }
 };
@@ -60,6 +76,14 @@ const authenticate = async (req, res, next) => {
  * Admin role authorization middleware
  */
 const requireAdmin = (req, res, next) => {
+  // Fails closed if it is ever mounted without authenticate in front of it.
+  if (!req.user) {
+    return res.status(401).json({
+      success: false,
+      error: 'Access denied. No token provided.'
+    });
+  }
+
   if (req.user.role !== 'admin') {
     return res.status(403).json({
       success: false,
@@ -74,6 +98,14 @@ const requireAdmin = (req, res, next) => {
  */
 const requirePermission = (permission) => {
   return (req, res, next) => {
+    // Fails closed if it is ever mounted without authenticate in front of it.
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access denied. No token provided.'
+      });
+    }
+
     if (!req.user.hasPermission(permission)) {
       return res.status(403).json({
         success: false,
@@ -93,7 +125,7 @@ const optionalAuth = async (req, res, next) => {
     const token = req.header('Authorization')?.replace('Bearer ', '');
 
     if (token) {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
       const user = await User.findById(decoded.userId).select('-password');
 
       if (user && user.isActive && user.email.endsWith('@buildinginfo.com')) {

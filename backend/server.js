@@ -15,21 +15,12 @@ dotenv.config({ path: path.join(__dirname, '.env') });
 // that failure mode reports success with zero matches.
 require('./utils/awsConfig').assertConsistentS3Env();
 
-// Import routes
-const authRoutes = require('./routes/auth');
-const projectRoutes = require('./routes/projects');
-const documentRoutes = require('./routes/documents');
-const documentsBrowserRoutes = require('./routes/documents-browser');
-const customerRoutes = require('./routes/customers');
-const jobRoutes = require('./routes/jobs');
-const scheduledJobsRoutes = require('./routes/scheduled-jobs');
-const apiFilteringRoutes = require('./routes/api-filtering');
-const testRoutes = require('./routes/test');
-const reportsRoutes = require('./routes/reports');
-const documentRegisterRoutes = require('./routes/document-register');
-const registerFiRoutes = require('./routes/register-fi');
-const documentScanRoutes = require('./routes/document-scan');
-const runsRoutes = require('./routes/runs');
+// Every token the API accepts is signed with JWT_SECRET. In production a missing or short
+// one is a reason not to start at all.
+require('./utils/startupChecks').assertJwtSecret();
+
+// Every API router is mounted, with its authentication, by routes/index.js
+const { mountRoutes } = require('./routes');
 
 // Services and schedulers
 const documentRegisterScheduler = require('./services/documentRegisterScheduler');
@@ -107,8 +98,7 @@ const corsOptions = {
       process.env.FRONTEND_URL || 'http://localhost:4200',
       'http://localhost:4200',
       'http://127.0.0.1:4200',
-      'http://13.61.136.57', // EC2 instance IP
-      'https://fi-email-automation-frontend-xvqm.onrender.com' // Current Render frontend URL
+      'http://13.61.136.57' // EC2 instance IP
     ];
 
     // Allow requests with no origin (mobile apps, Postman, etc.)
@@ -145,21 +135,9 @@ dirs.forEach(dir => {
   }
 });
 
-// Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/projects', projectRoutes);
-app.use('/api/documents', documentRoutes);
-app.use('/api/documents-browser', documentsBrowserRoutes);
-app.use('/api/customers', customerRoutes);
-app.use('/api/jobs', jobRoutes);
-app.use('/api/scheduled-jobs', scheduledJobsRoutes);
-app.use('/api/filtering', apiFilteringRoutes);
-app.use('/api/test', testRoutes);
-app.use('/api/reports', reportsRoutes);
-app.use('/api/document-register', documentRegisterRoutes);
-app.use('/api/register-fi', registerFiRoutes);
-app.use('/api/document-scan', documentScanRoutes);
-app.use('/api/runs', runsRoutes);
+// Routes - see routes/index.js. Do not add app.use('/api/...') here: a router mounted
+// directly skips the authentication that mountRoutes applies.
+mountRoutes(app);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -198,7 +176,9 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/fi-email-
   // Ensure primary admin exists (idempotent - safe to run on every startup)
   const User = require('./models/User');
   User.ensurePrimaryAdmin()
-    .then(() => logger.info('Primary admin account verified'))
+    .then(admin => {
+      if (admin) logger.info('Primary admin account verified');
+    })
     .catch(error => logger.error('Failed to ensure primary admin:', error));
 
   // This app runs with instances: 2 in PM2 cluster mode, so everything below would

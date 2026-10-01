@@ -120,7 +120,17 @@ userSchema.pre('save', function(next) {
   next();
 });
 
-// Static method to create the primary admin
+const MIN_INITIAL_ADMIN_PASSWORD_LENGTH = 12;
+
+// Static method to create the primary admin.
+//
+// The initial password comes from INITIAL_ADMIN_PASSWORD and nowhere else. This used to
+// hash a literal that was committed to the repository, so anyone who had read the source
+// could sign in as admin on any deployment where the password had not been changed.
+//
+// Returns the admin, or null when the account does not exist and could not be created
+// because no usable password was supplied. That case is logged and does not throw: the
+// server keeps starting, it just has no primary admin until the variable is set.
 userSchema.statics.ensurePrimaryAdmin = async function() {
   const adminEmail = 'afatogun@buildinginfo.com';
 
@@ -128,21 +138,35 @@ userSchema.statics.ensurePrimaryAdmin = async function() {
     const existingAdmin = await this.findOne({ email: adminEmail });
 
     if (!existingAdmin) {
+      const initialPassword = process.env.INITIAL_ADMIN_PASSWORD;
+
+      const isPlaceholder = /^(replace[-_ ]|change[-_ ]?me|your[-_ ]|password)/i.test(initialPassword || '');
+
+      if (!initialPassword || initialPassword.length < MIN_INITIAL_ADMIN_PASSWORD_LENGTH || isPlaceholder) {
+        logger.error(
+          'primary admin does not exist and was NOT created: set INITIAL_ADMIN_PASSWORD ' +
+          `(at least ${MIN_INITIAL_ADMIN_PASSWORD_LENGTH} characters) in backend/.env and restart. ` +
+          'Remove the variable again once the account exists and the password has been changed.',
+          { email: adminEmail, reason: !initialPassword ? 'not set' : (isPlaceholder ? 'still the example placeholder' : 'too short') }
+        );
+        return null;
+      }
+
       const bcrypt = require('bcryptjs');
-      const salt = await bcrypt.genSalt(10);
-      const defaultPassword = await bcrypt.hash('AdminPass123!', salt);
+      const salt = await bcrypt.genSalt(12);
+      const hashedPassword = await bcrypt.hash(initialPassword, salt);
 
       const primaryAdmin = new this({
         name: 'Afolabi Fatogun',
         email: adminEmail,
-        password: defaultPassword,
+        password: hashedPassword,
         role: 'admin',
         department: 'Administration',
         jobTitle: 'Primary Administrator'
       });
 
       await primaryAdmin.save();
-      logger.warn('primary admin created with the default password - change it immediately', { email: adminEmail });
+      logger.warn('primary admin created from INITIAL_ADMIN_PASSWORD - change the password after first login and remove the variable', { email: adminEmail });
       return primaryAdmin;
     }
 

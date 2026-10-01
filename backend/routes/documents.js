@@ -3,6 +3,7 @@ const router = express.Router();
 const documentProcessor = require('../services/documentProcessor');
 const fiDetectionService = require('../services/fiDetectionService');
 const Project = require('../models/Project');
+const { requireAdmin } = require('../middleware/auth');
 
 
 
@@ -73,7 +74,7 @@ router.get('/cache-stats', async (req, res) => {
  * POST /api/documents/cleanup-cache
  * Clean up old OCR cache files
  */
-router.post('/cleanup-cache', async (req, res) => {
+router.post('/cleanup-cache', requireAdmin, async (req, res) => {
   try {
     const { maxAgeInDays = 7 } = req.body;
 

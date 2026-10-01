@@ -3,6 +3,19 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const rateLimit = require('express-rate-limit');
+
+// The global limiter allows 100 requests per 15 minutes per address, which is thousands
+// of password guesses a day against an admin address that is written in the source. Login
+// gets its own, much tighter, budget. Only failed attempts count against it.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.LOGIN_RATE_LIMIT_MAX, 10) || 10,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many sign-in attempts. Try again in 15 minutes.' }
+});
 const Joi = require('joi');
 const { authenticate, requirePermission, requireAdmin } = require('../middleware/auth');
 const logger = require('../utils/logger');
@@ -107,7 +120,7 @@ router.post('/users', authenticate, requirePermission('canManageUsers'), async (
  * POST /api/auth/login
  * User login with domain validation
  */
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   try {
     // Validate request body
     const { error, value } = loginSchema.validate(req.body);
@@ -166,7 +179,7 @@ router.post('/login', async (req, res) => {
         permissions: user.permissions
       },
       process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRE || '7d' }
+      { expiresIn: process.env.JWT_EXPIRES_IN || process.env.JWT_EXPIRE || '7d' }
     );
 
     res.json({
@@ -213,7 +226,7 @@ router.get('/me', async (req, res) => {
       });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     const user = await User.findById(decoded.userId).select('-password');
 
     if (!user || !user.isActive) {
@@ -247,7 +260,7 @@ router.get('/me', async (req, res) => {
     });
 
   } catch (error) {
-    if (error.name === 'JsonWebTokenError') {
+    if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
       return res.status(401).json({
         success: false,
         error: 'Invalid token'
@@ -440,8 +453,19 @@ router.delete('/users/:id', authenticate, requirePermission('canManageUsers'), a
  */
 router.post('/change-password', authenticate, async (req, res) => {
   try {
-    const user = req.user;
     const { currentPassword, newPassword } = req.body;
+
+    // authenticate loads the user WITHOUT the password hash, so comparing against
+    // req.user.password compared against undefined and the check below never ran: any
+    // valid token could set a new password. Reload with the hash for this one route.
+    const user = await User.findById(req.user._id).select('+password');
+    if (!user) {
+      return res.status(401).json({ success: false, error: 'User not found' });
+    }
+
+    if (typeof newPassword !== 'string') {
+      return res.status(400).json({ success: false, error: 'New password is required' });
+    }
 
     // Validate new password strength
     const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{}|;':",./<>?~])[A-Za-z\d!@#$%^&*()_+\-=\[\]{}|;':",./<>?~]{8,}$/;
@@ -452,8 +476,10 @@ router.post('/change-password', authenticate, async (req, res) => {
       });
     }
 
-    // Verify current password (unless OAuth user)
-    if (user.password && !await bcrypt.compare(currentPassword, user.password)) {
+    // Verify current password. An account with no hash has nothing to verify against and
+    // cannot change its password here.
+    if (typeof currentPassword !== 'string' || !user.password ||
+        !await bcrypt.compare(currentPassword, user.password)) {
       return res.status(400).json({
         success: false,
         error: 'Current password is incorrect'

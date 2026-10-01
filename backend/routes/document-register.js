@@ -5,6 +5,7 @@ const documentRegisterService = require('../services/documentRegisterService');
 const documentRegisterScheduler = require('../services/documentRegisterScheduler');
 const fs = require('fs');
 const path = require('path');
+const { requireAdmin } = require('../middleware/auth');
 
 const jobDir = path.join(__dirname, '../services/outputs');
 const jobFilePath = path.join(jobDir, 'register-job.json');
@@ -154,7 +155,7 @@ router.post('/generate', async (req, res) => {
  * Get quick count of projects and documents
  * GET /api/document-register/count
  */
-router.get('/count', async (req, res) => {
+router.get('/count', requireAdmin, async (req, res) => {
   try {
     logger.info('📋 API request: Get quick count');
 
@@ -413,7 +414,7 @@ router.get('/scheduler/status', async (req, res) => {
  * Manually trigger document register generation
  * POST /api/document-register/scheduler/run
  */
-router.post('/scheduler/run', async (req, res) => {
+router.post('/scheduler/run', requireAdmin, async (req, res) => {
   try {
     logger.info('📋 API request: Manual document register generation');
 

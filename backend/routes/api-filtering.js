@@ -11,6 +11,7 @@ const dropdownDataService = require('../services/dropdownDataService');
 const fiDetectionService = require('../services/fiDetectionService');
 
 const logger = require('../utils/logger');
+const { requireAdmin } = require('../middleware/auth');
 
 /**
  * GET /api/api-filtering/dropdown-data
@@ -104,7 +105,7 @@ router.post('/validate-params', async (req, res) => {
  * POST /api/api-filtering/preview-projects
  * Preview how many projects match the filters (without processing documents)
  */
-router.post('/preview-projects', async (req, res) => {
+router.post('/preview-projects', requireAdmin, async (req, res) => {
   try {
     const { apiParams = {} } = req.body;
 
@@ -162,7 +163,7 @@ router.post('/preview-projects', async (req, res) => {
  * POST /api/api-filtering/process-fi-with-filters
  * Process FI detection with API-based project filtering
  */
-router.post('/process-fi-with-filters', async (req, res) => {
+router.post('/process-fi-with-filters', requireAdmin, async (req, res) => {
   try {
     // Debug logging - let's see the entire request body
     logger.info('🔍 Process FI request body received:', JSON.stringify(req.body, null, 2));
@@ -335,7 +336,7 @@ router.get('/cache-stats', async (req, res) => {
  * POST /api/api-filtering/check-filter-impact
  * Check how many documents would be processed with given filters (diagnostic)
  */
-router.post('/check-filter-impact', async (req, res) => {
+router.post('/check-filter-impact', requireAdmin, async (req, res) => {
   try {
     const { apiParams = {} } = req.body;
 

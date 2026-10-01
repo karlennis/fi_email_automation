@@ -3,7 +3,7 @@ const router = express.Router();
 const scheduledJobManager = require('../services/scheduledJobManager');
 const Customer = require('../models/Customer');
 const ScheduledJob = require('../models/ScheduledJob');
-const { authenticate, requirePermission } = require('../middleware/auth');
+const { authenticate, requirePermission, requireAdmin } = require('../middleware/auth');
 const logger = require('../utils/logger');
 
 /**
@@ -170,7 +170,7 @@ router.get('/:jobId', async (req, res) => {
  * PUT /api/scheduled-jobs/:jobId
  * Update scheduled job
  */
-router.put('/:jobId', async (req, res) => {
+router.put('/:jobId', requirePermission('canManageJobs'), async (req, res) => {
   try {
     const { jobId } = req.params;
     const updates = req.body;
@@ -201,7 +201,7 @@ router.put('/:jobId', async (req, res) => {
  * POST /api/scheduled-jobs/:jobId/cancel
  * Cancel a scheduled job
  */
-router.post('/:jobId/cancel', async (req, res) => {
+router.post('/:jobId/cancel', requireAdmin, async (req, res) => {
   try {
     const { jobId } = req.params;
 
@@ -230,7 +230,7 @@ router.post('/:jobId/cancel', async (req, res) => {
  * POST /api/scheduled-jobs/:jobId/pause
  * Pause a scheduled job
  */
-router.post('/:jobId/pause', async (req, res) => {
+router.post('/:jobId/pause', requirePermission('canManageJobs'), async (req, res) => {
   try {
     const { jobId } = req.params;
 
@@ -259,7 +259,7 @@ router.post('/:jobId/pause', async (req, res) => {
  * POST /api/scheduled-jobs/:jobId/resume
  * Resume a paused job
  */
-router.post('/:jobId/resume', async (req, res) => {
+router.post('/:jobId/resume', requirePermission('canManageJobs'), async (req, res) => {
   try {
     const { jobId } = req.params;
 
@@ -289,7 +289,7 @@ router.post('/:jobId/resume', async (req, res) => {
  * POST /api/scheduled-jobs/:jobId/execute-now
  * Execute a job immediately (regardless of schedule)
  */
-router.post('/:jobId/execute-now', async (req, res) => {
+router.post('/:jobId/execute-now', requireAdmin, async (req, res) => {
   try {
     const { jobId } = req.params;
 
@@ -458,7 +458,7 @@ router.get('/:jobId/customers', async (req, res) => {
  * POST /api/scheduled-jobs/send-immediate
  * Send emails immediately without scheduling
  */
-router.post('/send-immediate', async (req, res) => {
+router.post('/send-immediate', requireAdmin, async (req, res) => {
   try {
     const {
       reportTypes,

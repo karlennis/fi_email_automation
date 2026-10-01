@@ -3,12 +3,13 @@ const router = express.Router();
 const jobSchedulerService = require('../services/jobSchedulerService');
 const s3Service = require('../services/s3Service');
 const buildingInfoService = require('../services/buildingInfoService');
+const { requireAdmin } = require('../middleware/auth');
 
 /**
  * POST /api/jobs/schedule-project
  * Schedule processing for a single project
  */
-router.post('/schedule-project', async (req, res) => {
+router.post('/schedule-project', requireAdmin, async (req, res) => {
   try {
     const { projectId, reportTypes, customerEmails, delay = 0 } = req.body;
 
@@ -50,7 +51,7 @@ router.post('/schedule-project', async (req, res) => {
  * POST /api/jobs/schedule-batch
  * Schedule batch processing for multiple projects
  */
-router.post('/schedule-batch', async (req, res) => {
+router.post('/schedule-batch', requireAdmin, async (req, res) => {
   try {
     const { projectIds, reportTypes, customerEmails, scheduleTime } = req.body;
 
@@ -114,7 +115,7 @@ router.get('/stats', async (req, res) => {
  * DELETE /api/jobs/:jobId
  * Cancel a scheduled job
  */
-router.delete('/:jobId', async (req, res) => {
+router.delete('/:jobId', requireAdmin, async (req, res) => {
   try {
     const { jobId } = req.params;
     const { queueType = 'process' } = req.query;

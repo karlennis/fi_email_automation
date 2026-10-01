@@ -4,6 +4,7 @@ const fiReportService = require('../services/fiReportService');
 const emailService = require('../services/emailService');
 const Customer = require('../models/Customer');
 const logger = require('../utils/logger');
+const { requireAdmin } = require('../middleware/auth');
 
 const resolveRecipientName = async (recipientList, fallbackName) => {
   if (!Array.isArray(recipientList) || recipientList.length === 0) {
@@ -759,7 +760,7 @@ router.get('/failed', async (req, res) => {
  * POST /api/reports/archive
  * Archive old reports
  */
-router.post('/archive', async (req, res) => {
+router.post('/archive', requireAdmin, async (req, res) => {
   try {
     const { daysOld = 90 } = req.body;
 
@@ -786,7 +787,7 @@ router.post('/archive', async (req, res) => {
  * DELETE /api/reports/cleanup
  * Clean up expired reports
  */
-router.delete('/cleanup', async (req, res) => {
+router.delete('/cleanup', requireAdmin, async (req, res) => {
   try {
     const deletedCount = await fiReportService.cleanupExpiredReports();
 

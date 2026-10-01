@@ -4,12 +4,13 @@ const logger = require('../utils/logger');
 const DailyRun = require('../models/DailyRun');
 const DailyRunItem = require('../models/DailyRunItem');
 const dailyRunService = require('../services/dailyRunService');
+const { requireAdmin } = require('../middleware/auth');
 
 /**
  * Create a new daily run
  * POST /api/runs/daily?date=YYYY-MM-DD
  */
-router.post('/daily', async (req, res) => {
+router.post('/daily', requireAdmin, async (req, res) => {
   try {
     const dateParam = req.query.date || req.body.date;
     
@@ -175,7 +176,7 @@ router.get('/:runId/items', async (req, res) => {
  * Retry failed items
  * POST /api/runs/:runId/retry-failed
  */
-router.post('/:runId/retry-failed', async (req, res) => {
+router.post('/:runId/retry-failed', requireAdmin, async (req, res) => {
   try {
     const { runId } = req.params;
 
@@ -230,7 +231,7 @@ router.post('/:runId/retry-failed', async (req, res) => {
  * Unsticks a run left in 'processing' by the counter drift described in
  * dailyRunService.reconcileCounters, without needing shell access.
  */
-router.post('/:runId/reconcile', async (req, res) => {
+router.post('/:runId/reconcile', requireAdmin, async (req, res) => {
   try {
     const { runId } = req.params;
     const result = await dailyRunService.reconcileCounters(runId);

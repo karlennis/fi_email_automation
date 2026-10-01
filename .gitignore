@@ -91,3 +91,7 @@ backend/services/outputs/
 # EC2 / SSH artifacts
 instance-info.txt
 *.pem
+
+# FI request landscape analysis (contains production data)
+analysis/fi-request-landscape/cache/
+analysis/fi-request-landscape/output/

@@ -11,12 +11,20 @@ async function testAuthentication() {
     console.log('🧪 Testing authentication system...');
     console.log(`📡 API Base URL: ${API_BASE}`);
 
+    // The password is never written in this file. Supply it for the one run:
+    //   TEST_ADMIN_PASSWORD=... node scripts/test-auth.js
+    const adminPassword = process.env.TEST_ADMIN_PASSWORD;
+    if (!adminPassword) {
+      console.error('❌ TEST_ADMIN_PASSWORD is not set. Pass the admin password in the environment for this run.');
+      return;
+    }
+
     // Test login with the primary admin account
     console.log('\n1️⃣ Testing admin login...');
 
     const loginResponse = await axios.post(`${API_BASE}/auth/login`, {
-      email: 'afatogun@buildinginfo.com',
-      password: 'AdminPass123!' // Default password from User model
+      email: process.env.TEST_ADMIN_EMAIL || 'afatogun@buildinginfo.com',
+      password: adminPassword
     });
 
     if (loginResponse.data.success) {

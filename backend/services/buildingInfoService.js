@@ -16,6 +16,14 @@ class BuildingInfoService {
   }
 
   /**
+   * The API takes its credentials in the query string, so a logged URL is a logged
+   * credential. Everything that logs a URL goes through this first.
+   */
+  redactUrl(url) {
+    return String(url).replace(/([?&](?:api_key|ukey)=)[^&]*/gi, '$1***');
+  }
+
+  /**
    * Build API URL for a specific planning ID
    */
   buildDetailUrl(planningId) {
@@ -35,7 +43,7 @@ class BuildingInfoService {
       return response.data;
     } catch (error) {
       if (error.response) {
-        logger.warn(`Building Info API error for ${url}: ${error.response.status} - ${error.response.statusText}`);
+        logger.warn(`Building Info API error for ${this.redactUrl(url)}: ${error.response.status} - ${error.response.statusText}`);
       } else {
         logger.warn(`Building Info API network error: ${error.message}`);
       }
@@ -295,7 +303,7 @@ class BuildingInfoService {
 
     apiUrl += `&more=limit ${limitStart},1000`;
 
-    logger.info(`📡 Building Info API URL: ${apiUrl}`);
+    logger.info(`📡 Building Info API URL: ${this.redactUrl(apiUrl)}`);
     return apiUrl;
   }
 
@@ -309,7 +317,7 @@ class BuildingInfoService {
 
     while (true) {
       const apiUrl = this.buildFilteredUrl(limitStart, paramsObject);
-      logger.info(`🔄 Calling Building Info API (batch ${limitStart/1000 + 1}): ${apiUrl}`);
+      logger.info(`🔄 Calling Building Info API (batch ${limitStart/1000 + 1}): ${this.redactUrl(apiUrl)}`);
 
       try {
         const response = await axios.get(apiUrl, { timeout: 30000 });
