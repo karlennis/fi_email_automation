@@ -15,7 +15,7 @@ const MIN_JWT_SECRET_LENGTH = 32;
  *
  * Never includes the secret itself in the message.
  */
-// Values shipped in .env.example, .env.template and the deployment docs. Long enough to
+// Values shipped in .env.example and the deployment docs. Long enough to
 // pass a length check, and known to anyone who has read the repository.
 const PLACEHOLDER_PATTERN = /^(your[-_ ]|change[-_ ]?me|replace[-_ ]|example|secret$|jwt[-_ ]?secret)/i;
 

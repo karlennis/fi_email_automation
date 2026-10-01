@@ -190,19 +190,7 @@ pm2 logs fi-email-backend
 
 ## Testing Email on EC2
 
-Once deployed, test the email configuration:
-
-```bash
-# SSH to EC2
-ssh -i your-key.pem ubuntu@your-elastic-ip
-
-# Connect to running app and test
-curl -X POST http://localhost:3000/api/test/email \
-  -H "Content-Type: application/json" \
-  -d '{"email":"your-test-email@gmail.com"}'
-```
-
-Check logs:
+The backend verifies the SMTP connection when it starts. Check logs:
 ```bash
 pm2 logs fi-email-backend | grep -i smtp
 pm2 logs fi-email-backend | grep -i "test email"

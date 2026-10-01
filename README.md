@@ -186,15 +186,28 @@ npm test
 
 ### Authentication
 - `POST /api/auth/login` - User login
-- `POST /api/auth/register` - User registration
 - `GET /api/auth/me` - Get current user
 
 ## 🚀 Deployment
 
-### Quick Deploy Options
+### Deploy Options
 
-#### **Option 1: AWS EC2 (Recommended - $28/month)**
-Best for cost-conscious deployments with full control.
+#### **Option 1: Docker Compose (Current)**
+The whole stack - API, frontend, scan worker and ingestion worker - as containers on any
+Linux host. MongoDB (Atlas), Redis (Upstash), SMTP and S3 stay external.
+
+```bash
+cp backend/.env.example backend/.env        # then fill it in
+cp docker/allow.conf.example docker/allow.conf
+docker compose up -d --build
+```
+📚 **Full Guide**: [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md)
+
+Only one host may run the workers against the production database at a time - two hosts
+can email a customer twice.
+
+#### **Option 2: AWS EC2 with PM2 (Previous)**
+The setup used before the Docker deployment; kept for when the EC2 instance returns.
 
 ```bash
 # Automated setup
@@ -208,25 +221,6 @@ bash deploy-ec2.sh
 📊 **Monitoring**: [EC2_MONITORING.md](EC2_MONITORING.md)
 
 **Cost**: ~$28/month (EC2 t4g.medium + EBS)
-
-#### **Option 2: Docker Compose**
-Self-contained deployment with all services.
-
-```bash
-docker-compose up -d
-```
-Includes: Backend, Worker, Frontend, Redis, Nginx
-
-#### **Option 3: Render (Current)**
-Managed platform with automatic scaling.
-
-- Backend: `backend/server.js` (Node.js 18)
-- Worker: `backend/worker.js` (background tasks)
-- Frontend: `frontend` (Angular 17)
-
-Deployed at: https://fi-email-automation-backend-xvqm.onrender.com
-
-**Cost**: $85/month (Pro plan)
 
 ### Production Setup Checklist
 
@@ -274,7 +268,6 @@ BUILDING_INFO_API_UKEY=your_ukey
 NODE_ENV=production
 PORT=3000
 FRONTEND_URL=https://your-domain.com
-API_URL=https://your-domain.com/api
 ```
 
 ### Performance Optimization

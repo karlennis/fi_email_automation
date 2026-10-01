@@ -4,7 +4,7 @@ Angular 17 application for managing Further Information (FI) request detection a
 
 ## Features
 
-- **Authentication System**: Login/register with JWT-based auth
+- **Authentication System**: Login with JWT-based auth
 - **Document Upload**: Drag & drop interface for PDF/DOC files
 - **FI Detection**: AI-powered detection of Further Information requests
 - **Email Automation**: Automated customer notifications
@@ -44,7 +44,7 @@ ng build --configuration production
 src/
 ├── app/
 │   ├── components/           # UI Components
-│   │   ├── auth/            # Login/Register components
+│   │   ├── auth/            # Login component
 │   │   ├── dashboard/       # Dashboard component
 │   │   ├── document-upload/ # File upload component
 │   │   ├── fi-requests/     # FI request list/detail components
@@ -65,7 +65,7 @@ src/
 ## Key Components
 
 ### Authentication
-- Login/Register forms with validation
+- Login form with validation
 - JWT token management
 - Role-based access control (admin/user)
 

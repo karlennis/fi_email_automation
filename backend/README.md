@@ -38,7 +38,7 @@ A Node.js/Express API for detecting Further Information (FI) requests in plannin
 
 3. **Environment Setup**
    ```bash
-   cp .env.template .env
+   cp .env.example .env
    ```
    Then edit `.env` with your actual configuration values.
 
@@ -62,15 +62,13 @@ The API exposes a `/health` endpoint for monitoring and load balancer checks:
   - No database dependency
   - Always returns quickly
 
-**For Render.com deployment**: Set health check path to `/health` in service settings.
-
 **IMPORTANT**: The health endpoint is registered BEFORE all middleware to prevent 429 rate limit errors that can cause service restarts.
 
 The server will start on `http://localhost:3000` (or your configured PORT).
 
 ## Environment Variables
 
-See `.env.template` for all required environment variables. Key ones include:
+See `.env.example` for all required environment variables. Key ones include:
 
 - `MONGODB_URI`: MongoDB connection string
 - `JWT_SECRET`: Secret key for JWT tokens
@@ -80,7 +78,6 @@ See `.env.template` for all required environment variables. Key ones include:
 ## API Endpoints
 
 ### Authentication
-- `POST /api/auth/register` - Register new user
 - `POST /api/auth/login` - User login
 - `GET /api/auth/profile` - Get user profile
 
@@ -171,7 +168,4 @@ The system includes Handlebars email templates for:
 5. Start the development server
 6. Test with the Angular frontend (when available)
 
-For production deployment, consider using services like:
-- **Database**: MongoDB Atlas
-- **Hosting**: Render, Railway, or Heroku
-- **Email**: SendGrid, Mailgun, or AWS SES
+For production deployment see [DOCKER_DEPLOYMENT.md](../DOCKER_DEPLOYMENT.md).

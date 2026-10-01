@@ -39,12 +39,12 @@ const runContext = require('./utils/runContext');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Trust proxy - REQUIRED for Render.com and other cloud platforms
+// Trust proxy - required behind nginx (or any other reverse proxy)
 // This allows Express to properly read X-Forwarded-For headers
 app.set('trust proxy', 1);
 
 // Health check endpoint - MUST be first, before any middleware
-// This prevents Render health checks from being rate-limited (429 errors)
+// This prevents health checks from being rate-limited (429 errors)
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'OK',
@@ -67,7 +67,7 @@ app.use((req, res, next) => {
     const originalSend = res.send;
     res.send = function(data) {
       if (res.statusCode !== 200) {
-        logger.error(`🚨 CRITICAL: /health returned ${res.statusCode} - this will cause Render restarts!`, {
+        logger.error(`🚨 CRITICAL: /health returned ${res.statusCode} - the container health check will fail!`, {
           statusCode: res.statusCode,
           headers: req.headers,
           ip: req.ip
@@ -247,7 +247,7 @@ app.listen(PORT, () => {
       const mem = process.memoryUsage();
       logger.info(`📊 Memory: Heap ${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB / ${(mem.heapTotal / 1024 / 1024).toFixed(2)}MB, RSS ${(mem.rss / 1024 / 1024).toFixed(2)}MB`);
 
-      // Warn if memory exceeds 1200MB (60% of Render's 2GB limit) - LOWERED
+      // Warn if memory exceeds 1200MB (60% of a 2GB limit)
       if (mem.rss > 1200 * 1024 * 1024) {
         logger.warn(`⚠️ HIGH MEMORY USAGE: ${(mem.rss / 1024 / 1024).toFixed(2)}MB / 2048MB limit`);
       }
