@@ -1,0 +1,14 @@
+# Addresses allowed to reach the web UI and API. Copy to docker/allow.conf on the server
+# (that file is not in git) and reload with: docker compose exec web nginx -s reload
+#
+# The app is served over plain HTTP, so this list - together with the cloud firewall rule
+# for port 80 - is what keeps logins off the open internet. Keep both in step.
+
+allow 127.0.0.1;
+
+# One line per office / home address:
+# allow 203.0.113.10;
+
+# Requests made on the server itself (curl localhost, or an SSH tunnel to port 80) arrive
+# from Docker's bridge gateway. Uncomment only while testing that way:
+# allow 172.16.0.0/12;

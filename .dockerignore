@@ -1,0 +1,36 @@
+# Keep secrets, data and host-built dependencies out of the build context.
+
+# Secrets and host notes
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+instance-info.txt
+docker/allow.conf
+
+# Not part of the app
+.git
+.github
+.claude
+.vscode
+analysis
+docs
+*.md
+aws-iam-policy*.json
+deploy-ec2.sh
+setup-aws-infrastructure.*
+ecosystem*.config.js
+document-register
+
+# Dependencies are installed inside the image (the host's may be Windows builds)
+**/node_modules
+
+# Runtime data and build output
+**/logs
+**/temp
+**/.ocr_cache
+**/coverage
+backend/services/outputs
+frontend/dist
+frontend/.angular

@@ -1,51 +1,49 @@
-# Multi-stage Dockerfile for FI Email Automation
-# Stage 1: Frontend build
-FROM node:20-alpine AS frontend-builder
+# Backend image for FI Email Automation.
+#
+# One image, three services: docker-compose.yml runs it as the API (backend/server.js),
+# the scan worker (backend/worker.js) and the ingestion worker (backend/ingestion-worker.js).
+# The frontend has its own image - see frontend/Dockerfile.
+#
+# Debian rather than alpine: the native `canvas` module ships glibc prebuilds, and the OCR
+# tools below are one apt line here.
+FROM node:22-bookworm-slim
+
+# poppler-utils (pdftoppm) + tesseract are the OCR fallback on the nightly scan path
+# (backend/services/ocrService.js). Without pdftoppm OCR is silently disabled and scanned
+# PDFs yield no text. ocrmypdf is used by fiDetectionService and documentProcessor.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        poppler-utils \
+        tesseract-ocr \
+        tesseract-ocr-eng \
+        ocrmypdf \
+        tzdata \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY frontend/package*.json ./frontend/
-RUN cd frontend && npm ci --only=production
 
-COPY frontend ./frontend
-WORKDIR /app/frontend
-RUN npm run build
-
-# Stage 2: Backend runtime
-FROM node:20-alpine
-
-WORKDIR /app
-
-# Install dumb-init for proper signal handling
-RUN apk add --no-cache dumb-init
-
-# Copy backend dependencies
 COPY backend/package*.json ./backend/
-RUN cd backend && npm ci --only=production
+RUN cd backend && npm ci --omit=dev && npm cache clean --force
 
-# Copy backend code
 COPY backend ./backend
 
-# Copy built frontend
-COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
+# Everything the app writes at runtime. Created here and owned by `node` so the named
+# volumes mounted over them inherit that ownership. temp/ and .ocr_cache/ are relative to
+# the working directory, which stays /app - the same layout pm2 gave them on EC2.
+RUN mkdir -p /var/log/fi_email /app/temp/ocr /app/temp/downloads /app/.ocr_cache \
+        /app/backend/temp /app/backend/services/outputs \
+    && chown -R node:node /var/log/fi_email /app/temp /app/.ocr_cache \
+        /app/backend/temp /app/backend/services/outputs
 
-# Copy ecosystem config
-COPY ecosystem.config.js .
+# TZ: scanJobProcessor derives "today" in UTC but the delivery day and the crons in local
+# time, so the process must run in UTC or the Monday run sees Sunday and skips delivery.
+ENV NODE_ENV=production \
+    TZ=UTC \
+    LOG_DIR=/var/log/fi_email \
+    PORT=3000
 
-# Create log directory
-RUN mkdir -p /var/log/fi_email && chmod 777 /var/log/fi_email
+USER node
+EXPOSE 3000
 
-# Environment
-ENV NODE_ENV=production
-ENV NODE_OPTIONS="--expose-gc --max-old-space-size=1536"
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:3000/api/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
-
-# Use dumb-init to handle signals properly
-ENTRYPOINT ["/sbin/dumb-init", "--"]
-
-# Start with PM2 (requires global PM2)
-RUN npm install -g pm2
-
-CMD ["pm2-runtime", "start", "ecosystem.config.js"]
+CMD ["node", "--expose-gc", "--max-old-space-size=1536", "backend/server.js"]
