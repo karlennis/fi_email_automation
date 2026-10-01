@@ -81,8 +81,9 @@ docker compose exec api npm --prefix backend run logs -- --runs
 # Run a maintenance script
 docker compose exec worker node backend/scripts/check-stuck-jobs.js
 
-# Change the IP allow-list
-nano docker/allow.conf && docker compose exec web nginx -s reload
+# Change the IP allow-list. Recreate the container rather than reloading nginx: an editor
+# that replaces the file leaves the running container looking at the old copy.
+nano docker/allow.conf && docker compose up -d --force-recreate web
 
 # Stop everything (required before another host takes over)
 docker compose down

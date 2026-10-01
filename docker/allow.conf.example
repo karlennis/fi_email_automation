@@ -1,5 +1,6 @@
 # Addresses allowed to reach the web UI and API. Copy to docker/allow.conf on the server
-# (that file is not in git) and reload with: docker compose exec web nginx -s reload
+# (that file is not in git) and apply with: docker compose up -d --force-recreate web
+# (a plain nginx reload can miss the change when the editor replaces the file).
 #
 # The app is served over plain HTTP, so this list - together with the cloud firewall rule
 # for port 80 - is what keeps logins off the open internet. Keep both in step.
