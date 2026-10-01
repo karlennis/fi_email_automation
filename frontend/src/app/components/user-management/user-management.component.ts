@@ -271,6 +271,9 @@ import { AuthService } from '../../services/auth.service';
           </div>
 
           <form [formGroup]="passwordForm" (ngSubmit)="changePassword()">
+            <div class="error-message" *ngIf="formError" style="margin-bottom: 1rem;">
+              {{ formError }}
+            </div>
             <div class="form-group">
               <label for="currentPassword">Current Password *</label>
               <input
@@ -901,6 +904,7 @@ export class UserManagementComponent implements OnInit {
 
   openChangePasswordModal(user: User) {
     this.editingUser = user;
+    this.formError = null;
     this.passwordForm.reset();
     this.showPasswordModal = true;
   }
@@ -921,6 +925,7 @@ export class UserManagementComponent implements OnInit {
   closePasswordModal() {
     this.showPasswordModal = false;
     this.editingUser = null;
+    this.formError = null;
   }
 
   saveUser() {
@@ -981,6 +986,7 @@ export class UserManagementComponent implements OnInit {
   changePassword() {
     if (this.passwordForm.valid && !this.isLoading) {
       this.isLoading = true;
+      this.formError = null;
       const formData = this.passwordForm.value;
 
       this.userService.changePassword({
@@ -993,6 +999,7 @@ export class UserManagementComponent implements OnInit {
         },
         error: (error) => {
           console.error('Error changing password:', error);
+          this.formError = this.extractError(error, 'Failed to change password.');
           this.isLoading = false;
         }
       });

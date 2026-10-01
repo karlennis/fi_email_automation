@@ -318,7 +318,9 @@ router.get('/users', authenticate, requirePermission('canManageUsers'), async (r
     res.json({
       success: true,
       data: {
-        users,
+        // The users page matches rows on `id` (as login and /me return it). A raw document
+        // serialises with only `_id`, which left Edit and Change Password without a target.
+        users: users.map(user => ({ ...user.toObject(), id: user._id })),
         pagination: {
           currentPage: parseInt(page),
           totalPages: Math.ceil(totalCount / parseInt(limit)),
