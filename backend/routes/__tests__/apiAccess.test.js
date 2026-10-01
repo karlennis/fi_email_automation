@@ -109,14 +109,14 @@ describe('mount table', () => {
       '/api/auth', '/api/customers', '/api/document-register', '/api/document-scan',
       '/api/documents', '/api/documents-browser', '/api/filtering', '/api/jobs',
       '/api/projects', '/api/register-fi', '/api/reports', '/api/runs',
-      '/api/scheduled-jobs', '/api/test'
+      '/api/scheduled-jobs'
     ]);
   });
 
-  test('the file browser, the test routes and the routers no page uses are admin-only', () => {
+  test('the file browser and the routers no page uses are admin-only', () => {
     expect(adminRoutes.map(r => r.path).sort()).toEqual([
       '/api/documents', '/api/documents-browser', '/api/jobs', '/api/runs',
-      '/api/scheduled-jobs', '/api/test'
+      '/api/scheduled-jobs'
     ]);
   });
 

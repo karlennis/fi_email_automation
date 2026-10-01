@@ -5,7 +5,6 @@
   "main": "server.js",
   "jest": {
     "testEnvironment": "node",
-    "//": "Scoped to __tests__ so jest does not pick up routes/test.js, an Express router whose filename matches the default testMatch pattern and which fails the run with 'must contain at least one test'.",
     "testMatch": [
       "**/__tests__/**/*.test.js"
     ],
@@ -29,13 +28,11 @@
     "bull": "^4.11.3",
     "canvas": "^3.2.1",
     "cors": "^2.8.5",
-    "cron": "^2.4.4",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "express-rate-limit": "^6.10.0",
     "handlebars": "^4.7.8",
     "helmet": "^7.0.0",
-    "ioredis": "^5.9.2",
     "joi": "^17.9.2",
     "jsonwebtoken": "^9.0.2",
     "mammoth": "^1.11.0",
@@ -47,7 +44,6 @@
     "pdf-parse": "^1.1.4",
     "pdfjs-dist": "^3.11.174",
     "redis": "^4.6.8",
-    "uuid": "^9.0.0",
     "winston": "^3.10.0",
     "winston-daily-rotate-file": "^5.0.0",
     "xlsx": "^0.18.5"

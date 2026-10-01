@@ -42,7 +42,6 @@ const ROUTE_TABLE = [
   { path: '/api/jobs', access: 'admin', load: () => require('./jobs') },
   { path: '/api/scheduled-jobs', access: 'admin', load: () => require('./scheduled-jobs') },
   { path: '/api/filtering', access: 'authenticated', load: () => require('./api-filtering') },
-  { path: '/api/test', access: 'admin', load: () => require('./test') },
   { path: '/api/reports', access: 'authenticated', load: () => require('./reports') },
   { path: '/api/document-register', access: 'authenticated', load: () => require('./document-register') },
   { path: '/api/register-fi', access: 'authenticated', load: () => require('./register-fi') },
