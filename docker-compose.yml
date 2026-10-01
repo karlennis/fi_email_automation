@@ -8,10 +8,9 @@
 # REDIS_URL). Nothing here publishes a port except `web`.
 
 x-backend: &backend
-  build:
-    context: .
-    dockerfile: Dockerfile
+  # Built once, by the `api` service; worker and ingestion run the same image.
   image: fi-email-backend
+  pull_policy: never
   restart: unless-stopped
   init: true
   # Secrets and connection strings. Lives on the host only; .dockerignore keeps it out of
@@ -36,6 +35,9 @@ services:
   # and runs the 00:05 document register job.
   api:
     <<: *backend
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: fi-email-api
     command: ["node", "--expose-gc", "--max-old-space-size=1536", "backend/server.js"]
     environment:
